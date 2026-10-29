@@ -1,0 +1,22 @@
+{
+  "name": "local-word-transcriptor",
+  "version": "1.0.0",
+  "description": "Live Romanian speech-to-text from your laptop mic, fully local (whisper.cpp)",
+  "type": "module",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "setup": "node scripts/setup.js",
+    "start": "node server.js",
+    "compare": "node scripts/compare.js",
+    "test:wav": "node test/stream-wav.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "sherpa-onnx-node": "^2.0.1",
+    "transcribe-cpp": "^0.4.1",
+    "ws": "^8.18.0"
+  }
+}

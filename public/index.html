@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live Transcriber</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="brand">
+      <h1>Live Transcriber</h1>
+      <span class="tag" id="lang">RO</span>
+    </div>
+    <div class="status" id="status" data-state="loading">
+      <span class="dot"></span><span id="statusText">Connecting…</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="controls">
+      <button id="toggle" class="primary" disabled>
+        <span class="rec"></span><span id="toggleText">Start</span>
+      </button>
+      <div class="meter" title="Microphone level">
+        <div class="meter-fill" id="meter"></div>
+      </div>
+      <span class="speaking" id="speaking">listening</span>
+      <span class="spacer"></span>
+      <button id="copy" class="ghost" disabled>Copy</button>
+      <button id="download" class="ghost" disabled>Download .txt</button>
+      <button id="clear" class="ghost" disabled>Clear</button>
+    </section>
+
+    <section class="settings">
+      <label class="field">
+        <span>Model</span>
+        <select id="model"></select>
+      </label>
+      <label class="field">
+        <span>Microphone</span>
+        <select id="mic"><option value="">System default</option></select>
+      </label>
+      <label class="check" title="The browser's noise filter. Off is usually better for distant voices; turn on for a noisy room.">
+        <input type="checkbox" id="noise"> Noise suppression
+      </label>
+      <label class="check" title="Also save the audio as a WAV next to the transcript, e.g. to compare models later with npm run compare.">
+        <input type="checkbox" id="saveAudio"> Save audio
+      </label>
+      <p class="model-notes" id="modelNotes"></p>
+    </section>
+
+    <p class="error" id="error" hidden></p>
+
+    <section class="transcript" id="transcript" aria-live="polite">
+      <p class="empty" id="empty">Press <strong>Start</strong> and talk. Text appears as people speak; each sentence is finalised after a short pause.</p>
+    </section>
+
+    <footer class="foot">
+      <span id="file"></span>
+      <span>Everything runs locally on this Mac. No audio leaves your machine.</span>
+    </footer>
+  </main>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
