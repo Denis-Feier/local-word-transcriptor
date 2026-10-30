@@ -57,10 +57,12 @@
       ],
       "category": "public.app-category.productivity",
       "icon": "desktop/build/icon.png",
-      "identity": null,
+      "identity": "-",
+      "hardenedRuntime": false,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Live Transcriber listens to the meeting to turn speech into text. The audio never leaves this computer."
-      }
+      },
+      "artifactName": "Live-Transcriber-${version}-mac-${arch}.${ext}"
     },
     "dmg": {
       "title": "Live Transcriber"
@@ -80,7 +82,8 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "Live Transcriber"
+      "shortcutName": "Live Transcriber",
+      "artifactName": "Live-Transcriber-${version}-windows-setup.${ext}"
     }
   }
 }

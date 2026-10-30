@@ -19,7 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14 # Apple Silicon
+          - os: macos-latest # Apple Silicon
             dist: dist:mac
             installer: dist/*.dmg
           - os: windows-latest
@@ -38,7 +38,7 @@ jobs:
       - name: Build installer
         run: npm run ${{ matrix.dist }} -- --publish never
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false # unsigned until signing certificates are set up
+          CSC_IDENTITY_AUTO_DISCOVERY: false # no certificates yet: the Mac app is ad-hoc signed, Windows unsigned
       - uses: actions/upload-artifact@v4
         with:
           name: installer-${{ matrix.os }}
@@ -50,6 +50,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5 # for the release notes
       - uses: actions/download-artifact@v4
         with:
           path: installers
@@ -61,4 +62,5 @@ jobs:
           gh release create "${{ github.ref_name }}" installers/*
           --repo "${{ github.repository }}"
           --title "Live Transcriber ${{ github.ref_name }}"
+          --notes-file .github/release-notes.md
           --generate-notes

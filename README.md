@@ -1,22 +1,25 @@
 # Live Transcriber (Romanian)
 
 Put the laptop on the table, press Start, and get Romanian text live as people talk.
-Everything runs locally on the Mac. No API keys, no accounts, and no audio leaves the machine.
+Everything runs locally on the computer. No API keys, no accounts, and no audio leaves the machine.
 
 ## Desktop app (no technical setup)
 
 For people who just want to use it, on a Mac with Apple Silicon or a Windows PC:
 
-1. Download the installer from this repository's **Releases** page: `Live Transcriber-…-arm64.dmg` for Mac,
-   `Live Transcriber Setup ….exe` for Windows.
+1. Download the installer from the **[latest release](https://github.com/Denis-Feier/local-word-transcriptor/releases/latest)**:
+   `Live-Transcriber-…-mac-arm64.dmg` for Mac (M1 or newer, macOS 12+), `Live-Transcriber-…-windows-setup.exe`
+   for Windows 10/11.
 2. Mac: open the `.dmg` and drag *Live Transcriber* into Applications. Windows: run the installer.
 3. Open Live Transcriber. The first time, it downloads the Romanian model (1.1 GB) and shows the progress; then
    press **Start**. The Mac asks once for permission to use the microphone.
 
 Transcripts are saved in **Documents → Live Transcriber** (File → *Open transcripts folder*).
 
-The installers aren't signed yet, so the system warns the first time: on a Mac, right-click the app → **Open**
-(or System Settings → Privacy & Security → **Open Anyway**); on Windows, **More info → Run anyway**.
+The installers aren't signed with a developer certificate yet, so the system warns the first time: on a Mac, open
+the app once, then System Settings → Privacy & Security → **Open Anyway** (macOS 14 and older: right-click the app →
+**Open**); on Windows, **More info → Run anyway**. The Mac app is ad-hoc signed, which is what keeps macOS from
+calling the download "damaged".
 
 The desktop app runs the models that need no extra software: NVIDIA Canary (the default and most accurate) and
 the Parakeet family. The Whisper models and Jackrabbit appear only in the developer setup below, where
@@ -24,9 +27,10 @@ whisper.cpp and Python are installed.
 
 **Building the installers:** `npm run dist:mac` on a Mac, `npm run dist:win` on Windows; the result is in
 `dist/`. Or let GitHub build both: Actions tab → *Desktop app* → **Run workflow**, or push a version tag
-(`git tag v1.0.1 && git push origin v1.0.1`) to also publish them on the Releases page. Each build first runs
-`test/smoke.js`, which transcribes a Romanian test clip with the speech engine on that system. To try the app from
-source: `npm run app`.
+(`git tag v1.0.1 && git push origin v1.0.1`) to also publish them on the Releases page, with the download and
+install steps from `.github/release-notes.md`. Bump `version` in `package.json` first; it is in the file names.
+Each build first runs `test/smoke.js`, which transcribes a Romanian test clip with the speech engine on that
+system. To try the app from source: `npm run app`.
 
 ## Quick start (developer setup)
 
