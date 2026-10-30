@@ -1,23 +1,86 @@
 {
   "name": "local-word-transcriptor",
+  "productName": "Live Transcriber",
   "version": "1.0.0",
   "description": "Live Romanian speech-to-text from your laptop mic, fully local",
   "type": "module",
   "private": true,
-  "main": "server.js",
+  "main": "desktop/main.mjs",
   "scripts": {
     "setup": "node scripts/setup.js",
     "start": "node server.js",
     "compare": "node scripts/compare.js",
     "test:wav": "node test/stream-wav.js",
-    "benchmark": "node scripts/benchmark.js"
+    "benchmark": "node scripts/benchmark.js",
+    "app": "electron .",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12"
   },
   "dependencies": {
     "sherpa-onnx-node": "^2.0.1",
     "transcribe-cpp": "^0.4.1",
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "45.1.0",
+    "electron-builder": "26.18.0"
+  },
+  "author": "Live Transcriber",
+  "build": {
+    "appId": "ro.livetranscriber.app",
+    "productName": "Live Transcriber",
+    "asar": false,
+    "npmRebuild": false,
+    "directories": {
+      "output": "dist",
+      "buildResources": "desktop/build"
+    },
+    "files": [
+      "package.json",
+      "server.js",
+      "lib/**",
+      "public/**",
+      "desktop/main.mjs",
+      "!**/*.md"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "desktop/build/icon.png",
+      "identity": null,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Live Transcriber listens to the meeting to turn speech into text. The audio never leaves this computer."
+      }
+    },
+    "dmg": {
+      "title": "Live Transcriber"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "desktop/build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Live Transcriber"
+    }
   }
 }

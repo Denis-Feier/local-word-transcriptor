@@ -1,0 +1,64 @@
+# Builds the desktop installers on real machines: a Mac (.dmg, Apple Silicon) and a Windows PC (.exe).
+# Each job first runs test/smoke.js, which transcribes a Romanian clip with the speech engine on that OS.
+#
+#   Actions tab → "Desktop app" → Run workflow     installers appear under the run's Artifacts
+#   git tag v1.0.0 && git push origin v1.0.0       also publishes them on the GitHub Releases page
+name: Desktop app
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # for the release step
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14 # Apple Silicon
+            dist: dist:mac
+            installer: dist/*.dmg
+          - os: windows-latest
+            dist: dist:win
+            installer: dist/*.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Smoke test (voice detector + speech engine on this OS)
+        run: node test/smoke.js
+      - name: Build installer
+        run: npm run ${{ matrix.dist }} -- --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false # unsigned until signing certificates are set up
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.os }}
+          path: ${{ matrix.installer }}
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+      - name: Publish the installers as a GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "${{ github.ref_name }}" installers/*
+          --repo "${{ github.repository }}"
+          --title "Live Transcriber ${{ github.ref_name }}"
+          --generate-notes

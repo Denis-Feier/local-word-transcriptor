@@ -3,9 +3,34 @@
 Put the laptop on the table, press Start, and get Romanian text live as people talk.
 Everything runs locally on the Mac. No API keys, no accounts, and no audio leaves the machine.
 
-## Quick start
+## Desktop app (no technical setup)
 
-There are two ways to run it. Both use the same `models/` and `transcripts/` folders.
+For people who just want to use it, on a Mac with Apple Silicon or a Windows PC:
+
+1. Download the installer from this repository's **Releases** page: `Live Transcriber-…-arm64.dmg` for Mac,
+   `Live Transcriber Setup ….exe` for Windows.
+2. Mac: open the `.dmg` and drag *Live Transcriber* into Applications. Windows: run the installer.
+3. Open Live Transcriber. The first time, it downloads the Romanian model (1.1 GB) and shows the progress; then
+   press **Start**. The Mac asks once for permission to use the microphone.
+
+Transcripts are saved in **Documents → Live Transcriber** (File → *Open transcripts folder*).
+
+The installers aren't signed yet, so the system warns the first time: on a Mac, right-click the app → **Open**
+(or System Settings → Privacy & Security → **Open Anyway**); on Windows, **More info → Run anyway**.
+
+The desktop app runs the models that need no extra software: NVIDIA Canary (the default and most accurate) and
+the Parakeet family. The Whisper models and Jackrabbit appear only in the developer setup below, where
+whisper.cpp and Python are installed.
+
+**Building the installers:** `npm run dist:mac` on a Mac, `npm run dist:win` on Windows; the result is in
+`dist/`. Or let GitHub build both: Actions tab → *Desktop app* → **Run workflow**, or push a version tag
+(`git tag v1.0.1 && git push origin v1.0.1`) to also publish them on the Releases page. Each build first runs
+`test/smoke.js`, which transcribes a Romanian test clip with the speech engine on that system. To try the app from
+source: `npm run app`.
+
+## Quick start (developer setup)
+
+There are two ways to run it from source. Both use the same `models/` and `transcripts/` folders.
 
 **With Docker: nothing to install except Docker Desktop.**
 
@@ -189,6 +214,9 @@ mic → AudioWorklet ──WS──▶  Silero VAD + Segmenter               ─
 | `scripts/compare.js` | Runs several models over one of your recordings and reports speed and WER |
 | `scripts/benchmark.js` | Scores models on the FLEURS Romanian test set (`npm run benchmark`) |
 | `Dockerfile`, `docker-compose.yml` | The Docker image and how it is started |
+| `desktop/main.mjs` | The desktop app (Electron): starts the server in the background, opens its page, sends the caption window to the projector, data folders per user |
+| `test/smoke.js` | End-to-end check on any OS: server, automatic model download, transcription of `test/fixtures/ro.wav` |
+| `.github/workflows/desktop.yml` | Builds and tests the Mac and Windows installers on GitHub; publishes them on version tags |
 
 Live guesses refresh every 0.5 s, or less often for slow models (twice the model's average inference time), so they never delay the final text.
 

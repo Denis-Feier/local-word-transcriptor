@@ -1,7 +1,8 @@
-node_modules/
-models/
-transcripts/
 .settings.json
-python/.venv/
-benchmarks/data/
 __pycache__/
+benchmarks/data/
+dist/
+models/
+node_modules/
+python/.venv/
+transcripts/

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { WebSocketServer } from 'ws';
 import { config, ROOT, MODELS_DIR } from './lib/config.js';
-import { MODELS, SILERO_VAD, findModel, isInstalled, installModel, download } from './lib/models.js';
+import { MODELS, SILERO_VAD, isInstalled, isAvailable, installModel, download } from './lib/models.js';
 import { Transcriber } from './lib/transcriber.js';
 import { Session } from './lib/session.js';
 import { TUNING, tuningFrom, sanitizeTuning, applyTuning } from './lib/tuning.js';
@@ -38,6 +38,10 @@ const writeSettings = (patch) => {
 const DEFAULT_TUNING = tuningFrom(config);
 applyTuning(config, sanitizeTuning(readSettings().tuning));
 
+// Models this computer can run; the rest are left out of the menu.
+const AVAILABLE = MODELS.filter((m) => isAvailable(m, { whisperBin: config.whisper.bin }));
+const findAvailable = (id) => AVAILABLE.find((m) => m.id === id);
+
 const transcriber = new Transcriber(config);
 const progress = new Map(); // model id -> download fraction
 const clients = new Set();
@@ -50,7 +54,7 @@ const broadcast = (msg) => {
 const modelsMessage = () => ({
   type: 'models',
   active: transcriber.model?.id ?? null,
-  models: MODELS.map((m) => ({
+  models: AVAILABLE.map((m) => ({
     id: m.id,
     label: config.inDocker && m.dockerSlow ? `${m.label} (slow in Docker)` : m.label,
     engine: m.engine,
@@ -74,13 +78,14 @@ function updateTuning({ values, reset }) {
 }
 
 function selectModel(id) {
+  if (!findAvailable(id)) return;
   writeSettings({ model: id });
   transcriber.select(id);
   broadcast(modelsMessage());
 }
 
 async function install(id) {
-  const model = findModel(id);
+  const model = findAvailable(id);
   if (!model || isInstalled(model) || progress.has(id)) return;
   progress.set(id, 0);
   broadcast(modelsMessage());
@@ -181,8 +186,13 @@ server.listen(config.port, config.host, async () => {
   }
 
   const initial = process.env.MODEL ?? readSettings().model ?? config.defaultModel;
-  const model = findModel(initial) ?? findModel(config.defaultModel);
+  const model = findAvailable(initial) ?? findAvailable(config.defaultModel) ?? AVAILABLE[0];
   if (!isInstalled(model)) {
+    if (config.autoInstall) {
+      console.log(`  Downloading ${model.label} (${model.downloadSize ?? model.size}) …`);
+      install(model.id); // selects the model when done; the page shows the progress
+      return;
+    }
     console.log(`  ${model.label} is not downloaded. Run "npm run setup", or pick a model in the page.\n`);
     transcriber.select(model.id); // reports "not downloaded" to the page
     return;
@@ -207,4 +217,7 @@ const shutdown = async () => {
 };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+// Inside the desktop app this runs as an Electron utility process; the app asks for a clean stop by message
+// (signals don't reach it reliably on Windows).
+process.parentPort?.on('message', (e) => e.data === 'shutdown' && shutdown());
 process.on('exit', () => transcriber.kill());

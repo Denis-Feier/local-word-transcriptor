@@ -2,7 +2,7 @@
 // and prints partial and final transcripts.
 //
 //   npm start                                   (in another terminal)
-//   npm run test:wav -- path/to/file.wav [--speed 2] [--model parakeet-tdt-0.6b-v3]
+//   npm run test:wav -- path/to/file.wav [--speed 2] [--model parakeet-tdt-0.6b-v3] [--expect word]
 //
 // Make a Romanian test file on macOS:
 //   say -v Ioana -o /tmp/ro.aiff "Bună ziua, ce mai faceți?"
@@ -17,6 +17,8 @@ const speedIdx = args.indexOf('--speed');
 const speed = speedIdx >= 0 ? Number(args[speedIdx + 1]) : 1;
 const modelIdx = args.indexOf('--model');
 const model = modelIdx >= 0 ? args[modelIdx + 1] : null;
+const expectIdx = args.indexOf('--expect');
+const expected = expectIdx >= 0 ? args[expectIdx + 1].toLowerCase() : null; // exit 1 unless the transcript contains it
 const url = process.env.WS_URL ?? `ws://localhost:${process.env.PORT ?? 3000}/ws`;
 
 if (!file) {
@@ -90,7 +92,12 @@ function stream() {
 }
 
 function finish() {
-  console.log(`\n--- transcript ---\n${finals.join('\n')}\n`);
+  const transcript = finals.join('\n');
+  console.log(`\n--- transcript ---\n${transcript}\n`);
   ws.close();
+  if (expected && !transcript.toLowerCase().includes(expected)) {
+    console.error(`✖ expected the transcript to contain "${expected}"`);
+    process.exit(1);
+  }
   process.exit(0);
 }
