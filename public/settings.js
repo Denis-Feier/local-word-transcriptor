@@ -33,6 +33,12 @@ const FIELDS = [
     format: (v) => `${v.toFixed(1)} s`,
     hint: 'How often the grey live text updates. Slower models update less often by themselves.',
   },
+  {
+    key: 'crosstalkDb',
+    label: 'Mic separation',
+    format: (v) => `${v} dB`,
+    hint: 'With two mics, each also hears the other person, only less clearly. Lower ignores more of the other person; higher keeps both when people talk at the same time.',
+  },
 ];
 
 /**
@@ -68,7 +74,10 @@ export function createSettings(root, { send, onDisplayPrefs, onOpenDisplay }) {
   }
 
   function setTuning({ values, defaults, ranges }) {
-    if (!Object.keys(fields).length) build(ranges);
+    if (!Object.keys(fields).length) {
+      build(ranges);
+      setAvailable();
+    }
     for (const { f, wrap, input, output, hint } of Object.values(fields)) {
       if (document.activeElement !== input) input.value = values[f.key];
       output.textContent = f.format(values[f.key]);
@@ -77,11 +86,17 @@ export function createSettings(root, { send, onDisplayPrefs, onOpenDisplay }) {
     }
   }
 
-  function setDetector(name) {
-    const threshold = fields.vadThreshold;
-    if (!threshold) return;
-    threshold.input.disabled = name === 'energy';
-    threshold.wrap.classList.toggle('disabled', name === 'energy');
+  let detector = null;
+  let mics = 1;
+
+  /** Grey out the sliders that do nothing right now: the threshold with the loudness detector, separation with one mic. */
+  function setAvailable() {
+    const off = { vadThreshold: detector === 'energy', crosstalkDb: mics < 2 };
+    for (const [key, disabled] of Object.entries(off)) {
+      if (!fields[key]) continue;
+      fields[key].input.disabled = disabled;
+      fields[key].wrap.classList.toggle('disabled', disabled);
+    }
   }
 
   // Projector display controls mirror the projector view's own toolbar.
@@ -135,12 +150,13 @@ export function createSettings(root, { send, onDisplayPrefs, onOpenDisplay }) {
     close,
     toggle: () => (root.hidden ? open() : close()),
     setTuning,
-    setDetector,
-    setLevel: (pct) => ($('#settingsMeter').style.width = `${pct}%`),
-    setSpeaking: (on) => {
-      const el = $('#settingsSpeaking');
-      el.textContent = on ? 'speech' : 'listening';
-      el.classList.toggle('on', on);
+    setDetector: (name) => {
+      detector = name;
+      setAvailable();
+    },
+    setMics: (count) => {
+      mics = count;
+      setAvailable();
     },
   };
 }

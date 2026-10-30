@@ -34,7 +34,7 @@ export function createStage(root, hooks = {}) {
   const toolbar = root.querySelector('.stage-toolbar');
   const button = (action) => toolbar.querySelector(`[data-action="${action}"]`);
   let prefs = loadPrefs();
-  let snap = { finals: [], partial: null, recording: false, speaking: false };
+  let snap = { finals: [], partials: [], recording: false, speaking: false };
   let idleTimer = null;
   let leavingFullscreen = false;
 
@@ -59,8 +59,10 @@ export function createStage(root, hooks = {}) {
   function render() {
     const finals = snap.finals.slice(-prefs.lines);
     const rows = finals.map((l, i) => ({ ...l, kind: i === finals.length - 1 ? 'latest' : 'older' }));
-    // The live sentence goes underneath; an empty row keeps the block from jumping when someone starts talking.
-    rows.push(snap.partial ? { ...snap.partial, kind: 'partial' } : { key: 'next', text: '', kind: 'placeholder' });
+    // Live sentences go underneath (one per mic when people talk at once); an empty row keeps the block from
+    // jumping when someone starts talking.
+    if (snap.partials.length) rows.push(...snap.partials.map((p) => ({ ...p, kind: 'partial' })));
+    else rows.push({ key: 'next', text: '', kind: 'placeholder' });
 
     // Reuse elements by key so a live sentence turns final in place instead of being redrawn.
     const existing = new Map([...linesEl.children].map((el) => [el.dataset.key, el]));
@@ -73,6 +75,8 @@ export function createStage(root, hooks = {}) {
         el.dataset.key = row.key;
       }
       el.className = `stage-line ${row.kind}`;
+      if (row.mic === null || row.mic === undefined) delete el.dataset.mic;
+      else el.dataset.mic = row.mic + 1; // with several mics, each speaker's text has the mic's colour
       if (el.textContent !== row.text) el.textContent = row.text;
       el.setAttribute('aria-hidden', String(row.kind === 'partial' || row.kind === 'placeholder'));
       if (linesEl.children[i] !== el) linesEl.insertBefore(el, linesEl.children[i] ?? null);
@@ -80,7 +84,7 @@ export function createStage(root, hooks = {}) {
     // offsetHeight ignores the slide-in animation's transform, so a new line doesn't count as overflow.
     frame.classList.toggle('overflowing', linesEl.offsetHeight > frame.clientHeight + 1);
 
-    const empty = !finals.length && !snap.partial;
+    const empty = !finals.length && !snap.partials.length;
     hint.hidden = !empty;
     hint.textContent = snap.waiting
       ? 'Waiting for the transcriber window…'

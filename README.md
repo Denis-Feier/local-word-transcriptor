@@ -93,6 +93,24 @@ and override the environment variables below until you press *Reset to defaults*
 | sentences are cut while the speaker pauses or speaks slowly | longer **Pause that ends a sentence** (1.2–2 s or more) |
 | coughs or chair noises turn into words | raise **Ignore sounds shorter than** |
 | one long sentence fills the whole screen | shorter **Longest sentence** |
+| with two mics, one person's words also appear under the other mic | lower **Mic separation** (e.g. 5 dB) |
+| with two mics, someone talking over the other is lost | raise **Mic separation** (e.g. 12 dB) |
+
+## Two microphones
+
+Pick a second input under **Mic 2**. It can be any microphone the computer sees (built-in, USB, jack, Bluetooth,
+a wireless kit's receiver), and each mic is meant for one speaker. Every line then says which mic heard it, in that
+mic's colour: Mic 1 blue, Mic 2 orange, on the page, in the projector view and as `Mic 1:` / `Mic 2:` in the saved
+transcript. Lines spoken at the same time are marked ⇄.
+
+- **Each mic also hears the other person**, just less clearly. The app keeps those words only on the mic that heard
+  them best, so they don't show up twice. If the same words still reach both mics, the less clear copy is dropped
+  once both are transcribed.
+- **Talking at the same time** works: each mic is transcribed separately, and both lines appear.
+- **A mic that disconnects** (Bluetooth out of range, battery, cable) shows *not connected*. The other keeps
+  recording, and it joins again on its own once it is back.
+- With *Save audio* on, each mic gets its own WAV (`<stamp>-mic1.wav`, `<stamp>-mic2.wav`).
+- `MAX_MICS` changes the limit of 2.
 
 ## Docker or native?
 
@@ -187,14 +205,16 @@ The report (speed, WER, and every model's full transcript) is written to `transc
 - **An external USB conference or boundary mic** helps the most for people at the far end of the table. Pick it under **Microphone**.
 - **Noise suppression** is off by default because the browser's filter can swallow quiet, distant voices. Turn it on if there is steady background noise (air conditioning, traffic).
 - The page keeps the screen awake while recording. If the server restarts mid-meeting, the page keeps recording and sends the buffered audio (up to 5 minutes) once it reconnects.
-- Overlapping speech (two people at once) is transcribed as one mixed sentence. Turn-taking works best.
+- Overlapping speech (two people at once) is transcribed as one mixed sentence. Turn-taking works best, or give
+  each speaker their own mic (see *Two microphones*).
 
 ## How it works
 
 ```
 Browser                       Node (server.js)                            Speech model
-mic → AudioWorklet ──WS──▶  Silero VAD + Segmenter               ──▶   whisper-server (whisper.cpp, GPU)
-      16 kHz Float32        ├─ while speaking: live guess              transcribe.cpp (GPU, in-process)
+mics → AudioWorklet ─WS─▶  Silero VAD + Segmenter per mic        ──▶   whisper-server (whisper.cpp, GPU)
+      16 kHz Float32        (crosstalk gate between mics)              transcribe.cpp (GPU, in-process)
+                            ├─ while speaking: live guess
                             └─ on pause: final + save                  sherpa-onnx (CPU, in-process)
       transcript UI ◀──WS── text cleanup (diacritics,                  python/nemo_server.py (NeMo, CPU)
                             hallucination filter)
@@ -202,14 +222,16 @@ mic → AudioWorklet ──WS──▶  Silero VAD + Segmenter               ─
 
 | File | Role |
 |---|---|
-| `public/pcm-worklet.js` | Captures the mic, downsamples to 16 kHz mono, sends 100 ms chunks |
-| `public/app.js` | UI: models, mic, live and final lines, wake lock, reconnect buffering |
+| `public/pcm-worklet.js` | Takes one input per mic, downsamples to 16 kHz mono, sends 100 ms chunks with every mic's audio side by side |
+| `public/mics.js` | Lists the audio inputs and records one or more of them together; reconnects a mic that comes back |
+| `public/app.js` | UI: models, mic choice, live and final lines (coloured per mic), wake lock, reconnect buffering |
 | `public/stage.js` | Projector view: large centred captions, display preferences, full screen; also the caption window (`/?display`) |
 | `public/settings.js` | Settings panel: live speech-detection sliders (`lib/tuning.js` on the server) and projector display options |
 | `server.js` | Static files, WebSocket, model downloads and switching |
 | `lib/vad.js` | Speech detectors: Silero (neural, default) and a loudness fallback |
 | `lib/segmenter.js` | Turns detector frames into utterances: pre-roll, pause timeout, splits monologues longer than 20 s at the quietest point |
-| `lib/session.js` | One browser tab: schedules live guesses and finals, writes transcript/audio files |
+| `lib/session.js` | One browser tab: a segmenter per mic, schedules live guesses and finals, drops a sentence another mic heard more clearly, writes transcript/audio files |
+| `lib/crosstalk.js` | With several mics: decides which mic each moment of speech belongs to, by clarity above each mic's own noise |
 | `lib/transcriber.js` | Owns the active model, serialises requests, switches models, restarts a crashed model |
 | `lib/engines/*.js` | One adapter per runtime: whisper.cpp, transcribe.cpp, sherpa-onnx, Python/NeMo. `sidecar.js` is the shared logic for models served by a separate process |
 | `python/nemo_server.py` | Small local HTTP server that runs NeMo models (Jackrabbit) for the Node app; its environment lives in `python/.venv` |
@@ -226,7 +248,7 @@ Live guesses refresh every 0.5 s, or less often for slow models (twice the model
 
 ## Configuration (environment variables)
 
-The speech-detection values (`VAD_THRESHOLD`, `VAD_SILENCE_MS`, `VAD_MAX_SEGMENT_SEC`, `PARTIAL_EVERY_SEC`) can also be changed live in **Settings**, which overrides them until *Reset to defaults*.
+The speech-detection values (`VAD_THRESHOLD`, `VAD_SILENCE_MS`, `VAD_MAX_SEGMENT_SEC`, `PARTIAL_EVERY_SEC`, `CROSSTALK_DB`) can also be changed live in **Settings**, which overrides them until *Reset to defaults*.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -238,6 +260,8 @@ The speech-detection values (`VAD_THRESHOLD`, `VAD_SILENCE_MS`, `VAD_MAX_SEGMENT
 | `VAD_SILENCE_MS` | `700` | Pause that ends a sentence. Raise (e.g. `1000`) if sentences get cut while people think |
 | `VAD_MAX_SEGMENT_SEC` | `20` | Longest utterance before a forced split |
 | `PARTIAL_EVERY_SEC` | `0.5` | Fastest refresh of the live guess |
+| `MAX_MICS` | `2` | How many microphones can be used at the same time |
+| `CROSSTALK_DB` | `8` | With several mics: a mic ignores speech it hears this many dB less clearly than another mic (Settings → *Mic separation*) |
 | `INITIAL_PROMPT` | empty | Whisper only: names or jargon to prime the first sentence, e.g. `INITIAL_PROMPT="Ședința cu Andrei și Mihaela despre Kubernetes."` Later sentences use the previous text as context automatically |
 | `THREADS` | `4` | CPU threads for the models |
 | `DEBUG` | unset | `DEBUG=1` prints model logs and per-sentence timings |
@@ -249,6 +273,14 @@ say -v Ioana -o /tmp/ro.aiff "Bună ziua, ce mai faceți? Astăzi vorbim despre 
 afconvert -f WAVE -d LEI16@16000 -c 1 /tmp/ro.aiff /tmp/ro.wav
 npm start                                                        # terminal 1
 npm run test:wav -- /tmp/ro.wav --model canary-1b-v2              # terminal 2, streams in real time
+```
+
+Two mics: `--mic2 other.wav` streams a second speaker alongside. `--bleed 15` lets each mic also hear the other
+speaker 15 dB quieter, `--lag 150` delays mic 2 like Bluetooth, and `--gain2 12` makes it louder. `--mic2 silence
+--only-mic 1` checks that a mic hearing only the other person stays silent:
+
+```bash
+npm run test:wav -- test/fixtures/ro.wav --mic2 silence --bleed 6 --lag 150 --only-mic 1 --expect munții
 ```
 
 ## Troubleshooting

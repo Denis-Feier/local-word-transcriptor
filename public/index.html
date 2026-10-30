@@ -22,10 +22,7 @@
       <button id="toggle" class="primary" disabled>
         <span class="rec"></span><span id="toggleText">Start</span>
       </button>
-      <div class="meter" title="Microphone level">
-        <div class="meter-fill" id="meter"></div>
-      </div>
-      <span class="speaking" id="speaking">listening</span>
+      <div class="levels" id="levels"></div>
       <button id="projector" class="ghost" title="Large captions for a projector (P)">Projector</button>
       <button id="openSettings" class="ghost" aria-controls="settings">Settings</button>
       <span class="spacer"></span>
@@ -39,10 +36,7 @@
         <span>Model</span>
         <select id="model"></select>
       </label>
-      <label class="field">
-        <span>Microphone</span>
-        <select id="mic"><option value="">System default</option></select>
-      </label>
+      <div class="mics" id="mics"></div>
       <label class="check" title="The browser's noise filter. Off is usually better for distant voices; turn on for a noisy room.">
         <input type="checkbox" id="noise"> Noise suppression
       </label>
@@ -92,10 +86,7 @@
     <section class="drawer-section">
       <h3>Speech detection</h3>
       <p class="drawer-note">Changes apply immediately and are remembered. Adjust them while the person is speaking.</p>
-      <div class="live">
-        <div class="meter" title="Microphone level"><div class="meter-fill" id="settingsMeter"></div></div>
-        <span class="speaking" id="settingsSpeaking">listening</span>
-      </div>
+      <div class="live levels" id="settingsLevels"></div>
       <div id="tuningFields"></div>
       <button class="ghost" id="tuningReset">Reset to defaults</button>
     </section>

@@ -1,5 +1,6 @@
 import { createStage } from '/stage.js';
 import { createSettings } from '/settings.js';
+import { listInputs, openCapture } from '/mics.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -8,14 +9,14 @@ const els = {
   lang: $('lang'),
   toggle: $('toggle'),
   toggleText: $('toggleText'),
-  meter: $('meter'),
-  speaking: $('speaking'),
+  levels: $('levels'),
+  settingsLevels: $('settingsLevels'),
   copy: $('copy'),
   download: $('download'),
   clear: $('clear'),
   model: $('model'),
   modelNotes: $('modelNotes'),
-  mic: $('mic'),
+  mics: $('mics'),
   noise: $('noise'),
   saveAudio: $('saveAudio'),
   error: $('error'),
@@ -29,22 +30,29 @@ const els = {
 const MAX_BACKLOG = 3000; // 100 ms chunks = 5 minutes of audio kept while the server is unreachable
 const CHANNEL = 'transcriber-captions'; // main window -> caption windows (/?display), same browser
 const DISPLAY_ONLY = new URLSearchParams(location.search).has('display');
+const NONE = 'none'; // "no second mic" in the mic menus
+const OVERLAP_SEC = 0.5; // lines from two mics overlapping at least this long were spoken at the same time
 
 let ws = null;
 let generation = 0; // bumps on every (re)connect; server segment ids restart per connection
 let engine = { state: 'loading', message: 'Connecting…', model: null };
 let models = [];
 let recording = false;
-let audio = null; // { ctx, stream, node }
+let capture = null; // the open mics while recording (mics.js)
 let backlog = [];
 let wakeLock = null;
 let modelSignature = '';
-let speaking = false;
+let maxMics = 1; // how many mics may be used at once; the server says (MAX_MICS)
+let picks = []; // the chosen mics in order (Mic 1, Mic 2, …): { id, label }; id '' = system default
+let inputs = []; // the audio inputs the browser lists
+let defaultId = ''; // the input behind "System default"
+let micWarning = '';
+const speaking = new Set(); // mics on which someone is talking right now
 let stage = null;
 let settings = null;
 let channel = null;
 const files = {};
-const lines = new Map(); // generation * 1e6 + segment id -> { el, text, start, final }
+const lines = new Map(); // generation * 1e6 + segment id -> { el, text, start, end, mic, labeled, final }
 
 const store = {
   get: (key, fallback) => {
@@ -66,7 +74,7 @@ const store = {
 // ---------- server connection ----------
 
 function connect() {
-  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws = new WebSocket(`ws://${location.host}/ws?mics`); // ?mics: audio frames start with the number of mics
   ws.binaryType = 'arraybuffer';
   ws.onopen = () => {
     generation++;
@@ -108,8 +116,12 @@ function handle(msg) {
       render();
       break;
     }
+    case 'mics':
+      maxMics = msg.max;
+      micsUpdated();
+      break;
     case 'vad':
-      setSpeaking(msg.speaking);
+      setSpeaking(msg.mic ?? 0, msg.speaking);
       break;
     case 'tuning':
       settings.setTuning(msg);
@@ -122,7 +134,7 @@ function handle(msg) {
       else removeLine(key);
       break;
     case 'file':
-      files[msg.kind] = msg.path;
+      files[`${msg.kind}${msg.mic ?? ''}`] = msg.path;
       els.file.textContent = `Saving to ${Object.values(files).join(' + ')}`;
       break;
     case 'error':
@@ -131,67 +143,180 @@ function handle(msg) {
   }
 }
 
-// ---------- microphone ----------
+// ---------- microphones ----------
 
-async function openCapture() {
-  const deviceId = els.mic.value;
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      deviceId: deviceId ? { exact: deviceId } : undefined,
-      channelCount: 1,
-      // Room setup: no playback to cancel, and the browser's noise filter can eat distant voices.
-      echoCancellation: false,
-      noiseSuppression: els.noise.checked,
-      autoGainControl: true, // lifts quiet or far-away speakers
-    },
+const micName = (mic) => `Mic ${mic + 1}`;
+const used = () => picks.slice(0, maxMics);
+const multiMic = () => used().length > 1;
+
+function loadPicks() {
+  const saved = store.get('mics', null);
+  if (Array.isArray(saved) && saved.length) return saved;
+  return [{ id: store.get('mic', ''), label: '' }]; // the single-mic setting of earlier versions
+}
+
+/** The input a pick means right now: by id, else by name (a re-paired Bluetooth mic can get a new id). */
+function resolve(pick) {
+  if (!pick.id) return defaultId;
+  if (inputs.some((d) => d.deviceId === pick.id)) return pick.id;
+  return inputs.find((d) => pick.label && d.label === pick.label)?.deviceId ?? pick.id;
+}
+
+const openId = (pick) => (pick.id ? resolve(pick) : ''); // '' lets the browser follow the system default
+const connected = (pick) => !pick.id || inputs.some((d) => d.deviceId === resolve(pick));
+
+async function refreshInputs() {
+  ({ inputs, defaultId } = await listInputs());
+  // Names appear once the mic is allowed; remember them, to find a mic again if its id changes.
+  const named = picks.map((p) => ({ ...p, label: inputs.find((d) => d.deviceId === p.id)?.label || p.label }));
+  if (named.some((p, i) => p.label !== picks[i].label)) store.set('mics', named);
+  picks = named;
+  renderMicFields();
+  // A mic that was switched off or out of range is back: let it join the recording again.
+  capture?.slots.forEach((slot, mic) => {
+    if (!slot.stream && picks[mic] && connected(picks[mic])) capture.reattach(mic, openId(picks[mic]));
   });
-  // Ask the browser to resample to 16 kHz; Firefox refuses to mix rates, so fall back to the native rate
-  // and let the worklet downsample.
-  let ctx;
-  let source;
-  try {
-    ctx = new AudioContext({ sampleRate: 16000 });
-    source = ctx.createMediaStreamSource(stream);
-  } catch {
-    await ctx?.close();
-    ctx = new AudioContext();
-    source = ctx.createMediaStreamSource(stream);
+}
+
+/** One menu per mic. Mic 1 is always used; the next one offers "None", up to the server's limit. */
+function renderMicFields() {
+  const count = Math.min(maxMics, picks.length + 1);
+  els.mics.replaceChildren();
+  for (let mic = 0; mic < count; mic++) {
+    const pick = picks[mic];
+    const taken = new Set(picks.filter((_, other) => other !== mic && other < maxMics).map(resolve));
+    const field = document.createElement('label');
+    field.className = 'field';
+    const name = document.createElement('span');
+    name.textContent = maxMics > 1 ? micName(mic) : 'Microphone';
+    const select = document.createElement('select');
+    const first = new Option(mic === 0 ? 'System default' : 'None', mic === 0 ? '' : NONE);
+    first.disabled = mic === 0 && taken.has(defaultId);
+    select.add(first);
+    inputs.forEach((d, i) => {
+      const option = new Option(d.label || `Microphone ${i + 1}`, d.deviceId);
+      option.disabled = taken.has(d.deviceId);
+      select.add(option);
+    });
+    if (pick?.id && !inputs.some((d) => d.deviceId === resolve(pick))) {
+      select.add(new Option(`${pick.label || 'Microphone'} (not connected)`, pick.id));
+    }
+    select.value = pick ? (pick.id ? resolve(pick) : '') : NONE;
+    select.addEventListener('change', () => chooseMic(mic, select.value));
+    if (multiMic() && pick) field.dataset.mic = mic + 1;
+    field.append(name, select);
+    els.mics.append(field);
   }
-  await ctx.resume();
-  await ctx.audioWorklet.addModule('/pcm-worklet.js');
-  const node = new AudioWorkletNode(ctx, 'pcm-capture');
-  node.port.onmessage = (e) => {
-    const chunk = e.data;
-    showLevel(chunk);
-    if (ws?.readyState === WebSocket.OPEN) ws.send(chunk.buffer);
-    else if (backlog.length < MAX_BACKLOG) backlog.push(chunk.buffer);
-  };
-  source.connect(node);
-  node.connect(ctx.destination); // keeps the node pulled by the graph; it outputs silence
-  return { ctx, stream, node };
+}
+
+function chooseMic(mic, id) {
+  if (id === NONE) picks.splice(mic, 1);
+  else picks[mic] = { id, label: inputs.find((d) => d.deviceId === id)?.label ?? '' };
+  store.set('mics', picks);
+  micsUpdated();
+  restartCapture();
+}
+
+/** The number of mics or their order changed. */
+function micsUpdated() {
+  renderMicFields();
+  settings.setMics(used().length);
+  // A level meter and speech indicator per mic, in the controls bar and in Settings.
+  for (const root of [els.levels, els.settingsLevels]) {
+    root.replaceChildren();
+    used().forEach((_, mic) => {
+      const el = document.createElement('div');
+      el.className = 'level';
+      el.innerHTML = '<span class="who"></span><div class="meter" title="Microphone level"><div class="meter-fill"></div></div><span class="speaking"></span>';
+      if (multiMic()) {
+        el.dataset.mic = mic + 1;
+        el.querySelector('.who').textContent = micName(mic);
+      }
+      root.append(el);
+    });
+  }
+  renderLevels();
+}
+
+const levelEls = (mic) => [els.levels, els.settingsLevels].map((root) => root.children[mic]).filter(Boolean);
+
+function renderLevels() {
+  used().forEach((_, mic) => {
+    const missing = Boolean(capture && !capture.slots[mic]?.stream);
+    for (const el of levelEls(mic)) {
+      const label = el.querySelector('.speaking');
+      label.textContent = missing ? 'not connected' : speaking.has(mic) ? 'speech' : 'listening';
+      label.classList.toggle('on', speaking.has(mic));
+      label.classList.toggle('off', missing);
+      if (missing || !recording) el.querySelector('.meter-fill').style.width = '0';
+    }
+  });
+}
+
+function showLevels(buffer) {
+  const count = new Uint32Array(buffer, 0, 1)[0];
+  const samples = new Float32Array(buffer, 4);
+  const length = samples.length / count;
+  for (let mic = 0; mic < count; mic++) {
+    let sum = 0;
+    for (let i = mic * length; i < (mic + 1) * length; i++) sum += samples[i] * samples[i];
+    const rms = Math.sqrt(sum / length);
+    // Map roughly -60..0 dBFS onto 0..100 %.
+    const pct = Math.max(0, Math.min(100, ((20 * Math.log10(rms + 1e-9) + 60) / 60) * 100));
+    for (const el of levelEls(mic)) el.querySelector('.meter-fill').style.width = `${pct}%`;
+  }
+}
+
+function openMics() {
+  return openCapture(used().map(openId), {
+    noiseSuppression: els.noise.checked,
+    onChunk: (buffer) => {
+      showLevels(buffer);
+      if (ws?.readyState === WebSocket.OPEN) ws.send(buffer);
+      else if (backlog.length < MAX_BACKLOG) backlog.push(buffer);
+    },
+    onChange: micsChanged,
+  });
+}
+
+/** Mics that are missing or that record at a low rate, as a warning; recording goes on with the others. */
+function micsChanged() {
+  renderLevels();
+  if (!capture) return;
+  const notes = [];
+  capture.slots.forEach((slot, mic) => {
+    const name = multiMic() ? `${micName(mic)} (${picks[mic].label || 'microphone'})` : picks[mic].label || 'The microphone';
+    if (!slot.stream) notes.push(`${name} is not connected; it joins the recording again as soon as it is back.`);
+    else if (slot.rate && slot.rate < 16000) notes.push(`${name} records at ${slot.rate / 1000} kHz (older Bluetooth headsets do), so its text will be less accurate.`);
+  });
+  if (notes.length) {
+    micWarning = notes.join('\n');
+    showError(micWarning);
+  } else if (micWarning && els.error.textContent === micWarning) {
+    hideError();
+  }
 }
 
 function closeCapture() {
-  if (!audio) return;
-  audio.node.port.onmessage = null;
-  audio.stream.getTracks().forEach((t) => t.stop());
-  audio.ctx.close();
-  audio = null;
+  capture?.close();
+  capture = null;
 }
 
 async function start() {
   hideError();
   try {
-    audio = await openCapture();
+    capture = await openMics();
   } catch (err) {
+    const missing = err.name === 'NotFoundError' || err.name === 'OverconstrainedError';
     showError(err.name === 'NotAllowedError'
       ? 'Microphone access was blocked. Allow it in the browser address bar (and in System Settings → Privacy & Security → Microphone), then try again.'
-      : `Could not open the microphone: ${err.message}`);
+      : missing ? 'The microphone is not connected. Connect it, or pick another one.' : `Could not open the microphone: ${err.message}`);
     return;
   }
   recording = true;
   keepAwake(true);
-  listMics(); // device names become available once permission is granted
+  refreshInputs(); // device names become available once permission is granted
+  micsChanged();
   render();
 }
 
@@ -200,31 +325,22 @@ function stop() {
   closeCapture();
   send({ type: 'flush' }); // finalise whatever was being said
   keepAwake(false);
-  els.meter.style.width = '0';
-  settings.setLevel(0);
-  setSpeaking(false);
+  speaking.clear();
+  renderLevels();
   render();
 }
 
-/** Mic or noise setting changed mid-recording: reopen the capture without ending the session. */
+/** Mics or noise setting changed mid-recording: reopen the capture without ending the session. */
 async function restartCapture() {
   if (!recording) return;
   closeCapture();
   try {
-    audio = await openCapture();
+    capture = await openMics();
+    micsChanged();
   } catch (err) {
     showError(`Could not switch microphone: ${err.message}`);
     stop();
   }
-}
-
-async function listMics() {
-  const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
-  const inputs = devices.filter((d) => d.kind === 'audioinput' && d.deviceId !== 'default');
-  const saved = store.get('mic', '');
-  els.mic.length = 1; // keep "System default"
-  inputs.forEach((d, i) => els.mic.add(new Option(d.label || `Microphone ${i + 1}`, d.deviceId)));
-  els.mic.value = inputs.some((d) => d.deviceId === saved) ? saved : '';
 }
 
 async function keepAwake(on) {
@@ -242,21 +358,10 @@ async function keepAwake(on) {
   }
 }
 
-function showLevel(chunk) {
-  let sum = 0;
-  for (let i = 0; i < chunk.length; i++) sum += chunk[i] * chunk[i];
-  const rms = Math.sqrt(sum / chunk.length);
-  // Map roughly -60..0 dBFS onto 0..100 %.
-  const pct = Math.max(0, Math.min(100, ((20 * Math.log10(rms + 1e-9) + 60) / 60) * 100));
-  els.meter.style.width = `${pct}%`;
-  settings.setLevel(pct);
-}
-
-function setSpeaking(on) {
-  speaking = on;
-  els.speaking.textContent = on ? 'speech' : 'listening';
-  els.speaking.classList.toggle('on', on);
-  settings.setSpeaking(on);
+function setSpeaking(mic, on) {
+  if (on) speaking.add(mic);
+  else speaking.delete(mic);
+  renderLevels();
   publish();
 }
 
@@ -274,28 +379,50 @@ function nearBottom() {
   return t.scrollHeight - t.scrollTop - t.clientHeight < 80;
 }
 
-function upsertLine(key, { text, start, model, ms }, final) {
+function upsertLine(key, { text, start, end, mic = 0, model, ms }, final) {
   const stick = nearBottom();
   let line = lines.get(key);
   if (!line) {
     const el = document.createElement('p');
     el.className = 'line';
-    el.innerHTML = '<time></time><span class="text"></span>';
+    el.innerHTML = '<span class="meta"><time></time><span class="who"></span></span><span class="text"></span>';
+    // With several mics, each line says which mic heard it, by name and colour.
+    const labeled = multiMic();
+    if (labeled) {
+      el.dataset.mic = mic + 1;
+      el.querySelector('.who').textContent = micName(mic);
+    }
     // Keep lines in order even if a live guess for a newer segment arrived first.
     const after = [...lines.keys()].filter((k) => k > key).sort((a, b) => a - b)[0];
     els.transcript.insertBefore(el, after ? lines.get(after).el : null);
-    line = { el };
+    line = { el, mic, labeled };
     lines.set(key, line);
   }
   if (line.final && !final) return;
-  Object.assign(line, { text, start, final });
+  Object.assign(line, { text, start, end, final });
   line.el.classList.toggle('partial', !final);
   line.el.querySelector('time').textContent = fmtTime(start);
   line.el.querySelector('.text').textContent = text;
   if (final && model) line.el.title = `${model} · ${ms} ms`;
+  if (final) markOverlap(key);
   els.empty.hidden = true;
   if (stick) els.transcript.scrollTop = els.transcript.scrollHeight;
   render();
+}
+
+/** Mark a final line and the lines from other mics that were spoken at the same time. */
+function markOverlap(key) {
+  const line = lines.get(key);
+  if (!line.labeled) return;
+  const sameConnection = (k) => Math.floor(k / 1e6) === Math.floor(key / 1e6); // times restart per connection
+  for (const [k, other] of lines) {
+    if (!other.final || !other.labeled || other.mic === line.mic || !sameConnection(k)) continue;
+    if (Math.min(line.end, other.end) - Math.max(line.start, other.start) < OVERLAP_SEC) continue;
+    for (const [a, b] of [[line, other], [other, line]]) {
+      a.el.classList.add('overlap');
+      a.el.querySelector('.who').title = `Spoken at the same time as ${micName(b.mic)}`;
+    }
+  }
 }
 
 function removeLine(key) {
@@ -309,13 +436,15 @@ function finalLines() {
   return [...lines.entries()].sort((a, b) => a[0] - b[0]).map(([, l]) => l).filter((l) => l.final);
 }
 
+const lineText = (l) => (l.labeled ? `${micName(l.mic)}: ${l.text}` : l.text);
+
 async function copyText() {
-  await navigator.clipboard.writeText(finalLines().map((l) => l.text).join('\n'));
+  await navigator.clipboard.writeText(finalLines().map(lineText).join('\n'));
   flash(els.copy, 'Copied');
 }
 
 function downloadText() {
-  const text = finalLines().map((l) => `[${fmtTime(l.start)}] ${l.text}`).join('\n') + '\n';
+  const text = finalLines().map((l) => `[${fmtTime(l.start)}] ${lineText(l)}`).join('\n') + '\n';
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
   a.download = `transcript-${new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-')}.txt`;
@@ -328,20 +457,22 @@ function clearTranscript() {
   lines.clear();
   els.empty.hidden = false;
   els.file.textContent = '';
-  delete files.text;
-  delete files.audio;
+  for (const kind of Object.keys(files)) delete files[kind];
   send({ type: 'reset' });
   render();
 }
 
 // ---------- projector ----------
 
-/** What the projector view needs: recent final sentences, the one being spoken, and the mic state. */
+/** What the projector view needs: recent final sentences, the ones being spoken, and the mic state. */
 function snapshot() {
   const entries = [...lines.entries()].sort((a, b) => a[0] - b[0]);
-  const finals = entries.filter(([, l]) => l.final).slice(-5).map(([key, l]) => ({ key, text: l.text }));
-  const live = entries.filter(([, l]) => !l.final).at(-1);
-  return { finals, partial: live ? { key: live[0], text: live[1].text } : null, recording, speaking };
+  const row = ([key, l]) => ({ key, text: l.text, mic: l.labeled ? l.mic : null });
+  const finals = entries.filter(([, l]) => l.final).slice(-5).map(row);
+  // The sentence being spoken on each mic: two when people talk at the same time.
+  const live = new Map(entries.filter(([, l]) => !l.final).map((entry) => [entry[1].mic, entry]));
+  const partials = [...live.values()].sort((a, b) => a[0] - b[0]).map(row);
+  return { finals, partials, recording, speaking: speaking.size > 0 };
 }
 
 function publish() {
@@ -449,10 +580,6 @@ function initMain() {
   els.download.addEventListener('click', downloadText);
   els.clear.addEventListener('click', clearTranscript);
   els.model.addEventListener('change', chooseModel);
-  els.mic.addEventListener('change', () => {
-    store.set('mic', els.mic.value);
-    restartCapture();
-  });
   els.noise.addEventListener('change', () => {
     store.set('noise', els.noise.checked);
     restartCapture();
@@ -461,14 +588,16 @@ function initMain() {
     store.set('saveAudio', els.saveAudio.checked);
     send({ type: 'options', saveAudio: els.saveAudio.checked });
   });
-  navigator.mediaDevices?.addEventListener('devicechange', listMics);
+  navigator.mediaDevices?.addEventListener('devicechange', refreshInputs);
   document.addEventListener('visibilitychange', () => {
     if (recording && document.visibilityState === 'visible') keepAwake(true); // the lock drops when the tab is hidden
   });
 
   els.noise.checked = store.get('noise', false);
   els.saveAudio.checked = store.get('saveAudio', false);
-  listMics();
+  picks = loadPicks();
+  micsUpdated();
+  refreshInputs();
   connect();
 }
 
@@ -476,7 +605,7 @@ function initMain() {
 function initDisplay() {
   document.body.classList.add('display-only');
   document.title = 'Captions';
-  const empty = { finals: [], partial: null, recording: false, speaking: false };
+  const empty = { finals: [], partials: [], recording: false, speaking: false };
   stage = createStage($('stage'));
   stage.show({ fullscreen: false }); // full screen needs a click or key press in this window: F or double-click
   stage.update({ ...empty, waiting: true });

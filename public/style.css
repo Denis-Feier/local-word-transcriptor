@@ -11,6 +11,11 @@
   --warn: #b45309;
   --bad: #b91c1c;
   --partial: #8a857c;
+  /* One colour per mic (Mic 1, Mic 2, …), told apart also with colour blindness. */
+  --mic-1: #1d4ed8;
+  --mic-2: #b45309;
+  --mic-3: #047857;
+  --mic-4: #7e22ce;
   --radius: 12px;
   color-scheme: light dark;
 }
@@ -29,8 +34,17 @@
     --warn: #fbbf24;
     --bad: #f87171;
     --partial: #8f8a81;
+    --mic-1: #60a5fa;
+    --mic-2: #fb923c;
+    --mic-3: #34d399;
+    --mic-4: #c084fc;
   }
 }
+
+[data-mic="1"] { --mic: var(--mic-1); }
+[data-mic="2"] { --mic: var(--mic-2); }
+[data-mic="3"] { --mic: var(--mic-3); }
+[data-mic="4"] { --mic: var(--mic-4); }
 
 * { box-sizing: border-box; }
 
@@ -118,6 +132,15 @@ button.primary.recording .rec { border-radius: 2px; }
 
 .speaking { font-size: 13px; color: var(--faint); min-width: 70px; }
 .speaking.on { color: var(--accent); font-weight: 600; }
+.speaking.off { color: var(--bad); }
+
+/* One meter per mic. */
+.levels { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }
+.level { display: flex; align-items: center; gap: 8px; }
+.level .who { font-size: 12px; font-weight: 600; color: var(--mic); white-space: nowrap; }
+.level .who:empty { display: none; }
+.level[data-mic] .meter-fill { background: var(--mic); }
+.level[data-mic] .speaking.on { color: var(--mic); }
 
 .settings {
   display: flex;
@@ -130,6 +153,17 @@ button.primary.recording .rec { border-radius: 2px; }
 }
 
 .field { display: flex; align-items: center; gap: 8px; }
+.mics { display: contents; }
+.field[data-mic] > span::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--mic);
+  vertical-align: 1px;
+}
 
 select {
   font: inherit;
@@ -172,16 +206,23 @@ select {
 .empty { color: var(--muted); font-size: 16px; margin: 0; }
 
 .line { display: flex; gap: 14px; margin: 0 0 10px; }
-.line time {
+.line .meta {
   flex: none;
+  display: flex;
+  flex-direction: column;
   width: 48px;
   padding-top: 4px;
   font-size: 12px;
-  color: var(--faint);
-  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
 }
+.line time { color: var(--faint); font-variant-numeric: tabular-nums; }
+.line .who { font-weight: 600; color: var(--mic); white-space: nowrap; }
+.line .who:empty { display: none; }
+.line.overlap .who::after { content: " ⇄"; } /* spoken at the same time as a line from another mic */
 .line .text { flex: 1; }
+.line[data-mic] .text { color: var(--mic); }
 .line.partial .text { color: var(--partial); }
+.line.partial[data-mic] .text { color: var(--mic); opacity: 0.6; }
 .line.partial .text::after {
   content: "";
   display: inline-block;
@@ -189,7 +230,7 @@ select {
   height: 1em;
   margin-left: 3px;
   vertical-align: -2px;
-  background: var(--accent);
+  background: var(--mic, var(--accent));
   animation: blink 1s steps(2) infinite;
 }
 
@@ -208,7 +249,7 @@ select {
 
 @media (max-width: 600px) {
   .transcript { padding: 16px; font-size: 17px; }
-  .line time { width: 40px; }
+  .line .meta { width: 40px; }
   .spacer { display: none; }
 }
 
@@ -231,6 +272,10 @@ kbd {
   --stage-dim: rgba(255, 255, 255, 0.62);
   --stage-accent: #f97316;
   --stage-ok: #4ade80;
+  --stage-mic-1: #93c5fd;
+  --stage-mic-2: #fdba74;
+  --stage-mic-3: #6ee7b7;
+  --stage-mic-4: #d8b4fe;
   position: fixed;
   inset: 0;
   z-index: 40;
@@ -242,13 +287,24 @@ kbd {
   color: var(--stage-fg);
 }
 .stage[hidden] { display: none; }
-.stage[data-theme="contrast"] { --stage-fg: #ffe14d; --stage-dim: rgba(255, 225, 77, 0.66); }
+.stage[data-theme="contrast"] {
+  --stage-fg: #ffe14d;
+  --stage-dim: rgba(255, 225, 77, 0.66);
+  --stage-mic-1: #7dd3fc;
+  --stage-mic-2: #ffe14d;
+  --stage-mic-3: #86efac;
+  --stage-mic-4: #f0abfc;
+}
 .stage[data-theme="light"] {
   --stage-bg: #fff;
   --stage-fg: #111;
   --stage-dim: rgba(17, 17, 17, 0.58);
   --stage-accent: #c2410c;
   --stage-ok: #15803d;
+  --stage-mic-1: #1d4ed8;
+  --stage-mic-2: #b45309;
+  --stage-mic-3: #047857;
+  --stage-mic-4: #7e22ce;
 }
 
 /* Centred while it fits; when it doesn't, the oldest text is cut at the top so the newest stays visible. */
@@ -284,6 +340,11 @@ kbd {
   transition: color 0.5s ease;
 }
 .stage-line.older { color: var(--stage-dim); }
+.stage-line[data-mic="1"] { color: var(--stage-mic-1); }
+.stage-line[data-mic="2"] { color: var(--stage-mic-2); }
+.stage-line[data-mic="3"] { color: var(--stage-mic-3); }
+.stage-line[data-mic="4"] { color: var(--stage-mic-4); }
+.stage-line.older[data-mic] { opacity: 0.62; }
 .stage-line.placeholder { min-height: 1.25em; animation: none; }
 .stage-line.partial::after {
   content: "";

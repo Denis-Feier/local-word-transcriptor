@@ -14,6 +14,7 @@ const STATIC = {
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/stage.js': ['stage.js', 'text/javascript; charset=utf-8'],
   '/settings.js': ['settings.js', 'text/javascript; charset=utf-8'],
+  '/mics.js': ['mics.js', 'text/javascript; charset=utf-8'],
   '/pcm-worklet.js': ['pcm-worklet.js', 'text/javascript; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
 };
@@ -124,7 +125,10 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 1 << 20 });
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
+  // The page connects to /ws?mics and prefixes every audio frame with its number of mics;
+  // other clients (test/stream-wav.js) send plain mono audio.
+  const framed = new URL(req.url, 'http://localhost').searchParams.has('mics');
   const send = (msg) => {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
   };
@@ -134,12 +138,23 @@ wss.on('connection', (ws) => {
   send(modelsMessage());
   send({ ...statusMessage(), detector: session.detector });
   send(tuningMessage());
+  send({ type: 'mics', max: config.maxMics });
 
   ws.on('message', (data, isBinary) => {
     if (isBinary) {
-      // Float32 PCM, 16 kHz mono. Copy out so the view is 4-byte aligned.
+      // Float32 PCM, 16 kHz. Copy out so the view is 4-byte aligned.
       const bytes = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength - (data.byteLength % 4));
-      session.audio(new Float32Array(bytes));
+      if (!framed) {
+        session.audio(new Float32Array(bytes));
+        return;
+      }
+      // Uint32 number of mics, then each mic's samples in turn.
+      if (bytes.byteLength < 8) return;
+      const count = new Uint32Array(bytes, 0, 1)[0];
+      const samples = new Float32Array(bytes, 4);
+      if (count < 1 || samples.length % count) return;
+      const used = Math.min(count, config.maxMics);
+      session.audio(samples.subarray(0, (samples.length / count) * used), used);
       return;
     }
     let msg;
