@@ -34,6 +34,37 @@ Open **http://localhost:3000**, press **Start**, and allow the microphone.
 - After a short pause (~0.7 s) the sentence is transcribed again in full and turns final.
 - Final lines are saved as you go to `transcripts/<date-time>.txt`. **Clear** starts a new file.
 
+## Projector captions and live settings
+
+**Projector** (or the <kbd>P</kbd> key) turns the page into large captions for a projector: the last sentences
+centred on screen, older ones dimmed, the sentence being spoken appearing live underneath. Move the mouse to show
+the controls; they and the cursor hide again after a few seconds, so the audience sees only text.
+
+| In the projector view | |
+|---|---|
+| <kbd>+</kbd> / <kbd>−</kbd> | text size |
+| <kbd>L</kbd> | how many sentences are shown (1–5) |
+| <kbd>T</kbd> | colours: white on black, yellow on black (high contrast), black on white |
+| <kbd>F</kbd> or double-click | full screen |
+| <kbd>Esc</kbd> | back to the transcript |
+
+The light in the bottom-left corner shows the microphone: grey off, green listening, orange someone speaking.
+
+**Projector as a second screen** (not mirrored): Settings → **Open caption window**, drag that window onto the
+projector and press <kbd>F</kbd>. It shows only the captions and follows this window, which keeps all the controls
+and settings out of the audience's sight.
+
+**Settings** adjusts speech detection live, while someone is talking; changes apply immediately, are remembered,
+and override the environment variables below until you press *Reset to defaults*:
+
+| If… | Change |
+|---|---|
+| a quiet or distant speaker is missed | lower **Speech detection threshold** (e.g. 0.35) |
+| background noise produces text | raise the threshold (e.g. 0.6–0.7) |
+| sentences are cut while the speaker pauses or speaks slowly | longer **Pause that ends a sentence** (1.2–2 s or more) |
+| coughs or chair noises turn into words | raise **Ignore sounds shorter than** |
+| one long sentence fills the whole screen | shorter **Longest sentence** |
+
 ## Docker or native?
 
 Docker on macOS runs a Linux virtual machine that can't reach the Apple GPU, so inside Docker every model
@@ -144,6 +175,8 @@ mic → AudioWorklet ──WS──▶  Silero VAD + Segmenter               ─
 |---|---|
 | `public/pcm-worklet.js` | Captures the mic, downsamples to 16 kHz mono, sends 100 ms chunks |
 | `public/app.js` | UI: models, mic, live and final lines, wake lock, reconnect buffering |
+| `public/stage.js` | Projector view: large centred captions, display preferences, full screen; also the caption window (`/?display`) |
+| `public/settings.js` | Settings panel: live speech-detection sliders (`lib/tuning.js` on the server) and projector display options |
 | `server.js` | Static files, WebSocket, model downloads and switching |
 | `lib/vad.js` | Speech detectors: Silero (neural, default) and a loudness fallback |
 | `lib/segmenter.js` | Turns detector frames into utterances: pre-roll, pause timeout, splits monologues longer than 20 s at the quietest point |
@@ -160,6 +193,8 @@ mic → AudioWorklet ──WS──▶  Silero VAD + Segmenter               ─
 Live guesses refresh every 0.5 s, or less often for slow models (twice the model's average inference time), so they never delay the final text.
 
 ## Configuration (environment variables)
+
+The speech-detection values (`VAD_THRESHOLD`, `VAD_SILENCE_MS`, `VAD_MAX_SEGMENT_SEC`, `PARTIAL_EVERY_SEC`) can also be changed live in **Settings**, which overrides them until *Reset to defaults*.
 
 | Variable | Default | Meaning |
 |---|---|---|

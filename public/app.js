@@ -1,3 +1,6 @@
+import { createStage } from '/stage.js';
+import { createSettings } from '/settings.js';
+
 const $ = (id) => document.getElementById(id);
 const els = {
   status: $('status'),
@@ -19,9 +22,13 @@ const els = {
   transcript: $('transcript'),
   empty: $('empty'),
   file: $('file'),
+  projector: $('projector'),
+  openSettings: $('openSettings'),
 };
 
 const MAX_BACKLOG = 3000; // 100 ms chunks = 5 minutes of audio kept while the server is unreachable
+const CHANNEL = 'transcriber-captions'; // main window -> caption windows (/?display), same browser
+const DISPLAY_ONLY = new URLSearchParams(location.search).has('display');
 
 let ws = null;
 let generation = 0; // bumps on every (re)connect; server segment ids restart per connection
@@ -32,6 +39,10 @@ let audio = null; // { ctx, stream, node }
 let backlog = [];
 let wakeLock = null;
 let modelSignature = '';
+let speaking = false;
+let stage = null;
+let settings = null;
+let channel = null;
 const files = {};
 const lines = new Map(); // generation * 1e6 + segment id -> { el, text, start, final }
 
@@ -82,6 +93,7 @@ function handle(msg) {
     case 'status':
       engine = msg;
       if (msg.language) els.lang.textContent = msg.language.toUpperCase();
+      if (msg.detector) settings.setDetector(msg.detector);
       if (msg.state === 'ready') hideError();
       render();
       break;
@@ -97,8 +109,10 @@ function handle(msg) {
       break;
     }
     case 'vad':
-      els.speaking.textContent = msg.speaking ? 'speech' : 'listening';
-      els.speaking.classList.toggle('on', msg.speaking);
+      setSpeaking(msg.speaking);
+      break;
+    case 'tuning':
+      settings.setTuning(msg);
       break;
     case 'partial':
       upsertLine(key, msg, false);
@@ -187,8 +201,8 @@ function stop() {
   send({ type: 'flush' }); // finalise whatever was being said
   keepAwake(false);
   els.meter.style.width = '0';
-  els.speaking.textContent = 'listening';
-  els.speaking.classList.remove('on');
+  settings.setLevel(0);
+  setSpeaking(false);
   render();
 }
 
@@ -235,6 +249,15 @@ function showLevel(chunk) {
   // Map roughly -60..0 dBFS onto 0..100 %.
   const pct = Math.max(0, Math.min(100, ((20 * Math.log10(rms + 1e-9) + 60) / 60) * 100));
   els.meter.style.width = `${pct}%`;
+  settings.setLevel(pct);
+}
+
+function setSpeaking(on) {
+  speaking = on;
+  els.speaking.textContent = on ? 'speech' : 'listening';
+  els.speaking.classList.toggle('on', on);
+  settings.setSpeaking(on);
+  publish();
 }
 
 // ---------- transcript ----------
@@ -311,6 +334,27 @@ function clearTranscript() {
   render();
 }
 
+// ---------- projector ----------
+
+/** What the projector view needs: recent final sentences, the one being spoken, and the mic state. */
+function snapshot() {
+  const entries = [...lines.entries()].sort((a, b) => a[0] - b[0]);
+  const finals = entries.filter(([, l]) => l.final).slice(-5).map(([key, l]) => ({ key, text: l.text }));
+  const live = entries.filter(([, l]) => !l.final).at(-1);
+  return { finals, partial: live ? { key: live[0], text: live[1].text } : null, recording, speaking };
+}
+
+function publish() {
+  if (!stage) return;
+  const snap = snapshot();
+  stage.update(snap);
+  channel?.postMessage({ type: 'snapshot', ...snap });
+}
+
+function openCaptionWindow() {
+  window.open('/?display', 'captions', 'popup,width=1280,height=720');
+}
+
 // ---------- models ----------
 
 function modelOptionLabel(m) {
@@ -358,6 +402,7 @@ function render() {
   els.copy.disabled = !hasText;
   els.download.disabled = !hasText;
   els.clear.disabled = lines.size === 0;
+  publish();
 }
 
 function showError(message) {
@@ -375,29 +420,74 @@ function flash(button, label) {
   setTimeout(() => (button.textContent = old), 1200);
 }
 
-els.toggle.addEventListener('click', () => (recording ? stop() : start()));
-els.copy.addEventListener('click', copyText);
-els.download.addEventListener('click', downloadText);
-els.clear.addEventListener('click', clearTranscript);
-els.model.addEventListener('change', chooseModel);
-els.mic.addEventListener('change', () => {
-  store.set('mic', els.mic.value);
-  restartCapture();
-});
-els.noise.addEventListener('change', () => {
-  store.set('noise', els.noise.checked);
-  restartCapture();
-});
-els.saveAudio.addEventListener('change', () => {
-  store.set('saveAudio', els.saveAudio.checked);
-  send({ type: 'options', saveAudio: els.saveAudio.checked });
-});
-navigator.mediaDevices?.addEventListener('devicechange', listMics);
-document.addEventListener('visibilitychange', () => {
-  if (recording && document.visibilityState === 'visible') keepAwake(true); // the lock drops when the tab is hidden
-});
+// ---------- startup ----------
 
-els.noise.checked = store.get('noise', false);
-els.saveAudio.checked = store.get('saveAudio', false);
-listMics();
-connect();
+function initMain() {
+  settings = createSettings($('settings'), {
+    send,
+    onDisplayPrefs: (patch) => stage.setPrefs(patch),
+    onOpenDisplay: openCaptionWindow,
+  });
+  stage = createStage($('stage'), {
+    onToggle: () => (recording ? stop() : start()),
+    onSettings: () => settings.toggle(),
+    onClose: () => stage.hide(),
+  });
+  if ('BroadcastChannel' in window) {
+    channel = new BroadcastChannel(CHANNEL);
+    channel.onmessage = (e) => e.data?.type === 'hello' && publish(); // a caption window just opened
+    window.addEventListener('pagehide', () => channel.postMessage({ type: 'bye' }));
+  }
+
+  els.toggle.addEventListener('click', () => (recording ? stop() : start()));
+  els.projector.addEventListener('click', () => stage.show());
+  els.openSettings.addEventListener('click', () => settings.toggle());
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'p' && !stage.open && !e.metaKey && !e.ctrlKey && !e.target.closest('input, select, textarea')) stage.show();
+  });
+  els.copy.addEventListener('click', copyText);
+  els.download.addEventListener('click', downloadText);
+  els.clear.addEventListener('click', clearTranscript);
+  els.model.addEventListener('change', chooseModel);
+  els.mic.addEventListener('change', () => {
+    store.set('mic', els.mic.value);
+    restartCapture();
+  });
+  els.noise.addEventListener('change', () => {
+    store.set('noise', els.noise.checked);
+    restartCapture();
+  });
+  els.saveAudio.addEventListener('change', () => {
+    store.set('saveAudio', els.saveAudio.checked);
+    send({ type: 'options', saveAudio: els.saveAudio.checked });
+  });
+  navigator.mediaDevices?.addEventListener('devicechange', listMics);
+  document.addEventListener('visibilitychange', () => {
+    if (recording && document.visibilityState === 'visible') keepAwake(true); // the lock drops when the tab is hidden
+  });
+
+  els.noise.checked = store.get('noise', false);
+  els.saveAudio.checked = store.get('saveAudio', false);
+  listMics();
+  connect();
+}
+
+/** /?display: captions only, fed by the main window through a BroadcastChannel. Drag it to the projector. */
+function initDisplay() {
+  document.body.classList.add('display-only');
+  document.title = 'Captions';
+  const empty = { finals: [], partial: null, recording: false, speaking: false };
+  stage = createStage($('stage'));
+  stage.show({ fullscreen: false }); // full screen needs a click or key press in this window: F or double-click
+  stage.update({ ...empty, waiting: true });
+  if (!('BroadcastChannel' in window)) return;
+  channel = new BroadcastChannel(CHANNEL);
+  channel.onmessage = (e) => {
+    if (e.data?.type === 'snapshot') stage.update(e.data);
+    else if (e.data?.type === 'bye') stage.update({ ...empty, waiting: true });
+  };
+  channel.postMessage({ type: 'hello' });
+}
+
+if (DISPLAY_ONLY) initDisplay();
+else initMain();

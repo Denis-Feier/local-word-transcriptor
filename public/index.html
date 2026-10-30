@@ -26,6 +26,8 @@
         <div class="meter-fill" id="meter"></div>
       </div>
       <span class="speaking" id="speaking">listening</span>
+      <button id="projector" class="ghost" title="Large captions for a projector (P)">Projector</button>
+      <button id="openSettings" class="ghost" aria-controls="settings">Settings</button>
       <span class="spacer"></span>
       <button id="copy" class="ghost" disabled>Copy</button>
       <button id="download" class="ghost" disabled>Download .txt</button>
@@ -61,6 +63,61 @@
       <span>Everything runs locally on this Mac. No audio leaves your machine.</span>
     </footer>
   </main>
+
+  <!-- Projector view: large captions, centred. Also the whole page of the caption window (/?display). -->
+  <div class="stage" id="stage" hidden>
+    <div class="stage-frame">
+      <div class="stage-lines" aria-live="polite"></div>
+    </div>
+    <p class="stage-hint" hidden></p>
+    <span class="stage-status" aria-hidden="true"></span>
+    <div class="stage-toolbar" role="toolbar" aria-label="Projector controls">
+      <button data-action="toggle" class="primary">Start</button>
+      <button data-action="smaller" aria-label="Smaller text" title="Smaller text (−)">A−</button>
+      <button data-action="bigger" aria-label="Larger text" title="Larger text (+)">A+</button>
+      <button data-action="lines" title="Number of sentences shown (L)">3 lines</button>
+      <button data-action="theme" title="Colours (T)">White on black</button>
+      <button data-action="settings">Settings</button>
+      <button data-action="fullscreen" title="Full screen (F, or double-click)">Full screen</button>
+      <button data-action="close" title="Back to the transcript (Esc)">Exit</button>
+    </div>
+  </div>
+
+  <aside class="drawer" id="settings" hidden aria-labelledby="settingsTitle">
+    <div class="drawer-head">
+      <h2 id="settingsTitle">Settings</h2>
+      <button class="ghost" id="settingsClose" aria-label="Close settings">Close</button>
+    </div>
+
+    <section class="drawer-section">
+      <h3>Speech detection</h3>
+      <p class="drawer-note">Changes apply immediately and are remembered. Adjust them while the person is speaking.</p>
+      <div class="live">
+        <div class="meter" title="Microphone level"><div class="meter-fill" id="settingsMeter"></div></div>
+        <span class="speaking" id="settingsSpeaking">listening</span>
+      </div>
+      <div id="tuningFields"></div>
+      <button class="ghost" id="tuningReset">Reset to defaults</button>
+    </section>
+
+    <section class="drawer-section">
+      <h3>Projector display</h3>
+      <div class="setting">
+        <label for="displaySize"><span>Text size</span><output id="displaySizeOut"></output></label>
+        <input type="range" id="displaySize">
+      </div>
+      <div class="setting-row">
+        <label class="field"><span>Sentences shown</span><select id="displayLines"></select></label>
+        <label class="field"><span>Colours</span><select id="displayTheme"></select></label>
+      </div>
+      <button class="ghost" id="openDisplay">Open caption window</button>
+      <p class="drawer-note">
+        If the projector is a second screen: open the caption window, drag it onto the projector and press F.
+        This window keeps the controls, so the audience only sees the captions.
+      </p>
+      <p class="drawer-note">In the projector view: <kbd>+</kbd> <kbd>−</kbd> text size, <kbd>L</kbd> sentences, <kbd>T</kbd> colours, <kbd>F</kbd> full screen, <kbd>Esc</kbd> back.</p>
+    </section>
+  </aside>
 
   <script type="module" src="/app.js"></script>
 </body>

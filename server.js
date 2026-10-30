@@ -6,11 +6,14 @@ import { config, ROOT, MODELS_DIR } from './lib/config.js';
 import { MODELS, SILERO_VAD, findModel, isInstalled, installModel, download } from './lib/models.js';
 import { Transcriber } from './lib/transcriber.js';
 import { Session } from './lib/session.js';
+import { TUNING, tuningFrom, sanitizeTuning, applyTuning } from './lib/tuning.js';
 
 const PUBLIC = path.join(ROOT, 'public');
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+  '/stage.js': ['stage.js', 'text/javascript; charset=utf-8'],
+  '/settings.js': ['settings.js', 'text/javascript; charset=utf-8'],
   '/pcm-worklet.js': ['pcm-worklet.js', 'text/javascript; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
 };
@@ -30,6 +33,10 @@ const writeSettings = (patch) => {
     console.error(`Could not save settings: ${err.message}`);
   }
 };
+
+// Speech-detection tuning: environment variables give the defaults, the Settings panel overrides them.
+const DEFAULT_TUNING = tuningFrom(config);
+applyTuning(config, sanitizeTuning(readSettings().tuning));
 
 const transcriber = new Transcriber(config);
 const progress = new Map(); // model id -> download fraction
@@ -56,6 +63,15 @@ const modelsMessage = () => ({
 });
 
 const statusMessage = () => ({ type: 'status', ...transcriber.status(), language: config.language });
+
+const tuningMessage = () => ({ type: 'tuning', values: tuningFrom(config), defaults: DEFAULT_TUNING, ranges: TUNING });
+
+function updateTuning({ values, reset }) {
+  applyTuning(config, reset ? DEFAULT_TUNING : sanitizeTuning(values));
+  writeSettings({ tuning: reset ? undefined : tuningFrom(config) });
+  for (const session of sessions) session.retune();
+  broadcast(tuningMessage());
+}
 
 function selectModel(id) {
   writeSettings({ model: id });
@@ -112,6 +128,7 @@ wss.on('connection', (ws) => {
   sessions.add(session);
   send(modelsMessage());
   send({ ...statusMessage(), detector: session.detector });
+  send(tuningMessage());
 
   ws.on('message', (data, isBinary) => {
     if (isBinary) {
@@ -131,6 +148,7 @@ wss.on('connection', (ws) => {
     else if (msg.type === 'options') session.setOptions(msg);
     else if (msg.type === 'select') selectModel(msg.id);
     else if (msg.type === 'install') install(msg.id);
+    else if (msg.type === 'tuning') updateTuning(msg);
   });
 
   ws.on('close', () => {
