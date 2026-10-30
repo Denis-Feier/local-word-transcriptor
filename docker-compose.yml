@@ -1,0 +1,21 @@
+# docker compose up --build            (first time: builds the image, ~10 min)
+# docker compose up -d                 later: start in the background; stop with: docker compose down
+# PORT=3421 docker compose up -d       other port
+services:
+  transcriber:
+    build: .
+    image: local-word-transcriptor
+    ports:
+      - "127.0.0.1:${PORT:-3000}:3000" # reachable from this Mac only
+    environment:
+      - PUBLIC_PORT=${PORT:-3000} # shown in the startup message
+    volumes:
+      - ./models:/app/models # downloaded models live on the Mac, shared with the native setup
+      - ./transcripts:/app/transcripts
+      - ./benchmarks:/app/benchmarks
+      - state:/app/state # remembers the chosen model
+    restart: unless-stopped
+    stop_grace_period: 15s # lets the server save the sentence being spoken
+
+volumes:
+  state:

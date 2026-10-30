@@ -1,7 +1,7 @@
 {
   "name": "local-word-transcriptor",
   "version": "1.0.0",
-  "description": "Live Romanian speech-to-text from your laptop mic, fully local (whisper.cpp)",
+  "description": "Live Romanian speech-to-text from your laptop mic, fully local",
   "type": "module",
   "private": true,
   "main": "server.js",
@@ -9,7 +9,8 @@
     "setup": "node scripts/setup.js",
     "start": "node server.js",
     "compare": "node scripts/compare.js",
-    "test:wav": "node test/stream-wav.js"
+    "test:wav": "node test/stream-wav.js",
+    "benchmark": "node scripts/benchmark.js"
   },
   "engines": {
     "node": ">=20"

@@ -24,6 +24,7 @@ const readSettings = () => {
 };
 const writeSettings = (patch) => {
   try {
+    fs.mkdirSync(path.dirname(config.settingsFile), { recursive: true });
     fs.writeFileSync(config.settingsFile, JSON.stringify({ ...readSettings(), ...patch }, null, 2));
   } catch (err) {
     console.error(`Could not save settings: ${err.message}`);
@@ -44,11 +45,11 @@ const modelsMessage = () => ({
   active: transcriber.model?.id ?? null,
   models: MODELS.map((m) => ({
     id: m.id,
-    label: m.label,
+    label: config.inDocker && m.dockerSlow ? `${m.label} (slow in Docker)` : m.label,
     engine: m.engine,
     size: m.size,
     download: m.downloadSize ?? m.size,
-    notes: m.notes,
+    notes: config.inDocker && m.dockerSlow ? `${m.notes} Too slow for live use in Docker: no GPU there.` : m.notes,
     installed: isInstalled(m),
     progress: progress.get(m.id) ?? null,
   })),
@@ -152,7 +153,7 @@ server.on('error', onListenError);
 wss.on('error', onListenError); // ws re-emits the HTTP server's errors here and would crash without a listener
 
 server.listen(config.port, config.host, async () => {
-  console.log(`\n  Live transcriber (${config.language}) → http://localhost:${config.port}\n`);
+  console.log(`\n  Live transcriber (${config.language}) → http://localhost:${config.publicPort}\n`);
 
   if (config.vad.engine === 'silero' && !fs.existsSync(config.vad.sileroModel)) {
     console.log('  Downloading Silero VAD (0.6 MB) …');

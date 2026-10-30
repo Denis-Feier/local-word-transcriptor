@@ -13,7 +13,8 @@ import { Transcriber } from '../lib/transcriber.js';
 import { Segmenter } from '../lib/segmenter.js';
 import { createDetector } from '../lib/vad.js';
 import { decodeWav } from '../lib/wav.js';
-import { resultToText, contextTail, normalize } from '../lib/text.js';
+import { resultToText, contextTail } from '../lib/text.js';
+import { wordErrorRate } from '../lib/wer.js';
 import { fmtTime } from '../lib/session.js';
 
 const args = process.argv.slice(2);
@@ -101,26 +102,3 @@ fs.mkdirSync(config.transcriptsDir, { recursive: true });
 fs.writeFileSync(out, report);
 console.log(`\n${table}\n\nFull transcripts: ${path.relative(process.cwd(), out)}\n`);
 process.exit(0);
-
-function words(text) {
-  return normalize(text)
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
-    .split(/\s+/)
-    .filter((w) => /[\p{L}\p{N}]/u.test(w));
-}
-
-/** Word-level edit distance divided by the reference length. */
-function wordErrorRate(ref, hyp) {
-  const r = words(ref);
-  const h = words(hyp);
-  let prev = Array.from({ length: h.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= r.length; i++) {
-    const cur = [i];
-    for (let j = 1; j <= h.length; j++) {
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (r[i - 1] === h[j - 1] ? 0 : 1));
-    }
-    prev = cur;
-  }
-  return r.length ? prev[h.length] / r.length : 0;
-}

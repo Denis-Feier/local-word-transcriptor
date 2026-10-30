@@ -5,19 +5,58 @@ Everything runs locally on the Mac. No API keys, no accounts, and no audio leave
 
 ## Quick start
 
+There are two ways to run it. Both use the same `models/` and `transcripts/` folders.
+
+**With Docker: nothing to install except Docker Desktop.**
+
 ```bash
-npm install
-npm run setup              # downloads the voice detector and the default model (Canary 1B v2, 1.1 GB)
-npm start                  # or: PORT=3421 npm start
+docker compose up -d --build     # first time builds the image (~10 min); later just: docker compose up -d
+docker compose down              # stop
 ```
 
-Optional: `brew install whisper-cpp` to use the Whisper models, and `npm run setup -- --all` to download every model (about 7 GB) so all of them work offline.
+Docker on a Mac cannot use the Apple GPU, so every model runs on the CPU (see *Docker or native?* below).
+Download models from the page's **Model** menu, or all at once with `docker compose run --rm transcriber npm run setup -- --all`.
+
+**Native: fastest, uses the GPU.**
+
+```bash
+brew install whisper-cpp uv      # whisper.cpp for the Whisper models, uv for Jackrabbit's Python
+npm install
+npm run setup                    # voice detector + the default model (Canary 1B v2, 1.1 GB)
+npm start                        # or: PORT=3421 npm start
+```
+
+`npm run setup -- --all` downloads every model (~10 GB, plus ~1.4 GB of Python for Jackrabbit).
 
 Open **http://localhost:3000**, press **Start**, and allow the microphone.
 
 - Grey text with a cursor is the live guess while someone speaks.
 - After a short pause (~0.7 s) the sentence is transcribed again in full and turns final.
 - Final lines are saved as you go to `transcripts/<date-time>.txt`. **Clear** starts a new file.
+
+## Docker or native?
+
+Docker on macOS runs a Linux virtual machine that can't reach the Apple GPU, so inside Docker every model
+runs on the CPU. Measured per sentence on this M5:
+
+| Model | Native | Docker | Live use in Docker |
+|---|---|---|---|
+| NVIDIA Canary 1B v2 | ~0.15 s (GPU) | 0.2–0.6 s | yes |
+| Jackrabbit 110M Romanian | 0.3–0.45 s (CPU) | 0.2–0.45 s | yes, same speed |
+| Parakeet models | ~0.1–0.15 s | 0.2–0.6 s | yes |
+| Whisper large-v3 / turbo / BuzzASR | 0.5–1.5 s (GPU) | ~6.5 s | no: marked "slow in Docker" in the menu |
+
+Transcripts are identical either way. Docker is the no-setup option; native is the fast option and the only
+way to use the large Whisper models live.
+
+Docker notes:
+- Docker Desktop gives its VM 8 GB of memory by default, enough for one model at a time (Jackrabbit with its
+  language model needs ~5 GB). Raise it in Docker Desktop → Settings → Resources if a model fails to load.
+- The image (~3.4 GB) contains Node, whisper.cpp built for the CPU, and Python with PyTorch and NeMo. Models are
+  not in the image; they live in `models/` on the Mac and are mounted in.
+- The page is published on `127.0.0.1` only, so other computers on the network can't open it.
+- Run tools inside the container the same way, e.g.
+  `docker compose run --rm transcriber npm run benchmark -- --name fleurs-ro-docker`.
 
 ## Models
 
@@ -97,7 +136,8 @@ Browser                       Node (server.js)                            Speech
 mic → AudioWorklet ──WS──▶  Silero VAD + Segmenter               ──▶   whisper-server (whisper.cpp, GPU)
       16 kHz Float32        ├─ while speaking: live guess              transcribe.cpp (GPU, in-process)
                             └─ on pause: final + save                  sherpa-onnx (CPU, in-process)
-      transcript UI ◀──WS── text cleanup (diacritics, hallucination filter)
+      transcript UI ◀──WS── text cleanup (diacritics,                  python/nemo_server.py (NeMo, CPU)
+                            hallucination filter)
 ```
 
 | File | Role |
@@ -109,10 +149,13 @@ mic → AudioWorklet ──WS──▶  Silero VAD + Segmenter               ─
 | `lib/segmenter.js` | Turns detector frames into utterances: pre-roll, pause timeout, splits monologues longer than 20 s at the quietest point |
 | `lib/session.js` | One browser tab: schedules live guesses and finals, writes transcript/audio files |
 | `lib/transcriber.js` | Owns the active model, serialises requests, switches models, restarts a crashed model |
-| `lib/engines/*.js` | One adapter per runtime: whisper.cpp, transcribe.cpp, sherpa-onnx |
-| `lib/models.js` | Model catalogue, download and unpack |
+| `lib/engines/*.js` | One adapter per runtime: whisper.cpp, transcribe.cpp, sherpa-onnx, Python/NeMo. `sidecar.js` is the shared logic for models served by a separate process |
+| `python/nemo_server.py` | Small local HTTP server that runs NeMo models (Jackrabbit) for the Node app; its environment lives in `python/.venv` |
+| `lib/models.js` | Model catalogue, download, unpack, and conversion of Whisper fine-tunes (`lib/convert-whisper.js`) |
 | `lib/text.js` | Fixes ş/ţ → ș/ț, removes `[Muzică]` tags, drops Whisper's known silence hallucinations ("Mulțumim pentru vizionare!") |
-| `scripts/compare.js` | Runs several models over a recording and reports speed and WER |
+| `scripts/compare.js` | Runs several models over one of your recordings and reports speed and WER |
+| `scripts/benchmark.js` | Scores models on the FLEURS Romanian test set (`npm run benchmark`) |
+| `Dockerfile`, `docker-compose.yml` | The Docker image and how it is started |
 
 Live guesses refresh every 0.5 s, or less often for slow models (twice the model's average inference time), so they never delay the final text.
 

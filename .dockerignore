@@ -1,0 +1,8 @@
+node_modules
+models
+transcripts
+benchmarks
+python/.venv
+__pycache__
+.settings.json
+.git
