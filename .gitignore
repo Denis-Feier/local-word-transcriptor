@@ -6,3 +6,5 @@ models/
 node_modules/
 python/.venv/
 transcripts/
+.claude/settings.local.json
+graphify-out/
