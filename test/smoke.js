@@ -1,6 +1,7 @@
 // End-to-end check that runs on any OS (CI runs it before building the installers): starts the server with
 // a fresh models folder, lets it download the small Romanian model by itself, streams test/fixtures/ro.wav
-// and requires the expected words in the transcript.
+// and requires the expected words in the transcript. Then streams it again as two mics, where the second mic only
+// hears the speaker from across the room, and requires every sentence on mic 1.
 //
 //   node test/smoke.js                          (SMOKE_MODEL=canary-1b-v2 to test another model)
 import { spawn } from 'node:child_process';
@@ -47,12 +48,15 @@ try {
       await sleep(250);
     }
   }
-  const test = spawn(process.execPath, [
-    path.join(ROOT, 'test', 'stream-wav.js'), path.join(ROOT, 'test', 'fixtures', 'ro.wav'), '--speed', '3', '--expect', 'munții',
-  ], { env, stdio: 'inherit' });
-  const timer = setTimeout(() => test.kill(), 10 * 60 * 1000); // includes the model download
-  code = await new Promise((resolve) => test.on('exit', (c) => resolve(c ?? 1)));
-  clearTimeout(timer);
+  const stream = (args, minutes) => {
+    const test = spawn(process.execPath, [path.join(ROOT, 'test', 'stream-wav.js'), path.join(ROOT, 'test', 'fixtures', 'ro.wav'), ...args], { env, stdio: 'inherit' });
+    const timer = setTimeout(() => test.kill(), minutes * 60 * 1000);
+    return new Promise((resolve) => test.on('exit', (c) => resolve(c ?? 1))).finally(() => clearTimeout(timer));
+  };
+  code = await stream(['--speed', '3', '--expect', 'munții'], 10); // includes the model download
+  // Two mics: the second only hears the speaker from across the room (quieter, late like Bluetooth),
+  // so every sentence must stay on mic 1.
+  if (code === 0) code = await stream(['--mic2', 'silence', '--bleed', '12', '--lag', '150', '--only-mic', '1', '--speed', '3', '--expect', 'munții'], 2);
 } catch (err) {
   console.error(`✖ ${err.message}`);
 } finally {

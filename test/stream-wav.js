@@ -52,9 +52,10 @@ const samples = load(file);
 const second = mic2 === 'silence' ? new Float32Array(samples.length) : mic2 ? load(mic2) : null;
 const lag = Math.round((lagMs / 1000) * 16000);
 const length = Math.max(samples.length, second?.length ?? 0) + lag + 16000 * 1.5; // trailing pause so the last sentence ends naturally
-// One mic: the file as is. Two: each mic gets its speaker, the other speaker's bleed and a little room noise.
+// One mic: the file as is. Two: each mic gets its own file; with --bleed also the other speaker, quieter, plus a
+// little room noise. Without --bleed (e.g. replaying recordings saved with "Save audio") the files are sent as they are.
 const gain = 10 ** (-bleedDb / 20);
-const noise = () => (Math.random() * 2 - 1) * 0.002; // about -60 dBFS
+const noise = Number.isFinite(bleedDb) ? () => (Math.random() * 2 - 1) * 0.002 : () => 0; // about -60 dBFS
 const mics = second
   ? [[samples, second, 0, 1], [second, samples, lag, gain2]].map(([own, other, delay, volume]) => {
     const out = new Float32Array(length);

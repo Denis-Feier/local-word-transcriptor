@@ -283,6 +283,14 @@ speaker 15 dB quieter, `--lag 150` delays mic 2 like Bluetooth, and `--gain2 12`
 npm run test:wav -- test/fixtures/ro.wav --mic2 silence --bleed 6 --lag 150 --only-mic 1 --expect munții
 ```
 
+A real two-mic session recorded with *Save audio* replays exactly as it was heard, which is the way to tune
+**Mic separation** for a room. With `DEBUG=1 npm start` the server also prints, every 10 s, each mic's noise level
+and how much of the speech it heard was kept as its own:
+
+```bash
+npm run test:wav -- transcripts/<stamp>-mic1.wav --mic2 transcripts/<stamp>-mic2.wav
+```
+
 ## Troubleshooting
 
 - **Start does nothing / mic blocked**: allow the mic in the browser's address bar, and in *System Settings → Privacy & Security → Microphone* for your browser. Use `http://localhost`, since browsers only allow the mic on localhost or HTTPS.

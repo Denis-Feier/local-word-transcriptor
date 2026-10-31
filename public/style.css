@@ -345,6 +345,7 @@ kbd {
 .stage-line[data-mic="3"] { color: var(--stage-mic-3); }
 .stage-line[data-mic="4"] { color: var(--stage-mic-4); }
 .stage-line.older[data-mic] { opacity: 0.62; }
+.stage[data-theme="light"] .stage-line.older[data-mic] { opacity: 0.78; } /* faded colours wash out on white */
 .stage-line.placeholder { min-height: 1.25em; animation: none; }
 .stage-line.partial::after {
   content: "";
