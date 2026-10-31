@@ -16,6 +16,11 @@ For people who just want to use it, on a Mac with Apple Silicon or a Windows PC:
 
 Transcripts are saved in **Documents → Live Transcriber** (File → *Open transcripts folder*).
 
+**User manual** for the people using the app (5 pages: every control and setting, and what to change for quiet,
+slow or fast speakers, noisy rooms and two mics): [English](docs/manual/Live-Transcriber-Manual-EN.pdf) ·
+[Română](docs/manual/Live-Transcriber-Manual-RO.pdf). It is also in the app (Help → *User manual*) and on every
+release.
+
 The installers aren't signed with a developer certificate yet, so the system warns the first time: on a Mac, open
 the app once, then System Settings → Privacy & Security → **Open Anyway** (macOS 14 and older: right-click the app →
 **Open**); on Windows, **More info → Run anyway**. The Mac app is ad-hoc signed, which is what keeps macOS from
@@ -29,6 +34,10 @@ whisper.cpp and Python are installed.
 `dist/`. Or let GitHub build both: Actions tab → *Desktop app* → **Run workflow**, or push a version tag
 (`git tag v1.0.1 && git push origin v1.0.1`) to also publish them on the Releases page, with the download and
 install steps from `.github/release-notes.md`. Bump `version` in `package.json` first; it is in the file names.
+Then update the user manual, which the installers and the release include: in Claude Code, `/user-manual` checks
+what changed for users since the last manual, rewrites what is needed, retakes the screenshots and rebuilds the
+PDFs (by hand: edit `docs/manual/manual.*.html`, then `npm run manual`). `npm test` fails (`STATIC-05`) while the
+manual is built for an older version.
 Each build first runs `test/smoke.js`, which transcribes a Romanian test clip with the speech engine on that
 system. To try the app from source: `npm run app`.
 
@@ -268,6 +277,8 @@ mics → AudioWorklet ─WS─▶  Silero VAD + Segmenter per mic        ──�
 | `scripts/benchmark.js` | Scores models on the FLEURS Romanian test set (`npm run benchmark`) |
 | `Dockerfile`, `docker-compose.yml` | The Docker image and how it is started |
 | `desktop/main.mjs` | The desktop app (Electron): starts the server in the background, opens its page, sends the caption window to the projector, data folders per user |
+| `docs/manual/` | The user manual: `manual.en.html` / `manual.ro.html` (the text), `manual.css`, `img/` (screenshots) and the PDFs built from them |
+| `scripts/manual.mjs` | Builds the manual (`npm run manual`): screenshots of the page with the UI test's fake microphones, then a PDF per language; `--pdf-only` skips the screenshots |
 | `test/smoke.js` | End-to-end check on any OS: server, automatic model download, transcription of `test/fixtures/ro.wav` (one mic and two) |
 | `test/run-all.js` | Runs the whole test plan (`TESTING.md`): logic, server, two-mic conversations, the page in Electron; `npm test` |
 | `.github/workflows/desktop.yml` | Builds and tests the Mac and Windows installers on GitHub; publishes them on version tags |

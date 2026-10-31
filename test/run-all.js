@@ -101,6 +101,17 @@ function staticChecks() {
   const packaged = pkg.build.files;
   check('STATIC-02', 'the installers include server.js, lib/ and public/', ['server.js', 'lib/**', 'public/**', 'desktop/main.mjs'].every((p) => packaged.includes(p)), packaged.join(' '));
 
+  // A new version needs its manual rebuilt (npm run manual, or the user-manual skill) before it is tagged.
+  let manual = {};
+  try {
+    manual = JSON.parse(fs.readFileSync(path.join(ROOT, 'docs', 'manual', 'manual.json'), 'utf8'));
+  } catch {
+    // never built
+  }
+  const noPdf = ['EN', 'RO'].map((l) => `docs/manual/Live-Transcriber-Manual-${l}.pdf`).filter((f) => !fs.existsSync(path.join(ROOT, f)));
+  check('STATIC-05', 'the user manual is built for this version and ships with the installers', manual.version === pkg.version && !noPdf.length && packaged.includes('docs/manual/*.pdf'),
+    `manual ${manual.version ?? 'not built'}, app ${pkg.version}${noPdf.length ? `; missing ${noPdf.join(', ')}` : ''}`);
+
   // The server serves only the page files it lists; a new one left out breaks the page without an error.
   const served = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
   const unserved = fs.readdirSync(path.join(ROOT, 'public')).filter((f) => f !== 'index.html' && !served.includes(`'/${f}': ['${f}'`));

@@ -29,6 +29,9 @@ const paths = app.isPackaged
       logs: path.join(userData, 'logs'),
     };
 
+// The user manual (docs/manual/, built by npm run manual) in the system's language, shipped with the app.
+const manualPath = () => path.join(ROOT, 'docs', 'manual', `Live-Transcriber-Manual-${app.getLocale().startsWith('ro') ? 'RO' : 'EN'}.pdf`);
+
 let server = null;
 let mainWindow = null;
 let quitting = false;
@@ -150,6 +153,8 @@ function buildMenu() {
     {
       label: 'Help',
       submenu: [
+        { label: 'User manual', click: () => shell.openPath(manualPath()) },
+        { type: 'separator' },
         { label: 'Open logs folder', click: () => openFolder(paths.logs) },
         { label: 'Open models folder', click: () => openFolder(process.env.MODELS_DIR ?? paths.models) },
         { type: 'separator' },

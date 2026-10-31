@@ -1,0 +1,96 @@
+/* Print styles for the user manual (A4, rendered to PDF by scripts/manual.mjs). Colours follow the app. */
+:root {
+  --text: #1d1c1a;
+  --muted: #6b6963;
+  --line: #e2ded6;
+  --soft: #f5f2ec;
+  --accent: #b5481f; /* the app's Start button */
+  --badge: #7c3aed;  /* the numbered markers in the screenshots */
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  color: var(--text);
+  font: 10.2pt/1.42 -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+header { margin-bottom: 14pt; }
+h1 { margin: 0; font-size: 26pt; letter-spacing: -0.02em; }
+.subtitle { margin: 2pt 0 0; font-size: 13pt; color: var(--accent); font-weight: 600; }
+.edition { margin: 2pt 0 0; font-size: 9pt; color: var(--muted); }
+.lead { font-size: 11.2pt; margin: 10pt 0 0; }
+
+h2 {
+  margin: 16pt 0 6pt;
+  padding-top: 6pt;
+  border-top: 2px solid var(--accent);
+  font-size: 14.5pt;
+  break-after: avoid;
+}
+h2 .n { color: var(--accent); margin-right: 4pt; }
+h3 { margin: 10pt 0 3pt; font-size: 11pt; break-after: avoid; }
+p { margin: 0 0 6pt; }
+ul, ol { margin: 0 0 6pt; padding-left: 16pt; }
+li { margin-bottom: 3pt; }
+a { color: var(--accent); }
+code { font: 8.8pt/1 Menlo, Consolas, monospace; white-space: nowrap; }
+b.ui { font-weight: 650; }
+kbd {
+  display: inline-block;
+  min-width: 14pt;
+  padding: 0 4pt;
+  border: 1px solid #c9c4ba;
+  border-bottom-width: 2px;
+  border-radius: 3pt;
+  font: 600 8.8pt/1.35 inherit;
+  text-align: center;
+  background: #fff;
+}
+.mic1 { color: #2747d6; font-weight: 650; }
+.mic2 { color: #b4531f; font-weight: 650; }
+
+figure { margin: 8pt 0 10pt; break-inside: avoid; }
+figure img { display: block; width: 100%; border: 1px solid var(--line); border-radius: 5pt; }
+figure.dark img { border-color: #000; }
+figure.w85 { width: 85%; }
+figure.w80 { width: 80%; }
+figure.w70 { width: 70%; }
+figcaption { margin-top: 3pt; font-size: 8.8pt; color: var(--muted); }
+.keep { break-inside: avoid; }
+
+/* The numbered list that explains the markers in the main screenshot. */
+ol.badges { list-style: none; padding: 0; columns: 2; column-gap: 18pt; counter-reset: badge; }
+ol.badges li { position: relative; padding-left: 22pt; counter-increment: badge; break-inside: avoid; }
+ol.badges li::before {
+  content: counter(badge);
+  position: absolute;
+  left: 0;
+  top: 0.5pt;
+  width: 15pt;
+  height: 15pt;
+  border-radius: 50%;
+  background: var(--badge);
+  color: #fff;
+  font-size: 8.5pt;
+  font-weight: 700;
+  line-height: 15pt;
+  text-align: center;
+}
+
+table { width: 100%; margin: 4pt 0 8pt; border-collapse: collapse; font-size: 9.6pt; }
+tr { break-inside: avoid; }
+th, td { padding: 4pt 6pt; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+th { background: var(--soft); font-weight: 650; }
+td.nowrap { white-space: nowrap; }
+
+/* A table or text beside a tall screenshot. */
+.side { display: flex; gap: 14pt; align-items: flex-start; }
+.side > :first-child { flex: 1; }
+.side > figure { flex: 0 0 36%; margin-top: 0; }
+
+.tip { margin: 6pt 0 8pt; padding: 6pt 10pt; background: var(--soft); border-left: 3px solid var(--accent); break-inside: avoid; }
+.page-break { break-before: page; }
+footer { margin-top: 14pt; font-size: 9pt; color: var(--muted); }

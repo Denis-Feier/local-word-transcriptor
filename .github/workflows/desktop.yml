@@ -50,7 +50,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5 # for the release notes
+      - uses: actions/checkout@v5 # for the release notes and the user manual
       - uses: actions/download-artifact@v4
         with:
           path: installers
@@ -59,7 +59,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: >
-          gh release create "${{ github.ref_name }}" installers/*
+          gh release create "${{ github.ref_name }}" installers/* docs/manual/*.pdf
           --repo "${{ github.repository }}"
           --title "Live Transcriber ${{ github.ref_name }}"
           --notes-file .github/release-notes.md

@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Live Transcriber – User manual</title>
+  <link rel="stylesheet" href="manual.css">
+</head>
+<body>
+
+<header>
+  <h1>Live Transcriber</h1>
+  <p class="subtitle">User manual</p>
+  <p class="edition">Version <span data-version>dev</span> · <span data-date></span></p>
+  <p class="lead">Live Transcriber turns Romanian speech into text while people talk. Put the computer on the table,
+    press <b class="ui">Start</b>, and read along. Everything runs on your own computer: no account, no internet after
+    the first start, and the audio never leaves the machine.</p>
+</header>
+
+<h2><span class="n">1</span>Install and first start</h2>
+<ol>
+  <li><b>Download</b> the installer from
+    <a href="https://github.com/Denis-Feier/local-word-transcriptor/releases/latest">github.com/Denis-Feier/local-word-transcriptor/releases</a>,
+    under <b>Assets</b>:
+    <ul>
+      <li>Mac with an Apple processor (M1 or newer), macOS 12 or newer: the file ending in <code>-mac-arm64.dmg</code></li>
+      <li>Windows 10 or 11, 64-bit: the file ending in <code>-windows-setup.exe</code></li>
+    </ul>
+  </li>
+  <li><b>Install.</b> Mac: open the <code>.dmg</code> and drag <i>Live Transcriber</i> into <i>Applications</i>.
+    Windows: run the installer.</li>
+  <li><b>Open it the first time.</b> The app is not digitally signed yet, so the system warns once.
+    Mac: open the app, close the message, then go to <i>System Settings → Privacy &amp; Security</i> and click
+    <i>Open Anyway</i> (on macOS 14 or older, right-click the app → <i>Open</i>). Windows: at “Windows protected
+    your PC” click <i>More info</i>, then <i>Run anyway</i>.</li>
+  <li><b>Allow the microphone</b> when the Mac asks.</li>
+  <li><b>Wait for the model.</b> The first time, the app downloads the Romanian speech model (1.1 GB) and shows the
+    progress at the top right. After that it works without internet.</li>
+</ol>
+
+<h2><span class="n">2</span>Transcribing a conversation</h2>
+<p>Press <b class="ui">Start</b> and talk. <b>Grey text</b> with a blinking cursor is the live guess while someone
+  speaks. After a short pause (about 0.7 s) the sentence is written again in full and turns <b>black</b>: that is the
+  final text, and it is saved straight away. Press <b class="ui">Stop</b> when you are done.</p>
+<figure class="w85">
+  <img src="img/main.png" alt="The main window while recording, with numbered controls">
+  <figcaption>Recording with one microphone: two final sentences and a grey live guess underneath.</figcaption>
+</figure>
+<ol class="badges">
+  <li><b class="ui">Start</b> / <b class="ui">Stop</b>: starts and stops listening.</li>
+  <li><b>Level meter</b>: moves with the sound the mic hears and says <i>speech</i> while someone talks. If it
+    barely moves, the mic is too far away.</li>
+  <li><b class="ui">Projector</b>: large captions for a projector or TV (section 5).</li>
+  <li><b class="ui">Settings</b>: speech detection and the projector display (section 6).</li>
+  <li><b class="ui">Copy</b>, <b class="ui">Download .txt</b>, <b class="ui">Clear</b>: copy the text, save a copy
+    with times, or empty the screen and start a new transcript file.</li>
+  <li><b class="ui">Model</b>: the speech model. Keep the default (section 8).</li>
+  <li><b class="ui">Mic 1</b>, <b class="ui">Mic 2</b>: which microphones listen. <i>System default</i> is the
+    computer's own. A second person can get a second mic (section 3).</li>
+  <li><b class="ui">Speaker</b>: plays the voices on a speaker in the room (section 4). <i>None</i> is off.</li>
+  <li><b class="ui">Noise suppression</b>: filters steady noise such as air conditioning or traffic. Off by default,
+    because it can also swallow quiet, distant voices.</li>
+  <li><b class="ui">Save audio</b>: also keeps the recording as a sound file next to the transcript (about 115 MB per
+    hour and mic).</li>
+  <li><b>Status</b>: the model in use and <i>ready</i>; on the first start, the download progress.</li>
+</ol>
+<p>Transcripts are saved in <b>Documents → Live Transcriber</b> (menu <i>File → Open transcripts folder</i>).
+  <b class="ui">Stop</b> and <b class="ui">Start</b> continue the same file; <b class="ui">Clear</b> starts a new one.
+  Your choice of microphones and model is remembered for next time.</p>
+
+<h2><span class="n">3</span>Two people, two microphones</h2>
+<p>For an interview, a doctor and a patient, or a panel of two, give each person their own microphone, close to
+  them, and choose the second one under <b class="ui">Mic 2</b>. Any microphone the computer sees works: built-in,
+  USB, jack, Bluetooth, or the receiver of a wireless kit.</p>
+<figure class="w80">
+  <img src="img/two-mics.png" alt="Two microphones: lines coloured by microphone">
+  <figcaption>Each line shows the microphone that heard it, in that microphone's colour.</figcaption>
+</figure>
+<ul>
+  <li>Every line says who heard it: <span class="mic1">Mic 1</span> blue, <span class="mic2">Mic 2</span> orange, also
+    in the projector view and as <code>Mic 1:</code> / <code>Mic 2:</code> in the saved file. Lines spoken at the same
+    time are marked ⇄.</li>
+  <li>Each mic also hears the other person, only more quietly. The app keeps those words only under the mic that
+    heard them best. If they still show up under the wrong mic, see <b class="ui">Mic separation</b> in section 7.</li>
+  <li>A mic that disconnects (Bluetooth out of range, flat battery, cable) shows <i>not connected</i>. The other mic
+    keeps recording, and the first one joins again by itself once it is back.</li>
+</ul>
+
+<h2><span class="n">4</span>Playing the voices on a speaker</h2>
+<p>If the audience needs to hear the people talking, connect a speaker and choose it under
+  <b class="ui">Speaker</b>. It plays straight away, even before <b class="ui">Start</b>, so you can do a sound check:
+  talk and watch the meter. <b class="ui">Start</b> and <b class="ui">Stop</b> don't affect it; <i>None</i> turns it
+  off. The app always opens with <i>None</i>, so it never starts howling by surprise. <b class="ui">Volume</b> is
+  remembered.</p>
+<figure>
+  <img src="img/speaker.png" alt="A speaker chosen, with the Volume slider">
+  <figcaption>A speaker chosen before Start: the volume slider appears and the meter moves.</figcaption>
+</figure>
+<ul>
+  <li><b>Prefer a cable or USB speaker.</b> Bluetooth speakers play about 0.2 s late, and the person talking hears
+    that as an echo.</li>
+  <li><b>Howling</b> means a microphone hears the speaker. Put the speaker in front of the mics, facing away from them
+    towards the audience, and turn <b class="ui">Volume</b> down. A laptop's own speakers almost always howl with its
+    built-in mic.</li>
+  <li>With two mics, keep the speaker away from both, or some lines may appear under the wrong mic.</li>
+  <li>A Bluetooth speaker with its own microphone (many karaoke speakers): choose your real mics under
+    <b class="ui">Mic 1</b> and <b class="ui">Mic 2</b> instead of <i>System default</i>, or the computer may record
+    from the speaker's microphone and both the sound and the text get worse.</li>
+  <li>A speaker that disconnects shows <i>not connected</i> and goes silent; the sound does not jump to the laptop.
+    It plays again once it is back.</li>
+</ul>
+
+<h2><span class="n">5</span>Captions on a projector or TV</h2>
+<p>Press <b class="ui">Projector</b> (or <kbd>P</kbd>): the window fills with large captions, the newest sentence
+  brightest. Move the mouse to show the controls; they hide again after a few seconds, so the audience sees only text.
+  The light in the bottom-left corner shows the microphone: grey off, green listening, orange someone speaking.</p>
+<div class="side">
+  <table>
+    <tr><th>Key</th><th>In the projector view</th></tr>
+    <tr><td class="nowrap"><kbd>+</kbd> <kbd>−</kbd></td><td>text size</td></tr>
+    <tr><td><kbd>L</kbd></td><td>how many sentences are shown (1–5)</td></tr>
+    <tr><td><kbd>T</kbd></td><td>colours: white on black, yellow on black, black on white</td></tr>
+    <tr><td class="nowrap"><kbd>F</kbd>, double-click</td><td>full screen</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>back to the transcript</td></tr>
+  </table>
+  <figure class="dark" style="flex-basis: 55%">
+    <img src="img/projector.png" alt="The projector view with large captions">
+  </figure>
+</div>
+<p><b>Projector as a second screen</b> (not mirrored): open <b class="ui">Settings</b> →
+  <b class="ui">Open caption window</b>. It opens on the projector, full screen; if it doesn't, drag it there and press <kbd>F</kbd>. It shows
+  only the captions, while your window keeps all the controls out of the audience's sight. <b class="ui">Text size</b>,
+  <b class="ui">Sentences shown</b> and <b class="ui">Colours</b> are also in Settings, under
+  <i>Projector display</i>.</p>
+
+<h2><span class="n">6</span>Settings for speech detection</h2>
+<div class="side">
+  <div>
+    <p>The defaults suit most rooms. If something goes wrong, change <b>one setting at a time while someone is
+      talking</b>, and watch the text. Changes apply immediately and are remembered. A dot ● marks a changed setting;
+      <b class="ui">Reset to defaults</b> undoes them all.</p>
+    <table>
+      <tr><th>Setting</th><th>What it does</th></tr>
+      <tr><td><b class="ui">Speech detection threshold</b><br>default 0.50</td>
+        <td>How sure the app must be that a sound is speech. Lower catches quiet or distant voices; higher ignores
+          background noise.</td></tr>
+      <tr><td><b class="ui">Pause that ends a sentence</b><br>default 0.7 s</td>
+        <td>The silence that closes a sentence. Longer suits people who speak slowly or pause mid-sentence.</td></tr>
+      <tr><td><b class="ui">Ignore sounds shorter than</b><br>default 250 ms</td>
+        <td>Drops coughs, clicks and moving chairs.</td></tr>
+      <tr><td><b class="ui">Longest sentence</b><br>default 20 s</td>
+        <td>Longer speech is split at its quietest moment.</td></tr>
+      <tr><td><b class="ui">Live text refresh</b><br>default 0.5 s</td>
+        <td>How often the grey live text updates.</td></tr>
+      <tr><td><b class="ui">Mic separation</b><br>default 8 dB</td>
+        <td>Only with two mics. Lower ignores more of the other person; higher keeps both when people talk at the
+          same time.</td></tr>
+    </table>
+  </div>
+  <figure>
+    <img src="img/settings.png" alt="The Settings panel with the speech detection sliders">
+  </figure>
+</div>
+
+<h2><span class="n">7</span>Adjusting for different speakers and rooms</h2>
+<p>Find what you see, make the change, and check it while the person talks.</p>
+<table>
+  <tr><th style="width: 46%">What you see</th><th>What to do</th></tr>
+  <tr><td>A quiet, soft-spoken or distant person is missed; the meter barely moves</td>
+    <td>Move the mic closer or give them their own. Then lower <b class="ui">Speech detection threshold</b> to
+      0.35–0.40.</td></tr>
+  <tr><td>Background noise (air conditioning, traffic, chatter) turns into stray words</td>
+    <td>Raise <b class="ui">Speech detection threshold</b> to 0.6–0.7. For steady noise, also tick
+      <b class="ui">Noise suppression</b>.</td></tr>
+  <tr><td>A slow speaker, or one who stops to think, gets sentences cut in two</td>
+    <td><b class="ui">Pause that ends a sentence</b>: 1.2–2 s.</td></tr>
+  <tr><td>A fast speaker who never pauses fills the screen with one huge line</td>
+    <td><b class="ui">Longest sentence</b>: 10–15 s.</td></tr>
+  <tr><td>Quick back-and-forth on one mic: two people's words end up in one line</td>
+    <td><b class="ui">Pause that ends a sentence</b>: 0.5 s, or one mic per person.</td></tr>
+  <tr><td>Coughs, clicks or moving chairs turn into words</td>
+    <td><b class="ui">Ignore sounds shorter than</b>: 300–400 ms.</td></tr>
+  <tr><td>Very short answers (“Da.”, “Nu.”) are lost</td>
+    <td><b class="ui">Ignore sounds shorter than</b>: 150 ms.</td></tr>
+  <tr><td>Two mics: one person's words also appear under the other mic</td>
+    <td><b class="ui">Mic separation</b>: 5 dB, and move the mics further apart.</td></tr>
+  <tr><td>Two mics: when both talk at once, one of them is lost</td>
+    <td><b class="ui">Mic separation</b>: 12 dB.</td></tr>
+  <tr><td>A presenter who walks around</td>
+    <td>A wireless clip-on mic as <b class="ui">Mic 1</b>.</td></tr>
+  <tr><td>A group around a table</td>
+    <td>The laptop in the middle, screen up. For a long table, a USB conference mic.</td></tr>
+  <tr><td>Text appears late on an older computer</td>
+    <td><b class="ui">Model</b>: <i>Parakeet Romanian 110M</i> (section 8), and <b class="ui">Live text refresh</b>:
+      1 s.</td></tr>
+  <tr><td>Strong accents, dialect, mumbling</td>
+    <td>No setting fixes these; a microphone close to the mouth helps most.</td></tr>
+</table>
+
+<h2><span class="n">8</span>Choosing a model</h2>
+<p>Keep <i>NVIDIA Canary 1B v2</i>, the default and the most accurate. If text appears slowly on an older computer,
+  choose <i>Parakeet Romanian 110M</i>: it is much faster, but writes in lowercase without punctuation. The other
+  models in the list are alternatives to try. Models not downloaded yet show their size; choosing one asks first,
+  downloads it and switches to it when it is ready. The choice is remembered.</p>
+
+<h2><span class="n">9</span>When something goes wrong</h2>
+<table>
+  <tr><th style="width: 38%">Problem</th><th>What to do</th></tr>
+  <tr><td><b class="ui">Start</b> does nothing, or “Microphone access was blocked”</td>
+    <td>Mac: <i>System Settings → Privacy &amp; Security → Microphone</i>, turn on Live Transcriber. Windows:
+      <i>Settings → Privacy &amp; security → Microphone</i>, allow desktop apps. Then restart the app.</td></tr>
+  <tr><td>A mic or the speaker shows <i>not connected</i></td>
+    <td>Plug it in, switch it on or pair it again. It joins again by itself.</td></tr>
+  <tr><td>The meter moves but no text appears</td>
+    <td>Check that the right mic is chosen; lower <b class="ui">Speech detection threshold</b>.</td></tr>
+  <tr><td>The speaker howls</td><td>See section 4.</td></tr>
+  <tr><td>Anything else</td>
+    <td>Menu <i>Help → Open logs folder</i>, and send the file <code>server.log</code> with a short description on
+      the project's GitHub page (<i>Issues</i>).</td></tr>
+</table>
+
+<footer>This manual is also in the app: menu <i>Help → User manual</i>.</footer>
+
+</body>
+</html>

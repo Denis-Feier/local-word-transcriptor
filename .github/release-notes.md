@@ -26,6 +26,8 @@ accesul la microfon. Transcrierile se salvează în **Documente → Live Transcr
 
 Dacă textul apare greu pe un calculator mai vechi, alegeți *Parakeet Romanian 110M* din meniul **Model**.
 
+**Manual de utilizare:** `Live-Transcriber-Manual-RO.pdf` din lista **Assets**, sau în aplicație: *Help → User manual*.
+
 ## Download (English)
 
 Pick the file for your computer from **Assets** below:
@@ -47,5 +49,7 @@ The app then downloads the Romanian model (1.1 GB) with a progress bar. Press **
 Transcripts are saved in **Documents → Live Transcriber**.
 
 If text appears slowly on an older computer, choose *Parakeet Romanian 110M* in the **Model** menu.
+
+**User manual:** `Live-Transcriber-Manual-EN.pdf` under **Assets**, or in the app: *Help → User manual*.
 
 Intel Macs aren't supported yet. Problems: Help → *Open logs folder*, and attach `server.log` to an issue.

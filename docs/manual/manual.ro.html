@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="ro">
+<head>
+  <meta charset="utf-8">
+  <title>Live Transcriber – Manual de utilizare</title>
+  <link rel="stylesheet" href="manual.css">
+</head>
+<body>
+
+<header>
+  <h1>Live Transcriber</h1>
+  <p class="subtitle">Manual de utilizare</p>
+  <p class="edition">Versiunea <span data-version>dev</span> · <span data-date></span></p>
+  <p class="lead">Live Transcriber transformă vorbirea în limba română în text, chiar în timp ce oamenii vorbesc.
+    Puneți calculatorul pe masă, apăsați <b class="ui">Start</b> și citiți. Totul rulează pe calculatorul
+    dumneavoastră: fără cont, fără internet după prima pornire, iar sunetul nu părăsește niciodată calculatorul.</p>
+</header>
+
+<h2><span class="n">1</span>Instalare și prima pornire</h2>
+<ol>
+  <li><b>Descărcați</b> fișierul de instalare de la
+    <a href="https://github.com/Denis-Feier/local-word-transcriptor/releases/latest">github.com/Denis-Feier/local-word-transcriptor/releases</a>,
+    din lista <b>Assets</b>:
+    <ul>
+      <li>Mac cu procesor Apple (M1 sau mai nou), macOS 12 sau mai nou: fișierul care se termină în <code>-mac-arm64.dmg</code></li>
+      <li>Windows 10 sau 11, 64 de biți: fișierul care se termină în <code>-windows-setup.exe</code></li>
+    </ul>
+  </li>
+  <li><b>Instalați.</b> Mac: deschideți fișierul <code>.dmg</code> și trageți <i>Live Transcriber</i> în
+    <i>Applications</i>. Windows: porniți fișierul de instalare.</li>
+  <li><b>Prima deschidere.</b> Aplicația nu are încă semnătură digitală, așa că sistemul afișează o dată un
+    avertisment. Mac: deschideți aplicația, închideți mesajul, apoi mergeți în <i>System Settings → Privacy &amp;
+    Security</i> și apăsați <i>Open Anyway</i> (pe macOS 14 sau mai vechi: clic dreapta pe aplicație → <i>Open</i>).
+    Windows: la mesajul „Windows protected your PC” apăsați <i>More info</i>, apoi <i>Run anyway</i>.</li>
+  <li><b>Permiteți accesul la microfon</b> când vă întreabă Mac-ul.</li>
+  <li><b>Așteptați modelul.</b> La prima pornire, aplicația descarcă modelul de recunoaștere a vorbirii în română
+    (1,1 GB) și arată progresul în dreapta sus. După aceea funcționează fără internet.</li>
+</ol>
+
+<h2><span class="n">2</span>Transcrierea unei conversații</h2>
+<p>Apăsați <b class="ui">Start</b> și vorbiți. <b>Textul gri</b>, cu un cursor care clipește, este varianta
+  provizorie, cât timp cineva vorbește. După o scurtă pauză (circa 0,7 s), propoziția este transcrisă din nou, în
+  întregime, și devine <b>neagră</b>: acesta este textul final, care se salvează imediat. Apăsați
+  <b class="ui">Stop</b> când ați terminat.</p>
+<figure class="w85">
+  <img src="img/main.png" alt="Fereastra principală în timpul înregistrării, cu butoanele numerotate">
+  <figcaption>Înregistrare cu un microfon: două propoziții finale și, dedesubt, varianta provizorie gri.</figcaption>
+</figure>
+<ol class="badges">
+  <li><b class="ui">Start</b> / <b class="ui">Stop</b>: pornește și oprește ascultarea.</li>
+  <li><b>Indicatorul de nivel</b>: se mișcă după sunetul pe care îl aude microfonul și afișează <i>speech</i> când
+    cineva vorbește. Dacă abia se mișcă, microfonul este prea departe.</li>
+  <li><b class="ui">Projector</b>: subtitrări mari pentru proiector sau televizor (secțiunea 5).</li>
+  <li><b class="ui">Settings</b>: detectarea vorbirii și afișarea pe proiector (secțiunea 6).</li>
+  <li><b class="ui">Copy</b>, <b class="ui">Download .txt</b>, <b class="ui">Clear</b>: copiază textul, salvează o
+    copie cu marcaje de timp sau golește ecranul și începe un fișier nou.</li>
+  <li><b class="ui">Model</b>: modelul de recunoaștere a vorbirii. Păstrați-l pe cel implicit (secțiunea 8).</li>
+  <li><b class="ui">Mic 1</b>, <b class="ui">Mic 2</b>: microfoanele care ascultă. <i>System default</i> este
+    microfonul calculatorului. O a doua persoană poate avea un al doilea microfon (secțiunea 3).</li>
+  <li><b class="ui">Speaker</b>: redă vocile pe o boxă din sală (secțiunea 4). <i>None</i> înseamnă oprit.</li>
+  <li><b class="ui">Noise suppression</b>: filtrează zgomotul constant, de exemplu aerul condiționat sau traficul.
+    Este oprit implicit, pentru că poate înghiți și vocile slabe sau îndepărtate.</li>
+  <li><b class="ui">Save audio</b>: păstrează și înregistrarea, ca fișier audio lângă transcriere (circa 115 MB pe
+    oră pentru fiecare microfon).</li>
+  <li><b>Starea</b>: modelul folosit și <i>ready</i>; la prima pornire, progresul descărcării.</li>
+</ol>
+<p>Transcrierile se salvează în <b>Documente → Live Transcriber</b> (meniul <i>File → Open transcripts folder</i>).
+  <b class="ui">Stop</b> și <b class="ui">Start</b> continuă același fișier; <b class="ui">Clear</b> începe unul nou.
+  Alegerea microfoanelor și a modelului este ținută minte pentru data viitoare.</p>
+
+<h2><span class="n">3</span>Două persoane, două microfoane</h2>
+<p>Pentru un interviu, un medic și un pacient sau o discuție în doi, dați fiecărei persoane propriul microfon,
+  aproape de ea, și alegeți-l pe al doilea la <b class="ui">Mic 2</b>. Merge orice microfon pe care îl vede
+  calculatorul: încorporat, USB, cu mufă jack, Bluetooth sau receptorul unui set wireless.</p>
+<figure class="w80">
+  <img src="img/two-mics.png" alt="Două microfoane: rândurile colorate după microfon">
+  <figcaption>Fiecare rând arată microfonul care l-a auzit, în culoarea acelui microfon.</figcaption>
+</figure>
+<ul>
+  <li>Fiecare rând spune cine l-a auzit: <span class="mic1">Mic 1</span> albastru, <span class="mic2">Mic 2</span>
+    portocaliu, la fel pe proiector și ca <code>Mic 1:</code> / <code>Mic 2:</code> în fișierul salvat. Rândurile
+    rostite în același timp sunt marcate cu ⇄.</li>
+  <li>Fiecare microfon o aude și pe cealaltă persoană, doar mai încet. Aplicația păstrează acele cuvinte doar la
+    microfonul care le-a auzit cel mai bine. Dacă tot apar la microfonul greșit, vedeți
+    <b class="ui">Mic separation</b> în secțiunea 7.</li>
+  <li>Un microfon care se deconectează (Bluetooth prea departe, baterie descărcată, cablu) afișează <i>not
+    connected</i>. Celălalt continuă să înregistreze, iar primul revine singur când este din nou disponibil.</li>
+</ul>
+
+<h2><span class="n">4</span>Redarea vocilor pe o boxă</h2>
+<p>Dacă publicul trebuie să-i audă pe vorbitori, conectați o boxă și alegeți-o la <b class="ui">Speaker</b>. Boxa
+  redă imediat, chiar înainte de <b class="ui">Start</b>, așa că puteți face o probă de sunet: vorbiți și urmăriți
+  indicatorul. <b class="ui">Start</b> și <b class="ui">Stop</b> nu o afectează; <i>None</i> o oprește. Aplicația
+  pornește mereu cu <i>None</i>, ca să nu înceapă să fluiere pe neașteptate. <b class="ui">Volume</b> este ținut
+  minte.</p>
+<figure>
+  <img src="img/speaker.png" alt="O boxă aleasă, cu glisorul Volume">
+  <figcaption>Boxă aleasă înainte de Start: apare glisorul de volum, iar indicatorul se mișcă.</figcaption>
+</figure>
+<ul>
+  <li><b>Preferați o boxă cu cablu sau USB.</b> Boxele Bluetooth redau cu circa 0,2 s întârziere, iar vorbitorul aude
+    asta ca pe un ecou.</li>
+  <li><b>Fluieratul (microfonia)</b> înseamnă că un microfon aude boxa. Puneți boxa în fața microfoanelor, întoarsă
+    spre public, cu spatele la ele, și dați <b class="ui">Volume</b> mai încet. Difuzoarele unui laptop fluieră
+    aproape întotdeauna împreună cu microfonul lui încorporat.</li>
+  <li>Cu două microfoane, țineți boxa departe de amândouă, altfel unele rânduri pot apărea la microfonul
+    greșit.</li>
+  <li>O boxă Bluetooth cu microfon propriu (multe boxe de karaoke): alegeți microfoanele adevărate la
+    <b class="ui">Mic 1</b> și <b class="ui">Mic 2</b> în loc de <i>System default</i>; altfel calculatorul poate
+    înregistra de la microfonul boxei, iar sunetul și textul devin mai slabe.</li>
+  <li>O boxă care se deconectează afișează <i>not connected</i> și tace; sunetul nu trece pe laptop. Redă din nou
+    când revine.</li>
+</ul>
+
+<h2><span class="n">5</span>Subtitrări pe proiector sau televizor</h2>
+<p>Apăsați <b class="ui">Projector</b> (sau <kbd>P</kbd>): fereastra se umple cu subtitrări mari, iar propoziția cea
+  mai nouă este cea mai luminoasă. Mișcați mouse-ul ca să apară butoanele; ele dispar din nou după câteva secunde,
+  ca publicul să vadă doar textul. Lumina din colțul din stânga jos arată microfonul: gri oprit, verde ascultă,
+  portocaliu cineva vorbește.</p>
+<div class="side">
+  <table>
+    <tr><th>Tastă</th><th>În modul proiector</th></tr>
+    <tr><td class="nowrap"><kbd>+</kbd> <kbd>−</kbd></td><td>mărimea textului</td></tr>
+    <tr><td><kbd>L</kbd></td><td>câte propoziții se văd (1–5)</td></tr>
+    <tr><td><kbd>T</kbd></td><td>culorile: alb pe negru, galben pe negru, negru pe alb</td></tr>
+    <tr><td class="nowrap"><kbd>F</kbd>, dublu clic</td><td>ecran complet</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>înapoi la transcriere</td></tr>
+  </table>
+  <figure class="dark" style="flex-basis: 55%">
+    <img src="img/projector.png" alt="Modul proiector, cu subtitrări mari">
+  </figure>
+</div>
+<p><b>Proiectorul ca al doilea ecran</b> (nu în oglindă): deschideți <b class="ui">Settings</b> →
+  <b class="ui">Open caption window</b>. Fereastra se deschide pe proiector, pe tot ecranul; dacă nu, trageți-o acolo și apăsați
+  <kbd>F</kbd>. Ea arată doar subtitrările, iar fereastra dumneavoastră păstrează toate butoanele, departe de ochii
+  publicului. <b class="ui">Text size</b>, <b class="ui">Sentences shown</b> și <b class="ui">Colours</b> se găsesc și
+  în Settings, la <i>Projector display</i>.</p>
+
+<h2><span class="n">6</span>Setările pentru detectarea vorbirii</h2>
+<div class="side">
+  <div>
+    <p>Valorile implicite se potrivesc majorității sălilor. Dacă ceva nu merge bine, schimbați <b>câte o setare pe
+      rând, în timp ce cineva vorbește</b>, și urmăriți textul. Modificările se aplică imediat și sunt ținute minte.
+      Un punct ● marchează o setare schimbată; <b class="ui">Reset to defaults</b> le anulează pe toate.</p>
+    <table>
+      <tr><th>Setare</th><th>Ce face</th></tr>
+      <tr><td><b class="ui">Speech detection threshold</b><br>implicit 0,50</td>
+        <td>Cât de sigură trebuie să fie aplicația că un sunet este vorbire. Mai mic prinde vocile slabe sau
+          îndepărtate; mai mare ignoră zgomotul de fond.</td></tr>
+      <tr><td><b class="ui">Pause that ends a sentence</b><br>implicit 0,7 s</td>
+        <td>Liniștea care încheie o propoziție. Mai mare se potrivește celor care vorbesc rar sau fac pauze în
+          mijlocul propoziției.</td></tr>
+      <tr><td><b class="ui">Ignore sounds shorter than</b><br>implicit 250 ms</td>
+        <td>Elimină tusea, clicurile și scaunele mutate.</td></tr>
+      <tr><td><b class="ui">Longest sentence</b><br>implicit 20 s</td>
+        <td>Vorbirea mai lungă este împărțită în momentul cel mai liniștit.</td></tr>
+      <tr><td><b class="ui">Live text refresh</b><br>implicit 0,5 s</td>
+        <td>Cât de des se actualizează textul gri provizoriu.</td></tr>
+      <tr><td><b class="ui">Mic separation</b><br>implicit 8 dB</td>
+        <td>Doar cu două microfoane. Mai mic ignoră mai mult din cealaltă persoană; mai mare le păstrează pe
+          amândouă când vorbesc în același timp.</td></tr>
+    </table>
+  </div>
+  <figure>
+    <img src="img/settings.png" alt="Panoul Settings, cu glisoarele pentru detectarea vorbirii">
+  </figure>
+</div>
+
+<h2><span class="n">7</span>Ajustări pentru diferiți vorbitori și săli</h2>
+<p>Găsiți ce vedeți, faceți modificarea și verificați-o cât timp persoana vorbește.</p>
+<table>
+  <tr><th style="width: 46%">Ce vedeți</th><th>Ce faceți</th></tr>
+  <tr><td>O persoană care vorbește încet, blând sau de departe nu este prinsă; indicatorul abia se mișcă</td>
+    <td>Apropiați microfonul sau dați-i unul propriu. Apoi coborâți <b class="ui">Speech detection threshold</b> la
+      0,35–0,40.</td></tr>
+  <tr><td>Zgomotul de fond (aer condiționat, trafic, discuții) se transformă în cuvinte rătăcite</td>
+    <td>Ridicați <b class="ui">Speech detection threshold</b> la 0,6–0,7. Pentru zgomot constant, bifați și
+      <b class="ui">Noise suppression</b>.</td></tr>
+  <tr><td>Un vorbitor rar sau care se oprește să se gândească are propozițiile tăiate în două</td>
+    <td><b class="ui">Pause that ends a sentence</b>: 1,2–2 s.</td></tr>
+  <tr><td>Un vorbitor rapid, care nu face pauze, umple ecranul cu un singur rând uriaș</td>
+    <td><b class="ui">Longest sentence</b>: 10–15 s.</td></tr>
+  <tr><td>Dialog rapid la un singur microfon: cuvintele a două persoane ajung pe același rând</td>
+    <td><b class="ui">Pause that ends a sentence</b>: 0,5 s, sau câte un microfon pentru fiecare.</td></tr>
+  <tr><td>Tusea, clicurile sau scaunele mutate devin cuvinte</td>
+    <td><b class="ui">Ignore sounds shorter than</b>: 300–400 ms.</td></tr>
+  <tr><td>Răspunsurile foarte scurte („Da.”, „Nu.”) se pierd</td>
+    <td><b class="ui">Ignore sounds shorter than</b>: 150 ms.</td></tr>
+  <tr><td>Două microfoane: cuvintele unei persoane apar și la celălalt microfon</td>
+    <td><b class="ui">Mic separation</b>: 5 dB și depărtați microfoanele.</td></tr>
+  <tr><td>Două microfoane: când vorbesc amândoi deodată, unul dintre ei se pierde</td>
+    <td><b class="ui">Mic separation</b>: 12 dB.</td></tr>
+  <tr><td>Un prezentator care se plimbă</td>
+    <td>Un microfon wireless cu clips (lavalieră) ca <b class="ui">Mic 1</b>.</td></tr>
+  <tr><td>Un grup în jurul unei mese</td>
+    <td>Laptopul la mijloc, deschis. La o masă lungă, un microfon USB de conferință.</td></tr>
+  <tr><td>Textul apare târziu pe un calculator mai vechi</td>
+    <td><b class="ui">Model</b>: <i>Parakeet Romanian 110M</i> (secțiunea 8) și
+      <b class="ui">Live text refresh</b>: 1 s.</td></tr>
+  <tr><td>Accente puternice, regionalisme, vorbire neclară</td>
+    <td>Nicio setare nu le rezolvă; cel mai mult ajută un microfon aproape de gură.</td></tr>
+</table>
+
+<h2><span class="n">8</span>Alegerea modelului</h2>
+<p>Păstrați <i>NVIDIA Canary 1B v2</i>, modelul implicit și cel mai precis. Dacă textul apare greu pe un calculator
+  mai vechi, alegeți <i>Parakeet Romanian 110M</i>: este mult mai rapid, dar scrie cu litere mici și fără punctuație.
+  Celelalte modele din listă sunt alternative de încercat. Modelele încă nedescărcate își arată mărimea; când alegeți
+  unul, aplicația întreabă mai întâi, îl descarcă și trece la el când este gata. Alegerea este ținută minte.</p>
+
+<h2><span class="n">9</span>Când ceva nu merge</h2>
+<table>
+  <tr><th style="width: 38%">Problemă</th><th>Ce faceți</th></tr>
+  <tr><td><b class="ui">Start</b> nu face nimic sau apare „Microphone access was blocked”</td>
+    <td>Mac: <i>System Settings → Privacy &amp; Security → Microphone</i>, activați Live Transcriber. Windows:
+      <i>Settings → Privacy &amp; security → Microphone</i>, permiteți aplicațiile desktop. Apoi reporniți
+      aplicația.</td></tr>
+  <tr><td>Un microfon sau boxa afișează <i>not connected</i></td>
+    <td>Conectați-l, porniți-l sau asociați-l din nou. Revine singur.</td></tr>
+  <tr><td>Indicatorul se mișcă, dar nu apare text</td>
+    <td>Verificați că este ales microfonul potrivit; coborâți <b class="ui">Speech detection threshold</b>.</td></tr>
+  <tr><td>Boxa fluieră</td><td>Vedeți secțiunea 4.</td></tr>
+  <tr><td>Altceva</td>
+    <td>Meniul <i>Help → Open logs folder</i>: trimiteți fișierul <code>server.log</code>, cu o scurtă descriere, pe
+      pagina proiectului de pe GitHub (<i>Issues</i>).</td></tr>
+</table>
+
+<footer>Acest manual se găsește și în aplicație: meniul <i>Help → User manual</i>.</footer>
+
+</body>
+</html>

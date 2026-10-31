@@ -137,6 +137,8 @@ each mic the page opens with its auto-gain request (`window.__mics`). An output 
 (`setSinkId({ type: 'none' })`), so a test run never makes sound on this computer. `window.__speakerLevel()` measures
 what it would have played. Clipboard and downloads are captured. Chromium's own test microphones
 (`--use-fake-device-for-media-stream`) are silent in this Electron build, so they cannot replace this.
+`scripts/manual.mjs` reuses `preload.cjs` (with its own device names, through `sessionStorage.__fake`) for the user
+manual's screenshots; after changing the preload, run `npm run manual` to check that it still works.
 
 **Statuses.** ✔ pass, ✖ fail, ◌ known limit (expected to fail today; a pass prints a reminder to promote it),
 – skipped (with the reason).
@@ -166,6 +168,7 @@ screenshots or logs; `hardware` = a person with real devices (§9).
 | `STATIC-02` | Installer contents (`package.json` → `build.files`) | includes `server.js`, `lib/**`, `public/**`, `desktop/main.mjs` | auto |
 | `STATIC-03` | This plan and the tests agree | every test id in `test/` appears in §7, every `auto` row exists in `test/` | auto |
 | `STATIC-04` | Page files are served | every file in `public/` is in `server.js`'s list (a missing one breaks the page with no error) | auto |
+| `STATIC-05` | User manual is current and packaged | `docs/manual/manual.json` has `package.json`'s version (a version bump needs `npm run manual` / the user-manual skill), both PDFs exist, `build.files` includes `docs/manual/*.pdf` | auto |
 
 ### 7.2 Logic (`test/unit.js`)
 
@@ -337,6 +340,7 @@ Open `test-results/<run>/screenshots/` and check:
 | DESK-07 | File / Help menu items | open the transcripts, logs and models folders |
 | DESK-08 | Quit while someone speaks (person) | the last sentence is in the transcript file |
 | DESK-09 | The desktop window (sandboxed, the app's permission rules) can pick an output: Electron with `--use-fake-device-for-media-stream`, `enumerateDevices()` + `AudioContext.setSinkId(<output id>)`, no sound played | outputs listed with names, `setSinkId` succeeds, an unknown id fails with `NotFoundError` |
+| DESK-10 | Help → *User manual* (`npm run app`, or the packaged app) | opens `Live-Transcriber-Manual-RO.pdf` when the system language is Romanian, `-EN.pdf` otherwise, in the system's PDF viewer |
 
 The desktop window runs the page sandboxed with context isolation; the UI suite runs it without (for the fake
 mics). The page uses neither Node nor the preload, so this difference matters only if that changes.
@@ -464,6 +468,7 @@ Useful tools: `DEBUG=1` server logs (`[final #n mic m] … ms: text`, `dropped, 
 | Two mics: devices coming and going, 8 kHz | `UI-DEV-*`, `SCN-06` | real Bluetooth (`HW-06`) |
 | Speaker in the room: choosing, volume, coming and going, meters before Start | `UI-SPK-*`, `DESK-09`, `VIS-07` | real speakers, delay and howling only in §9 (`HW-14…20`); auto gain on the speaker (§10.2) |
 | Desktop app | `STATIC-02`, CI smoke, `DESK-*` | packaged app UI not automated |
+| User manual (PDFs, Help menu, release assets) | `STATIC-05`, `DESK-10`; content and screenshots reviewed by the user-manual skill on every rebuild | whether the text still matches the app is checked only when the manual is rebuilt (before each tag) |
 | Docker | `DOCK-01` | manual only |
 | Wake lock (screen stays on), Noise suppression checkbox | — | not tested |
 | Browsers other than Chromium (Safari, Firefox) | — | not tested; Safari may allow one mic only; there the speaker can only be the system default |
@@ -487,3 +492,4 @@ Add one row per run on `main` (§3 step 5), newest first. Feature-branch runs go
 | 2026-10-31 | After the baseline run: time budgets measured (full tier ~12 min, not 40); PERF-01 reads the new timing line from the scenario logs. |
 | 2026-10-31 | Speaker in the room (`feature/speaker-output`): `UI-SPK-01…09`, fake outputs in `preload.cjs` (silent sink, level tap), `VIS-07`, `DESK-09` (done once with a probe), `HW-14…20`, two known limits. `STATIC-04` added after the new `public/speaker.js` was not served and the page silently failed to start. |
 | 2026-10-31 | The meters move while only the speaker plays (a sound check before Start): `UI-SPK-10`, `UI-SPK-09` also checks they return to zero. |
+| 2026-10-31 | User manual (`feature/user-manual`): `STATIC-05` (manual built for this version and packaged), `DESK-10` (Help → User manual); `scripts/manual.mjs` reuses `preload.cjs` for its screenshots (§5). |

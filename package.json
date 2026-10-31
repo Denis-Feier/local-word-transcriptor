@@ -16,6 +16,7 @@
     "test:ui": "node test/run-all.js --only ui",
     "test:wav": "node test/stream-wav.js",
     "benchmark": "node scripts/benchmark.js",
+    "manual": "node scripts/manual.mjs",
     "app": "electron .",
     "dist:mac": "electron-builder --mac",
     "dist:win": "electron-builder --win"
@@ -48,6 +49,7 @@
       "lib/**",
       "public/**",
       "desktop/main.mjs",
+      "docs/manual/*.pdf",
       "!**/*.md"
     ],
     "mac": {
