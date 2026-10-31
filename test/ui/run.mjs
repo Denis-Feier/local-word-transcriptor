@@ -261,6 +261,8 @@ app.whenReady().then(async () => {
     s = await state();
     t.check('UI-SPK-02', 'choosing a speaker plays the mic on it at once, before Start, asking for no auto gain; the volume slider appears',
       sp.sink === 'out-bt' && level > -50 && !s.recording && sp.volumeShown && sp.mics.join() === 'mic-a', `${level.toFixed(1)} dBFS on ${sp.sink}; speaker mics ${sp.mics.join(' ')}`);
+    s = await waitFor((x) => x.levels[0]?.width > 0, 3000);
+    t.check('UI-SPK-10', 'the meter moves while only the speaker plays, for a sound check before Start', !s.recording && s.levels[0].width > 0, `${s.levels[0].width.toFixed(0)}%`);
     await shot('speaker');
     await pick(1, 'mic-b');
     await sleep(800);
@@ -304,10 +306,14 @@ app.whenReady().then(async () => {
     sp = await speakerState();
     t.check('UI-SPK-08', 'the speaker back, even under a new id: it plays again and the warning goes', sp.sink === 'out-bt2' && sp.value === 'out-bt2' && level > -50 && !s.error,
       `${level.toFixed(1)} dBFS on ${sp.sink}; ${s.error}`);
+    s = await state();
+    const moving = s.levels.map((l) => l.width);
     await pickSpeaker('none');
     await sleep(300);
     sp = await speakerState();
-    t.check('UI-SPK-09', 'None stops the speaker and hides the volume', !sp.sink && !sp.volumeShown && sp.value === 'none');
+    s = await state();
+    t.check('UI-SPK-09', 'None stops the speaker, hides the volume and sets the meters back to zero',
+      !sp.sink && !sp.volumeShown && sp.value === 'none' && moving.some((w) => w > 0) && s.levels.every((l) => l.width === 0), `meters ${moving.map((w) => w.toFixed(0)).join('/')} → ${s.levels.map((l) => l.width).join('/')} %`);
 
     // ---------- server restart mid-recording ----------
     s = await open();

@@ -119,8 +119,8 @@ under **Speaker**. The app plays the mics on it and keeps transcribing as before
 works: its own speakers, a jack or USB speaker, a Bluetooth speaker, or a projector's HDMI sound. Connect or pair the
 speaker first.
 
-- **On and off:** choosing a speaker turns it on at once, even before **Start**, so you can do a sound check.
-  **None** turns it off. Start and Stop don't affect it. The app always opens with *None*, so it never starts
+- **On and off:** choosing a speaker turns it on at once, even before **Start**, so you can do a sound check; the
+  level meters move too. **None** turns it off. Start and Stop don't affect it. The app always opens with *None*, so it never starts
   howling by surprise. **Volume** is remembered.
 - **Use a cable or USB speaker rather than Bluetooth** if the person talking can hear it. Bluetooth speakers play
   about 0.2 s late. The talker hears that delay as an echo, which can make them stumble. A cable or USB speaker plays

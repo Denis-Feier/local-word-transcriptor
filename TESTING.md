@@ -297,7 +297,8 @@ With `--recordings a.wav,b.wav` the same scenarios run on 60 s of two real voice
 | `UI-SPK-06` | Reload | speaker back at None, volume remembered | auto |
 | `UI-SPK-07` | Speaker switched off | stops playing (no fallback to the laptop), "Party Speaker (not connected)", warning | auto |
 | `UI-SPK-08` | Speaker back under a new id (re-paired) | found by name, plays again, warning gone | auto |
-| `UI-SPK-09` | Speaker → None | playing stops, volume slider hidden | auto |
+| `UI-SPK-09` | Speaker → None | playing stops, volume slider hidden, the meters (moving before) back to zero | auto |
+| `UI-SPK-10` | Sound check before Start | the meter moves while only the speaker plays | auto |
 | `UI-NET-01` | Server restarted mid-recording | page reconnects, buffered audio transcribed on the right mics | auto |
 | `UI-LOOK-01` | Phone width (390 px) | no sideways scrolling | auto |
 | `UI-CFG-01` | `MAX_MICS=1` | one "Microphone" menu, the page as before two mics existed | auto |
@@ -321,7 +322,7 @@ Open `test-results/<run>/screenshots/` and check:
 | VIS-04 | `settings.png` | drawer with a meter per mic and the Mic separation slider with its hint |
 | VIS-05 | `mic-disconnected.png` | red "not connected" next to Mic 2, warning above the transcript |
 | VIS-06 | `phone.png` | everything reachable at 390 px, nothing cut off |
-| VIS-07 | `speaker.png`, `speaker-disconnected.png` | Speaker menu and Volume slider in the settings row; "(not connected)" in the menu and the warning above the transcript |
+| VIS-07 | `speaker.png`, `speaker-disconnected.png` | Speaker menu and Volume slider in the settings row, the meter moving before Start; "(not connected)" in the menu and the warning above the transcript |
 
 ### 8.2 Desktop app — `manual`
 
@@ -384,7 +385,7 @@ distances.
 | HW-11 | A 30–60 minute meeting | no freeze, no drift between the mics (lines keep their order), memory stable |
 | HW-12 | Desktop app on Mac and on Windows, with the projector on a second screen | as above; captions coloured on the projector |
 | HW-13 | Pressing Stop while both talk | both last sentences saved |
-| HW-14 | **Speaker** on a jack or USB speaker, before Start; talk into the mic | heard at once from the speaker; the talker hears no echo |
+| HW-14 | **Speaker** on a jack or USB speaker, before Start; talk into the mic | heard at once from the speaker; the talker hears no echo; the meter moves |
 | HW-15 | The same with a Bluetooth speaker | note the delay the talker hears (expected ~0.2 s) and whether it bothers them |
 | HW-16 | Raise **Volume** with the speaker behind the mics, then in front of them facing away | note the volume at which it howls in each place; turning it down stops the howl |
 | HW-17 | Two mics with the speaker playing: each person alone, then taking turns (HW-02/03 again) | lines under the right mic as without the speaker; note any line under the wrong mic and where the speaker stood |
@@ -461,7 +462,7 @@ Useful tools: `DEBUG=1` server logs (`[final #n mic m] … ms: text`, `dropped, 
 | Two mics: choosing, labels, colours | `UI-MIC-*`, `UI-TX-02…05`, `UI-CFG-01/02`, `VIS-01` | — |
 | Two mics: crosstalk gate and duplicates | `UNIT-GATE-*`, `UNIT-SESS-*`, `SCN-01…08`, `SMOKE-02` | `KNOWN-01`, real rooms (§9) |
 | Two mics: devices coming and going, 8 kHz | `UI-DEV-*`, `SCN-06` | real Bluetooth (`HW-06`) |
-| Speaker in the room: choosing, volume, coming and going | `UI-SPK-*`, `DESK-09`, `VIS-07` | real speakers, delay and howling only in §9 (`HW-14…20`); auto gain on the speaker (§10.2) |
+| Speaker in the room: choosing, volume, coming and going, meters before Start | `UI-SPK-*`, `DESK-09`, `VIS-07` | real speakers, delay and howling only in §9 (`HW-14…20`); auto gain on the speaker (§10.2) |
 | Desktop app | `STATIC-02`, CI smoke, `DESK-*` | packaged app UI not automated |
 | Docker | `DOCK-01` | manual only |
 | Wake lock (screen stays on), Noise suppression checkbox | — | not tested |
@@ -484,3 +485,4 @@ Add one row per run on `main` (§3 step 5), newest first. Feature-branch runs go
 | 2026-10-31 | Plan created, covering the app up to `ca62a61` (two microphones). Test tooling added: `run-all.js`, `helpers.js`, `unit.js`, `protocol.js`, `scenarios.js`, `ui/`. |
 | 2026-10-31 | After the baseline run: time budgets measured (full tier ~12 min, not 40); PERF-01 reads the new timing line from the scenario logs. |
 | 2026-10-31 | Speaker in the room (`feature/speaker-output`): `UI-SPK-01…09`, fake outputs in `preload.cjs` (silent sink, level tap), `VIS-07`, `DESK-09` (done once with a probe), `HW-14…20`, two known limits. `STATIC-04` added after the new `public/speaker.js` was not served and the page silently failed to start. |
+| 2026-10-31 | The meters move while only the speaker plays (a sound check before Start): `UI-SPK-10`, `UI-SPK-09` also checks they return to zero. |

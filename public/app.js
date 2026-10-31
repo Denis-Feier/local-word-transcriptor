@@ -56,6 +56,7 @@ let speakerPick = null; // where the mics are played: { id, label }; id '' = sys
 let speaker = null; // the mics playing on it (speaker.js)
 let speakerTurn = 0; // bumps on every (re)open, so an older open that finishes late is closed again
 let speakerOpening = false;
+let speakerMeter = null; // moves the meters from the speaker's mics while not recording
 const speaking = new Set(); // mics on which someone is talking right now
 let stage = null;
 let settings = null;
@@ -256,16 +257,23 @@ function micsUpdated() {
 const levelEls = (mic) => [els.levels, els.settingsLevels].map((root) => root.children[mic]).filter(Boolean);
 
 function renderLevels() {
+  const open = capture ?? speaker;
   used().forEach((_, mic) => {
-    const missing = Boolean(capture && !capture.slots[mic]?.stream);
+    const missing = Boolean(open && !open.slots[mic]?.stream);
     for (const el of levelEls(mic)) {
       const label = el.querySelector('.speaking');
       label.textContent = missing ? 'not connected' : speaking.has(mic) ? 'speech' : 'listening';
       label.classList.toggle('on', speaking.has(mic));
       label.classList.toggle('off', missing);
-      if (missing || !recording) el.querySelector('.meter-fill').style.width = '0';
+      if (missing || !open) el.querySelector('.meter-fill').style.width = '0';
     }
   });
+}
+
+function showLevel(rms, mic) {
+  // Map roughly -60..0 dBFS onto 0..100 %.
+  const pct = Math.max(0, Math.min(100, ((20 * Math.log10(rms + 1e-9) + 60) / 60) * 100));
+  for (const el of levelEls(mic)) el.querySelector('.meter-fill').style.width = `${pct}%`;
 }
 
 function showLevels(buffer) {
@@ -275,10 +283,7 @@ function showLevels(buffer) {
   for (let mic = 0; mic < count; mic++) {
     let sum = 0;
     for (let i = mic * length; i < (mic + 1) * length; i++) sum += samples[i] * samples[i];
-    const rms = Math.sqrt(sum / length);
-    // Map roughly -60..0 dBFS onto 0..100 %.
-    const pct = Math.max(0, Math.min(100, ((20 * Math.log10(rms + 1e-9) + 60) / 60) * 100));
-    for (const el of levelEls(mic)) el.querySelector('.meter-fill').style.width = `${pct}%`;
+    showLevel(Math.sqrt(sum / length), mic);
   }
 }
 
@@ -424,6 +429,9 @@ async function restartSpeaker() {
   }
   renderSpeakerField();
   keepAwake(recording || Boolean(speaker));
+  // A sound check before Start: the meters follow the speaker's mics; while recording, the recording moves them.
+  clearInterval(speakerMeter);
+  speakerMeter = speaker && setInterval(() => !recording && speaker?.levels().forEach(showLevel), 100);
   devicesChanged();
 }
 

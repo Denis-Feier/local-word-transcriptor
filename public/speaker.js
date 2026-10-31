@@ -34,13 +34,23 @@ export async function openSpeaker(deviceIds, { sinkId, volume, onChange }) {
   }
   const gain = new GainNode(ctx, { gain: volume });
   gain.connect(ctx.destination);
-  const mics = feedMics(ctx, slots, processing, (source) => source.connect(gain), onChange);
+  const meters = slots.map(() => new AnalyserNode(ctx, { fftSize: 4096 })); // ~0.1 s, like a capture chunk
+  const mics = feedMics(ctx, slots, processing, (source, input) => {
+    source.connect(gain);
+    source.connect(meters[input]);
+  }, onChange);
+  const samples = new Float32Array(meters[0].fftSize);
 
   return {
     slots,
     sinkId,
     reattach: mics.reattach,
     setVolume: (value) => gain.gain.setTargetAtTime(value, ctx.currentTime, 0.02),
+    /** Each mic's RMS level over the last ~0.1 s, before the volume; 0 for a mic that is missing. */
+    levels: () => meters.map((meter) => {
+      meter.getFloatTimeDomainData(samples);
+      return Math.sqrt(samples.reduce((sum, x) => sum + x * x, 0) / samples.length);
+    }),
     close() {
       mics.close();
       ctx.close();
