@@ -241,7 +241,8 @@ mics → AudioWorklet ─WS─▶  Silero VAD + Segmenter per mic        ──�
 | `scripts/benchmark.js` | Scores models on the FLEURS Romanian test set (`npm run benchmark`) |
 | `Dockerfile`, `docker-compose.yml` | The Docker image and how it is started |
 | `desktop/main.mjs` | The desktop app (Electron): starts the server in the background, opens its page, sends the caption window to the projector, data folders per user |
-| `test/smoke.js` | End-to-end check on any OS: server, automatic model download, transcription of `test/fixtures/ro.wav` |
+| `test/smoke.js` | End-to-end check on any OS: server, automatic model download, transcription of `test/fixtures/ro.wav` (one mic and two) |
+| `test/run-all.js` | Runs the whole test plan (`TESTING.md`): logic, server, two-mic conversations, the page in Electron; `npm test` |
 | `.github/workflows/desktop.yml` | Builds and tests the Mac and Windows installers on GitHub; publishes them on version tags |
 
 Live guesses refresh every 0.5 s, or less often for slow models (twice the model's average inference time), so they never delay the final text.
@@ -265,6 +266,12 @@ The speech-detection values (`VAD_THRESHOLD`, `VAD_SILENCE_MS`, `VAD_MAX_SEGMENT
 | `INITIAL_PROMPT` | empty | Whisper only: names or jargon to prime the first sentence, e.g. `INITIAL_PROMPT="Ședința cu Andrei și Mihaela despre Kubernetes."` Later sentences use the previous text as context automatically |
 | `THREADS` | `4` | CPU threads for the models |
 | `DEBUG` | unset | `DEBUG=1` prints model logs and per-sentence timings |
+
+## Tests
+
+`npm test` runs the test plan in [TESTING.md](TESTING.md) (~5 min; `npm run test:quick` ~1 min, `npm run test:full`
+~15 min with every speech engine). Each run writes a report to `test-results/`. The plan, the per-merge routine and
+the checklist for testing with real microphones are in TESTING.md.
 
 ## Testing without a microphone
 
@@ -300,7 +307,7 @@ npm run test:wav -- transcripts/<stamp>-mic1.wav --mic2 transcripts/<stamp>-mic2
 
 ## Limits
 
-- No speaker labels yet ("who said what"). See *Next steps*.
+- Speakers are told apart only by microphone (one mic per person, up to two): no voice-based speaker labels yet. See *Next steps*.
 - Final text appears ~1 s after someone stops talking (0.7 s pause detection plus inference).
 
 ## Next steps
