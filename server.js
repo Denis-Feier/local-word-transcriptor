@@ -15,6 +15,7 @@ const STATIC = {
   '/stage.js': ['stage.js', 'text/javascript; charset=utf-8'],
   '/settings.js': ['settings.js', 'text/javascript; charset=utf-8'],
   '/mics.js': ['mics.js', 'text/javascript; charset=utf-8'],
+  '/speaker.js': ['speaker.js', 'text/javascript; charset=utf-8'],
   '/pcm-worklet.js': ['pcm-worklet.js', 'text/javascript; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
 };

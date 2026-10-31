@@ -112,6 +112,32 @@ transcript. Lines spoken at the same time are marked ⇄.
 - With *Save audio* on, each mic gets its own WAV (`<stamp>-mic1.wav`, `<stamp>-mic2.wav`).
 - `MAX_MICS` changes the limit of 2.
 
+## A speaker in the room
+
+If the audience needs to hear the people talking, for example through a karaoke or PA speaker, pick that speaker
+under **Speaker**. The app plays the mics on it and keeps transcribing as before. Any output the computer sees
+works: its own speakers, a jack or USB speaker, a Bluetooth speaker, or a projector's HDMI sound. Connect or pair the
+speaker first.
+
+- **On and off:** choosing a speaker turns it on at once, even before **Start**, so you can do a sound check.
+  **None** turns it off. Start and Stop don't affect it. The app always opens with *None*, so it never starts
+  howling by surprise. **Volume** is remembered.
+- **Use a cable or USB speaker rather than Bluetooth** if the person talking can hear it. Bluetooth speakers play
+  about 0.2 s late. The talker hears that delay as an echo, which can make them stumble. A cable or USB speaker plays
+  at once.
+- **Howling (feedback)** happens when a mic picks up the speaker. Put the speaker in front of the mics, facing away
+  from them towards the audience, and turn **Volume** down if it starts. The laptop's own speakers almost always howl
+  with its built-in mic.
+- **With two mics**, the speaker also plays each person's voice near the other mic. Keep it away from both mics, or
+  some lines may appear under the wrong mic.
+- **A Bluetooth speaker with its own microphone** (many karaoke speakers have one): under Mic 1 and Mic 2, choose
+  your real mics instead of *System default*. Otherwise the Mac may record from the speaker's microphone, which
+  switches the speaker to call quality and makes both the sound and the text worse.
+- **A speaker that disconnects** shows *not connected* and goes silent. The sound does not move to the laptop's
+  speakers. It plays again once the speaker is back.
+- Picking a particular speaker works in the desktop app, Chrome and Edge. In Safari and Firefox the only choice is
+  *System default*.
+
 ## Docker or native?
 
 Docker on macOS runs a Linux virtual machine that can't reach the Apple GPU, so inside Docker every model
@@ -204,7 +230,7 @@ The report (speed, WER, and every model's full transcript) is written to `transc
 - **Put the laptop in the middle** of the group, screen up. The built-in mics face the keyboard area.
 - **An external USB conference or boundary mic** helps the most for people at the far end of the table. Pick it under **Microphone**.
 - **Noise suppression** is off by default because the browser's filter can swallow quiet, distant voices. Turn it on if there is steady background noise (air conditioning, traffic).
-- The page keeps the screen awake while recording. If the server restarts mid-meeting, the page keeps recording and sends the buffered audio (up to 5 minutes) once it reconnects.
+- The page keeps the screen awake while recording or playing on a speaker. If the server restarts mid-meeting, the page keeps recording and sends the buffered audio (up to 5 minutes) once it reconnects.
 - Overlapping speech (two people at once) is transcribed as one mixed sentence. Turn-taking works best, or give
   each speaker their own mic (see *Two microphones*).
 
@@ -224,7 +250,8 @@ mics → AudioWorklet ─WS─▶  Silero VAD + Segmenter per mic        ──�
 |---|---|
 | `public/pcm-worklet.js` | Takes one input per mic, downsamples to 16 kHz mono, sends 100 ms chunks with every mic's audio side by side |
 | `public/mics.js` | Lists the audio inputs and records one or more of them together; reconnects a mic that comes back |
-| `public/app.js` | UI: models, mic choice, live and final lines (coloured per mic), wake lock, reconnect buffering |
+| `public/speaker.js` | Plays the mics on the speaker chosen for the room: full quality, low delay, separate from the transcription |
+| `public/app.js` | UI: models, mic and speaker choice, live and final lines (coloured per mic), wake lock, reconnect buffering |
 | `public/stage.js` | Projector view: large centred captions, display preferences, full screen; also the caption window (`/?display`) |
 | `public/settings.js` | Settings panel: live speech-detection sliders (`lib/tuning.js` on the server) and projector display options |
 | `server.js` | Static files, WebSocket, model downloads and switching |

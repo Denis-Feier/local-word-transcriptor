@@ -232,6 +232,83 @@ app.whenReady().then(async () => {
     t.check('UI-DEV-11', 'a re-paired mic (new id, same name) is found again', s.fields[1].value === 'mic-b2' && s.fields[1].text === 'AirPods');
     await js('sessionStorage.clear()');
 
+    // ---------- speaker in the room ----------
+    // Each (re)open of the speaker starts the fake mics' clips again (A 6.8 s, B 8.7 s), so levels are read soon after.
+    const speakerState = () => js(`(() => {
+      const s = document.getElementById('speaker');
+      return { value: s.value, text: s.selectedOptions[0]?.text, options: [...s.options].map((o) => o.value), volumeShown: !document.getElementById('speakerVolumeField').hidden,
+        volume: document.getElementById('speakerVolume').value, sink: window.__sink && window.__sink.ctx.state !== 'closed' ? window.__sink.id : null,
+        mics: window.__mics.filter((m) => m.autoGainControl === false).map((m) => m.id) };
+    })()`);
+    const pickSpeaker = (value) => js(`(() => { const s = document.getElementById('speaker'); s.value = ${JSON.stringify(value)}; s.dispatchEvent(new Event('change')); })()`);
+    const setVolume = (value) => js(`(() => { const v = document.getElementById('speakerVolume'); v.value = ${value}; v.dispatchEvent(new Event('input')); v.dispatchEvent(new Event('change')); })()`);
+    const loudest = async (ms = 2500) => { // dBFS; -Infinity when nothing plays on the picked output
+      let max = -Infinity;
+      const t0 = Date.now();
+      while (Date.now() - t0 < ms) {
+        max = Math.max(max, (await js('window.__speakerLevel()')) ?? -Infinity);
+        await sleep(50);
+      }
+      return max;
+    };
+    s = await open();
+    let sp = await speakerState();
+    t.check('UI-SPK-01', 'Speaker menu: None, System default and each output; it starts at None, without a volume slider, playing nothing',
+      sp.value === 'none' && sp.options.join() === 'none,,out-laptop,out-bt' && !sp.volumeShown && !sp.sink, sp.options.join(' '));
+    await pickSpeaker('out-bt');
+    let level = await loudest();
+    sp = await speakerState();
+    s = await state();
+    t.check('UI-SPK-02', 'choosing a speaker plays the mic on it at once, before Start, asking for no auto gain; the volume slider appears',
+      sp.sink === 'out-bt' && level > -50 && !s.recording && sp.volumeShown && sp.mics.join() === 'mic-a', `${level.toFixed(1)} dBFS on ${sp.sink}; speaker mics ${sp.mics.join(' ')}`);
+    await shot('speaker');
+    await pick(1, 'mic-b');
+    await sleep(800);
+    sp = await speakerState();
+    t.check('UI-SPK-03', 'choosing Mic 2 adds it to the speaker', sp.sink === 'out-bt' && sp.mics.slice(-2).join() === 'mic-a,mic-b', sp.mics.join(' '));
+    await click('toggle');
+    await waitFor((x) => x.recording);
+    await sleep(1000);
+    const during = await speakerState();
+    await click('toggle');
+    await sleep(800);
+    level = await loudest();
+    sp = await speakerState();
+    t.check('UI-SPK-04', 'Start and Stop leave the speaker playing', during.sink === 'out-bt' && sp.sink === 'out-bt' && level > -50, `${level.toFixed(1)} dBFS after Stop`);
+    await pickSpeaker('out-laptop');
+    await sleep(500);
+    const loud = await loudest(1000);
+    await setVolume(0);
+    await sleep(300);
+    const quiet = await loudest(1000);
+    sp = await speakerState();
+    t.check('UI-SPK-05', 'another output takes over the sound; volume 0 silences it', sp.sink === 'out-laptop' && loud > -50 && quiet < -90, `${loud.toFixed(1)} → ${quiet.toFixed(1)} dBFS`);
+    await setVolume(40);
+    await win.loadURL(`http://127.0.0.1:${server.port}/`);
+    await waitFor((x) => x.status === 'ready', 5000);
+    sp = await speakerState();
+    t.check('UI-SPK-06', 'after a reload the speaker is back at None and the volume is remembered', sp.value === 'none' && !sp.sink && sp.volume === '40', JSON.stringify({ value: sp.value, volume: sp.volume }));
+    await pickSpeaker('out-bt');
+    await sleep(500);
+    await unplug('out-bt');
+    s = await waitFor((x) => x.error.includes('Party Speaker'), 3000);
+    await sleep(200);
+    sp = await speakerState();
+    t.check('UI-SPK-07', 'the speaker switched off: it stops playing (no fallback to the laptop), shows "(not connected)" and a warning',
+      !sp.sink && sp.text === 'Party Speaker (not connected)' && s.error.includes('The speaker (Party Speaker) is not connected'), `${sp.text}; ${s.error}`);
+    await shot('speaker-disconnected');
+    await js(`window.__fake.devices.find((d) => d.deviceId === 'out-bt').deviceId = 'out-bt2'`); // re-paired: a new id
+    await plug('out-bt2');
+    s = await waitFor((x) => !x.error, 3000);
+    level = await loudest();
+    sp = await speakerState();
+    t.check('UI-SPK-08', 'the speaker back, even under a new id: it plays again and the warning goes', sp.sink === 'out-bt2' && sp.value === 'out-bt2' && level > -50 && !s.error,
+      `${level.toFixed(1)} dBFS on ${sp.sink}; ${s.error}`);
+    await pickSpeaker('none');
+    await sleep(300);
+    sp = await speakerState();
+    t.check('UI-SPK-09', 'None stops the speaker and hides the volume', !sp.sink && !sp.volumeShown && sp.value === 'none');
+
     // ---------- server restart mid-recording ----------
     s = await open();
     await pick(1, 'mic-b');

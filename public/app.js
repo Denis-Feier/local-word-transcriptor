@@ -1,6 +1,7 @@
 import { createStage } from '/stage.js';
 import { createSettings } from '/settings.js';
 import { listInputs, openCapture } from '/mics.js';
+import { canChooseOutput, listOutputs, openSpeaker } from '/speaker.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -17,6 +18,9 @@ const els = {
   model: $('model'),
   modelNotes: $('modelNotes'),
   mics: $('mics'),
+  speaker: $('speaker'),
+  speakerVolume: $('speakerVolume'),
+  speakerVolumeField: $('speakerVolumeField'),
   noise: $('noise'),
   saveAudio: $('saveAudio'),
   error: $('error'),
@@ -30,7 +34,7 @@ const els = {
 const MAX_BACKLOG = 3000; // 100 ms chunks = 5 minutes of audio kept while the server is unreachable
 const CHANNEL = 'transcriber-captions'; // main window -> caption windows (/?display), same browser
 const DISPLAY_ONLY = new URLSearchParams(location.search).has('display');
-const NONE = 'none'; // "no second mic" in the mic menus
+const NONE = 'none'; // "no second mic" in the mic menus, "no speaker" in the speaker menu
 const OVERLAP_SEC = 0.5; // lines from two mics overlapping at least this long were spoken at the same time
 
 let ws = null;
@@ -47,6 +51,11 @@ let picks = []; // the chosen mics in order (Mic 1, Mic 2, …): { id, label }; 
 let inputs = []; // the audio inputs the browser lists
 let defaultId = ''; // the input behind "System default"
 let micWarning = '';
+let outputs = []; // the audio outputs the browser lists
+let speakerPick = null; // where the mics are played: { id, label }; id '' = system default; null = nowhere
+let speaker = null; // the mics playing on it (speaker.js)
+let speakerTurn = 0; // bumps on every (re)open, so an older open that finishes late is closed again
+let speakerOpening = false;
 const speaking = new Set(); // mics on which someone is talking right now
 let stage = null;
 let settings = null;
@@ -155,27 +164,32 @@ function loadPicks() {
   return [{ id: store.get('mic', ''), label: '' }]; // the single-mic setting of earlier versions
 }
 
-/** The input a pick means right now: by id, else by name (a re-paired Bluetooth mic can get a new id). */
-function resolve(pick) {
-  if (!pick.id) return defaultId;
-  if (inputs.some((d) => d.deviceId === pick.id)) return pick.id;
-  return inputs.find((d) => pick.label && d.label === pick.label)?.deviceId ?? pick.id;
+/** The device a pick means right now: by id, else by name (a re-paired Bluetooth device can get a new id). */
+function findDevice(pick, devices) {
+  if (devices.some((d) => d.deviceId === pick.id)) return pick.id;
+  return devices.find((d) => pick.label && d.label === pick.label)?.deviceId ?? pick.id;
 }
+
+const resolve = (pick) => (pick.id ? findDevice(pick, inputs) : defaultId); // the input a mic pick means
 
 const openId = (pick) => (pick.id ? resolve(pick) : ''); // '' lets the browser follow the system default
 const connected = (pick) => !pick.id || inputs.some((d) => d.deviceId === resolve(pick));
 
-async function refreshInputs() {
+async function refreshDevices() {
   ({ inputs, defaultId } = await listInputs());
+  outputs = await listOutputs();
   // Names appear once the mic is allowed; remember them, to find a mic again if its id changes.
   const named = picks.map((p) => ({ ...p, label: inputs.find((d) => d.deviceId === p.id)?.label || p.label }));
   if (named.some((p, i) => p.label !== picks[i].label)) store.set('mics', named);
   picks = named;
   renderMicFields();
-  // A mic that was switched off or out of range is back: let it join the recording again.
-  capture?.slots.forEach((slot, mic) => {
-    if (!slot.stream && picks[mic] && connected(picks[mic])) capture.reattach(mic, openId(picks[mic]));
-  });
+  // A mic that was switched off or out of range is back: let it join the recording, and the speaker, again.
+  for (const open of [capture, speaker]) {
+    open?.slots.forEach((slot, mic) => {
+      if (!slot.stream && picks[mic] && connected(picks[mic])) open.reattach(mic, openId(picks[mic]));
+    });
+  }
+  speakerDevicesChanged();
 }
 
 /** One menu per mic. Mic 1 is always used; the next one offers "None", up to the server's limit. */
@@ -215,6 +229,7 @@ function chooseMic(mic, id) {
   store.set('mics', picks);
   micsUpdated();
   restartCapture();
+  if (speakerPick) restartSpeaker();
 }
 
 /** The number of mics or their order changed. */
@@ -275,20 +290,21 @@ function openMics() {
       if (ws?.readyState === WebSocket.OPEN) ws.send(buffer);
       else if (backlog.length < MAX_BACKLOG) backlog.push(buffer);
     },
-    onChange: micsChanged,
+    onChange: devicesChanged,
   });
 }
 
-/** Mics that are missing or that record at a low rate, as a warning; recording goes on with the others. */
-function micsChanged() {
+/** Mics or the speaker missing, or mics recording at a low rate, as a warning; the rest goes on without them. */
+function devicesChanged() {
   renderLevels();
-  if (!capture) return;
   const notes = [];
-  capture.slots.forEach((slot, mic) => {
+  // The mics as the recording has them, or else as the speaker has them.
+  (capture ?? speaker)?.slots.forEach((slot, mic) => {
     const name = multiMic() ? `${micName(mic)} (${picks[mic].label || 'microphone'})` : picks[mic].label || 'The microphone';
-    if (!slot.stream) notes.push(`${name} is not connected; it joins the recording again as soon as it is back.`);
+    if (!slot.stream) notes.push(`${name} is not connected; it joins again as soon as it is back.`);
     else if (slot.rate && slot.rate < 16000) notes.push(`${name} records at ${slot.rate / 1000} kHz (older Bluetooth headsets do), so its text will be less accurate.`);
   });
+  if (speakerPick && !speakerConnected()) notes.push(`The speaker (${speakerPick.label || 'speaker'}) is not connected; it plays again as soon as it is back.`);
   if (notes.length) {
     micWarning = notes.join('\n');
     showError(micWarning);
@@ -315,8 +331,8 @@ async function start() {
   }
   recording = true;
   keepAwake(true);
-  refreshInputs(); // device names become available once permission is granted
-  micsChanged();
+  refreshDevices(); // device names become available once permission is granted
+  devicesChanged();
   render();
 }
 
@@ -324,7 +340,7 @@ function stop() {
   recording = false;
   closeCapture();
   send({ type: 'flush' }); // finalise whatever was being said
-  keepAwake(false);
+  keepAwake(Boolean(speaker)); // the speaker plays on
   speaking.clear();
   renderLevels();
   render();
@@ -336,7 +352,7 @@ async function restartCapture() {
   closeCapture();
   try {
     capture = await openMics();
-    micsChanged();
+    devicesChanged();
   } catch (err) {
     showError(`Could not switch microphone: ${err.message}`);
     stop();
@@ -344,7 +360,7 @@ async function restartCapture() {
 }
 
 async function keepAwake(on) {
-  // A laptop left transcribing a meeting must not dim and sleep.
+  // A laptop left transcribing a meeting, or playing it on a speaker, must not dim and sleep.
   try {
     if (on && !wakeLock && 'wakeLock' in navigator) {
       wakeLock = await navigator.wakeLock.request('screen');
@@ -363,6 +379,61 @@ function setSpeaking(mic, on) {
   else speaking.delete(mic);
   renderLevels();
   publish();
+}
+
+// ---------- speaker ----------
+
+const speakerId = () => (speakerPick.id ? findDevice(speakerPick, outputs) : ''); // the output the pick means
+const speakerConnected = () => !speakerPick.id || outputs.some((d) => d.deviceId === speakerId());
+const volume = () => Number(els.speakerVolume.value) / 100;
+
+/** None, System default, then every output; a chosen one that is gone stays listed as "not connected". */
+function renderSpeakerField() {
+  const select = els.speaker;
+  select.replaceChildren(new Option('None', NONE), new Option('System default', ''));
+  if (canChooseOutput) outputs.forEach((d, i) => select.add(new Option(d.label || `Speaker ${i + 1}`, d.deviceId)));
+  if (speakerPick && !speakerConnected()) select.add(new Option(`${speakerPick.label || 'Speaker'} (not connected)`, speakerPick.id));
+  select.value = speakerPick ? speakerId() : NONE;
+  els.speakerVolumeField.hidden = !speakerPick;
+}
+
+function chooseSpeaker(id) {
+  speakerPick = id === NONE ? null : { id, label: outputs.find((d) => d.deviceId === id)?.label ?? '' };
+  restartSpeaker();
+}
+
+/** Play the mics on the chosen speaker, again after a change; nothing while it is missing. */
+async function restartSpeaker() {
+  const turn = ++speakerTurn;
+  speaker?.close();
+  speaker = null;
+  if (speakerPick && speakerConnected()) {
+    speakerOpening = true;
+    try {
+      const opened = await openSpeaker(used().map(openId), { sinkId: speakerId(), volume: volume(), onChange: devicesChanged });
+      if (turn !== speakerTurn) return opened.close(); // chosen again meanwhile
+      speaker = opened;
+      refreshDevices(); // speaker names become available once the mics are allowed
+    } catch (err) {
+      if (turn !== speakerTurn) return;
+      speakerPick = null;
+      showError(`Could not play on the speaker: ${err.message}`);
+    } finally {
+      if (turn === speakerTurn) speakerOpening = false;
+    }
+  }
+  renderSpeakerField();
+  keepAwake(recording || Boolean(speaker));
+  devicesChanged();
+}
+
+/** The outputs changed: follow the chosen speaker as it goes, comes back, or comes back under a new id. */
+function speakerDevicesChanged() {
+  if (speakerPick) speakerPick.label = outputs.find((d) => d.deviceId === speakerPick.id)?.label || speakerPick.label;
+  renderSpeakerField();
+  // Gone: stop at once, rather than let the sound fall back to the laptop's own speakers.
+  if (speaker && (!speakerConnected() || speaker.sinkId !== speakerId())) restartSpeaker();
+  else if (speakerPick && !speaker && !speakerOpening && speakerConnected()) restartSpeaker();
 }
 
 // ---------- transcript ----------
@@ -588,16 +659,23 @@ function initMain() {
     store.set('saveAudio', els.saveAudio.checked);
     send({ type: 'options', saveAudio: els.saveAudio.checked });
   });
-  navigator.mediaDevices?.addEventListener('devicechange', refreshInputs);
+  els.speaker.addEventListener('change', () => chooseSpeaker(els.speaker.value));
+  els.speakerVolume.addEventListener('input', () => speaker?.setVolume(volume()));
+  els.speakerVolume.addEventListener('change', () => store.set('speakerVolume', Number(els.speakerVolume.value)));
+  navigator.mediaDevices?.addEventListener('devicechange', refreshDevices);
   document.addEventListener('visibilitychange', () => {
-    if (recording && document.visibilityState === 'visible') keepAwake(true); // the lock drops when the tab is hidden
+    // The lock drops when the tab is hidden.
+    if ((recording || speaker) && document.visibilityState === 'visible') keepAwake(true);
   });
 
   els.noise.checked = store.get('noise', false);
   els.saveAudio.checked = store.get('saveAudio', false);
+  // The volume is remembered; the speaker itself starts at None, so the app never opens with a howl.
+  els.speakerVolume.value = store.get('speakerVolume', 80);
   picks = loadPicks();
   micsUpdated();
-  refreshInputs();
+  renderSpeakerField();
+  refreshDevices();
   connect();
 }
 

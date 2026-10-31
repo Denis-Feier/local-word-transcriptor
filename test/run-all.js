@@ -101,6 +101,11 @@ function staticChecks() {
   const packaged = pkg.build.files;
   check('STATIC-02', 'the installers include server.js, lib/ and public/', ['server.js', 'lib/**', 'public/**', 'desktop/main.mjs'].every((p) => packaged.includes(p)), packaged.join(' '));
 
+  // The server serves only the page files it lists; a new one left out breaks the page without an error.
+  const served = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  const unserved = fs.readdirSync(path.join(ROOT, 'public')).filter((f) => f !== 'index.html' && !served.includes(`'/${f}': ['${f}'`));
+  check('STATIC-04', 'the server serves every file in public/', unserved.length === 0, unserved.join(', ') || 'all listed in server.js');
+
   // The plan and the tests must agree: every test id in the code is described in TESTING.md, and every
   // automated id in TESTING.md exists in the code.
   const plan = fs.readFileSync(path.join(ROOT, 'TESTING.md'), 'utf8');

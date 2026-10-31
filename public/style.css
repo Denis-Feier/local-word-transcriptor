@@ -153,6 +153,8 @@ button.primary.recording .rec { border-radius: 2px; }
 }
 
 .field { display: flex; align-items: center; gap: 8px; }
+.field[hidden] { display: none; }
+.field input[type="range"] { width: 110px; margin: 0; accent-color: var(--accent); }
 .mics { display: contents; }
 .field[data-mic] > span::before {
   content: "";

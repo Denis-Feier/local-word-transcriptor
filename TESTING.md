@@ -132,8 +132,11 @@ sentences with fewer than three such words are not judged.
 **Fake microphones (UI).** `preload.cjs` replaces the page's `enumerateDevices`/`getUserMedia` with three devices:
 `mic-a` "Built-in Microphone" (speaker A, also behind the `default` entry), `mic-b` "AirPods" (speaker B),
 `mic-c` "USB Microphone" (third sentence). The test plugs and unplugs them, re-pairs one under a new id, or makes one
-report 8 kHz. Clipboard and downloads are captured. Chromium's own test microphones (`--use-fake-device-for-media-stream`)
-are silent in this Electron build, so they cannot replace this.
+report 8 kHz. It also lists two outputs, `out-laptop` "MacBook Pro Speakers" and `out-bt` "Party Speaker", and records
+each mic the page opens with its auto-gain request (`window.__mics`). An output the page picks plays to a silent sink
+(`setSinkId({ type: 'none' })`), so a test run never makes sound on this computer. `window.__speakerLevel()` measures
+what it would have played. Clipboard and downloads are captured. Chromium's own test microphones
+(`--use-fake-device-for-media-stream`) are silent in this Electron build, so they cannot replace this.
 
 **Statuses.** ✔ pass, ✖ fail, ◌ known limit (expected to fail today; a pass prints a reminder to promote it),
 – skipped (with the reason).
@@ -162,6 +165,7 @@ screenshots or logs; `hardware` = a person with real devices (§9).
 | `STATIC-01` | Syntax of every `.js/.mjs/.cjs` in `lib/ public/ scripts/ desktop/ test/` and `server.js` | `node --check` succeeds for all | auto |
 | `STATIC-02` | Installer contents (`package.json` → `build.files`) | includes `server.js`, `lib/**`, `public/**`, `desktop/main.mjs` | auto |
 | `STATIC-03` | This plan and the tests agree | every test id in `test/` appears in §7, every `auto` row exists in `test/` | auto |
+| `STATIC-04` | Page files are served | every file in `public/` is in `server.js`'s list (a missing one breaks the page with no error) | auto |
 
 ### 7.2 Logic (`test/unit.js`)
 
@@ -285,6 +289,15 @@ With `--recordings a.wav,b.wav` the same scenarios run on 60 s of two real voice
 | `UI-DEV-09` | A mic recording at 8 kHz | warning "less accurate" | auto |
 | `UI-DEV-10` | Reload | mic choices remembered | auto |
 | `UI-DEV-11` | Re-paired Bluetooth mic (new id, same name) | found again by name | auto |
+| `UI-SPK-01` | Speaker menu | None, System default and each output; starts at None, no volume slider, nothing playing | auto |
+| `UI-SPK-02` | Choosing a speaker | plays the mic on that output at once, before Start (level > −50 dBFS); the speaker's mic stream asks for no auto gain; volume slider shown | auto |
+| `UI-SPK-03` | Mic 2 chosen while the speaker plays | the speaker reopens with both mics | auto |
+| `UI-SPK-04` | Start and Stop | the speaker keeps playing through both | auto |
+| `UI-SPK-05` | Another output, volume 0 | the sound moves to the new output; volume 0 is silent (< −90 dBFS) | auto |
+| `UI-SPK-06` | Reload | speaker back at None, volume remembered | auto |
+| `UI-SPK-07` | Speaker switched off | stops playing (no fallback to the laptop), "Party Speaker (not connected)", warning | auto |
+| `UI-SPK-08` | Speaker back under a new id (re-paired) | found by name, plays again, warning gone | auto |
+| `UI-SPK-09` | Speaker → None | playing stops, volume slider hidden | auto |
 | `UI-NET-01` | Server restarted mid-recording | page reconnects, buffered audio transcribed on the right mics | auto |
 | `UI-LOOK-01` | Phone width (390 px) | no sideways scrolling | auto |
 | `UI-CFG-01` | `MAX_MICS=1` | one "Microphone" menu, the page as before two mics existed | auto |
@@ -308,6 +321,7 @@ Open `test-results/<run>/screenshots/` and check:
 | VIS-04 | `settings.png` | drawer with a meter per mic and the Mic separation slider with its hint |
 | VIS-05 | `mic-disconnected.png` | red "not connected" next to Mic 2, warning above the transcript |
 | VIS-06 | `phone.png` | everything reachable at 390 px, nothing cut off |
+| VIS-07 | `speaker.png`, `speaker-disconnected.png` | Speaker menu and Volume slider in the settings row; "(not connected)" in the menu and the warning above the transcript |
 
 ### 8.2 Desktop app — `manual`
 
@@ -321,6 +335,7 @@ Open `test-results/<run>/screenshots/` and check:
 | DESK-06 | macOS microphone permission denied (person) | the page explains how to allow it |
 | DESK-07 | File / Help menu items | open the transcripts, logs and models folders |
 | DESK-08 | Quit while someone speaks (person) | the last sentence is in the transcript file |
+| DESK-09 | The desktop window (sandboxed, the app's permission rules) can pick an output: Electron with `--use-fake-device-for-media-stream`, `enumerateDevices()` + `AudioContext.setSinkId(<output id>)`, no sound played | outputs listed with names, `setSinkId` succeeds, an unknown id fails with `NotFoundError` |
 
 The desktop window runs the page sandboxed with context isolation; the UI suite runs it without (for the fake
 mics). The page uses neither Node nor the preload, so this difference matters only if that changes.
@@ -369,6 +384,13 @@ distances.
 | HW-11 | A 30–60 minute meeting | no freeze, no drift between the mics (lines keep their order), memory stable |
 | HW-12 | Desktop app on Mac and on Windows, with the projector on a second screen | as above; captions coloured on the projector |
 | HW-13 | Pressing Stop while both talk | both last sentences saved |
+| HW-14 | **Speaker** on a jack or USB speaker, before Start; talk into the mic | heard at once from the speaker; the talker hears no echo |
+| HW-15 | The same with a Bluetooth speaker | note the delay the talker hears (expected ~0.2 s) and whether it bothers them |
+| HW-16 | Raise **Volume** with the speaker behind the mics, then in front of them facing away | note the volume at which it howls in each place; turning it down stops the howl |
+| HW-17 | Two mics with the speaker playing: each person alone, then taking turns (HW-02/03 again) | lines under the right mic as without the speaker; note any line under the wrong mic and where the speaker stood |
+| HW-18 | Switch the Bluetooth speaker off, then on again, while it plays | silent, "not connected" + warning, nothing from the laptop's speakers; plays again by itself |
+| HW-19 | Start transcribing while the speaker plays, then turn the speaker on while transcribing | the text is as accurate as without the speaker; note whether the speaker gets louder in pauses (auto gain, see §10.2) |
+| HW-20 | A Bluetooth speaker with its own microphone, Mic 1 on *System default* | note whether the Mac switches its input to the speaker (call quality); with the real mic chosen it must not |
 
 **Data to collect:** the transcript `.txt`, the two WAVs (`<stamp>-mic1.wav`, `<stamp>-mic2.wav`), the terminal
 output (the `[mics]` lines every 10 s), and what went wrong with the time it happened.
@@ -416,6 +438,8 @@ Useful tools: `DEBUG=1` server logs (`[final #n mic m] … ms: text`, `dropped, 
 | — | Table mics with simultaneous speech: the model's accuracy drops (`SCN-03`: 20–50 % from the reference) | Each mic really contains both voices | Not a gate problem; better mic placement |
 | — | Killing the server mid-sentence loses what it had received of that sentence | The server is gone; the page only buffers audio sent while disconnected | Accepted |
 | — | Chromium's built-in fake microphones are silent in Electron | Electron build | The UI suite uses `preload.cjs`; real capture is covered by §9 |
+| — | The speaker may get the transcription's auto gain | Chromium processes a mic once per page: when the transcription opened the mic first, the speaker's stream gets its auto gain even though it asks for none (checked with Electron's fake devices; when the speaker opens first, each gets its own) | Hardware data (`HW-19`); a page-level fix would mean giving up auto gain for the text |
+| — | Bluetooth speakers play ~0.2 s late | Bluetooth audio buffering in the speaker and the OS | Nothing in the app; README recommends a cable or USB speaker |
 | — | On 2026-10-31 a scenario run stopped producing sentences for ~8 minutes, twice, then continued; not reproduced in 19+ runs since | Unknown | If a stream times out: keep the server running, `sample <pid> 3`, save its log, and record it in §12 |
 
 ## 11. Coverage map
@@ -437,10 +461,11 @@ Useful tools: `DEBUG=1` server logs (`[final #n mic m] … ms: text`, `dropped, 
 | Two mics: choosing, labels, colours | `UI-MIC-*`, `UI-TX-02…05`, `UI-CFG-01/02`, `VIS-01` | — |
 | Two mics: crosstalk gate and duplicates | `UNIT-GATE-*`, `UNIT-SESS-*`, `SCN-01…08`, `SMOKE-02` | `KNOWN-01`, real rooms (§9) |
 | Two mics: devices coming and going, 8 kHz | `UI-DEV-*`, `SCN-06` | real Bluetooth (`HW-06`) |
+| Speaker in the room: choosing, volume, coming and going | `UI-SPK-*`, `DESK-09`, `VIS-07` | real speakers, delay and howling only in §9 (`HW-14…20`); auto gain on the speaker (§10.2) |
 | Desktop app | `STATIC-02`, CI smoke, `DESK-*` | packaged app UI not automated |
 | Docker | `DOCK-01` | manual only |
 | Wake lock (screen stays on), Noise suppression checkbox | — | not tested |
-| Browsers other than Chromium (Safari, Firefox) | — | not tested; Safari may allow one mic only |
+| Browsers other than Chromium (Safari, Firefox) | — | not tested; Safari may allow one mic only; there the speaker can only be the system default |
 | Accessibility (keyboard, screen readers) | projector keys in `UI-PROJ-02` | not tested |
 
 ## 12. Run history
@@ -458,3 +483,4 @@ Add one row per run on `main` (§3 step 5), newest first. Feature-branch runs go
 |---|---|
 | 2026-10-31 | Plan created, covering the app up to `ca62a61` (two microphones). Test tooling added: `run-all.js`, `helpers.js`, `unit.js`, `protocol.js`, `scenarios.js`, `ui/`. |
 | 2026-10-31 | After the baseline run: time budgets measured (full tier ~12 min, not 40); PERF-01 reads the new timing line from the scenario logs. |
+| 2026-10-31 | Speaker in the room (`feature/speaker-output`): `UI-SPK-01…09`, fake outputs in `preload.cjs` (silent sink, level tap), `VIS-07`, `DESK-09` (done once with a probe), `HW-14…20`, two known limits. `STATIC-04` added after the new `public/speaker.js` was not served and the page silently failed to start. |

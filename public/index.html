@@ -37,6 +37,14 @@
         <select id="model"></select>
       </label>
       <div class="mics" id="mics"></div>
+      <label class="field" title="Plays the microphones on a speaker in the room. A jack or USB speaker plays at once; Bluetooth plays about 0.2 s late, which the person talking hears as an echo. Put the speaker in front of the mics, facing away from them, or it howls.">
+        <span>Speaker</span>
+        <select id="speaker"></select>
+      </label>
+      <label class="field" id="speakerVolumeField" hidden title="Speaker volume. Turn it down if the speaker howls.">
+        <span>Volume</span>
+        <input type="range" id="speakerVolume" min="0" max="100" step="5">
+      </label>
       <label class="check" title="The browser's noise filter. Off is usually better for distant voices; turn on for a noisy room.">
         <input type="checkbox" id="noise"> Noise suppression
       </label>
