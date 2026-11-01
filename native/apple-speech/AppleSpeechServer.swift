@@ -4,8 +4,9 @@
 //   GET  /health     200 once the model for the locale is installed and ready
 //   POST /inference  body = float32 PCM, 16 kHz mono  ->  {"text": "..."}
 //
-//   apple-speech-server --host 127.0.0.1 --port 8090 --locale ro-RO --module dictation|speech
+//   apple-speech-server --host 127.0.0.1 --port 8090 --locale ro-RO --module dictation|speech [--preset long|short|punct]
 //   apple-speech-server --list-locales
+//   apple-speech-server --locale ro --file a.wav b.wav [--verbose]     transcribe files and exit (for checks)
 //
 // Built by `npm run setup -- apple-dictation` (lib/models.js) with swiftc; needs macOS 26 and the Xcode tools.
 import AVFoundation
@@ -25,20 +26,66 @@ func argument(_ name: String, _ fallback: String) -> String {
 final class Recognizer: @unchecked Sendable {
   var locale: Locale
   let module: String
+  let preset: String
   var format: AVAudioFormat?
+  let verbose = CommandLine.arguments.contains("--verbose")
 
-  init(locale: Locale, module: String) {
+  init(locale: Locale, module: String, preset: String) {
     self.locale = locale
     self.module = module
+    self.preset = preset
   }
 
   static func supportedLocales(_ module: String) async -> [Locale] {
     module == "speech" ? await SpeechTranscriber.supportedLocales : await DictationTranscriber.supportedLocales
   }
 
+  /** --preset: long (DictationTranscriber's long-dictation preset), short, or punct (no preset, punctuation on). */
   func makeModule() -> any SpeechModule {
     if module == "speech" { return SpeechTranscriber(locale: locale, preset: .transcription) }
-    return DictationTranscriber(locale: locale, preset: .longDictation)
+    switch preset {
+    case "short": return DictationTranscriber(locale: locale, preset: .shortDictation)
+    case "punct":
+      return DictationTranscriber(locale: locale, contentHints: [], transcriptionOptions: [.punctuation], reportingOptions: [], attributeOptions: [])
+    default: return DictationTranscriber(locale: locale, preset: .longDictation)
+    }
+  }
+
+  func newAnalyzer(_ m: any SpeechModule) -> SpeechAnalyzer {
+    // processLifetime keeps the on-device model loaded between requests instead of reloading it per sentence.
+    SpeechAnalyzer(modules: [m], options: SpeechAnalyzer.Options(priority: .userInitiated, modelRetention: .processLifetime))
+  }
+
+  /** Joins the final results; with --verbose every result (final or not) is logged to stderr. */
+  func collect(_ m: any SpeechModule) -> Task<String, Error> {
+    let verbose = verbose
+    return Task {
+      var text = ""
+      func take(_ t: AttributedString, _ final: Bool) {
+        if verbose { log("  \(final ? "final" : "volatile"): \(String(t.characters))") }
+        if final { text += String(t.characters) }
+      }
+      if let st = m as? SpeechTranscriber {
+        for try await r in st.results { take(r.text, r.isFinal) }
+      } else if let dt = m as? DictationTranscriber {
+        for try await r in dt.results { take(r.text, r.isFinal) }
+      }
+      return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+  }
+
+  /** Apple's own file path (AVAudioFile), to check the HTTP/buffer path against. */
+  func transcribeFile(_ path: String) async throws -> String {
+    let m = makeModule()
+    let analyzer = newAnalyzer(m)
+    let results = collect(m)
+    let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
+    if let last = try await analyzer.analyzeSequence(from: file) {
+      try await analyzer.finalizeAndFinish(through: last)
+    } else {
+      await analyzer.cancelAndFinishNow()
+    }
+    return try await results.value
   }
 
   /** Makes sure the on-device model for the locale is downloaded (Apple manages the files). */
@@ -68,23 +115,14 @@ final class Recognizer: @unchecked Sendable {
     let buffer = try convert(inBuf, to: format ?? inFormat)
 
     let m = makeModule()
-    // processLifetime keeps the on-device model loaded between requests instead of reloading it per sentence.
-    let analyzer = SpeechAnalyzer(modules: [m], options: SpeechAnalyzer.Options(priority: .userInitiated, modelRetention: .processLifetime))
-    let collect = Task { () throws -> String in
-      var text = ""
-      if let st = m as? SpeechTranscriber {
-        for try await r in st.results where r.isFinal { text += String(r.text.characters) }
-      } else if let dt = m as? DictationTranscriber {
-        for try await r in dt.results where r.isFinal { text += String(r.text.characters) }
-      }
-      return text
-    }
+    let analyzer = newAnalyzer(m)
+    let results = collect(m)
     let (stream, input) = AsyncStream<AnalyzerInput>.makeStream()
     input.yield(AnalyzerInput(buffer: buffer))
     input.finish()
     try await analyzer.start(inputSequence: stream)
     try await analyzer.finalizeAndFinishThroughEndOfInput()
-    return try await collect.value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return try await results.value
   }
 
   func convert(_ buf: AVAudioPCMBuffer, to format: AVAudioFormat) throws -> AVAudioPCMBuffer {
@@ -182,7 +220,23 @@ struct Main {
       print("dictation:", ids(await DictationTranscriber.supportedLocales))
       exit(0)
     }
-    let recognizer = Recognizer(locale: Locale(identifier: argument("--locale", "ro-RO")), module: argument("--module", "dictation"))
+    let recognizer = Recognizer(locale: Locale(identifier: argument("--locale", "ro-RO")), module: argument("--module", "dictation"),
+                                preset: argument("--preset", "long"))
+    // --file a.wav b.wav ...: transcribe files with Apple's own file reader, one line per file, then exit.
+    if let i = CommandLine.arguments.firstIndex(of: "--file") {
+      do {
+        try await recognizer.prepare()
+        for path in CommandLine.arguments[(i + 1)...] where path.hasSuffix(".wav") {
+          let t0 = Date()
+          let text = try await recognizer.transcribeFile(path)
+          print("\(URL(fileURLWithPath: path).lastPathComponent)\t\(String(format: "%.3f", Date().timeIntervalSince(t0)))s\t\(text)")
+        }
+        exit(0)
+      } catch {
+        log("\(error.localizedDescription)")
+        exit(1)
+      }
+    }
     let server = Server { try await recognizer.transcribe($0) }
     do {
       try server.start(host: argument("--host", "127.0.0.1"), port: UInt16(argument("--port", "8090"))!)
