@@ -176,12 +176,13 @@ if (process.platform === 'win32') {
   }
 }
 
-// The disk fills up while Save audio is on (#1): no file may grow past 300 KB, so the WAV is full after 9.6 s of audio.
-// The server must keep transcribing and saving the transcript, tell the page once, and keep the WAV playable.
+// The disk fills up while Save audio is on (#1): no file may grow past 300 blocks (300 KB on macOS, 150 KB on Linux),
+// so the WAV is full after 9.6 s of 40 s (4.8 s on Linux). The server must keep transcribing and saving the
+// transcript, tell the page once, and keep the WAV playable.
 if (process.platform === 'win32') {
   t.skip('PROT-ERR-03', 'a disk that fills up while saving audio: the server keeps transcribing', 'needs ulimit (macOS, Linux)');
 } else {
-  const s5 = await startServer({ maxFileBytes: 300 * 1024 });
+  const s5 = await startServer({ maxFileBlocks: 300 });
   try {
     const c = await connect(s5);
     c.ws.on('error', () => {}); // without the fix the server dies mid-test
@@ -201,7 +202,7 @@ if (process.platform === 'win32') {
     const txt = fs.existsSync(s5.transcripts) ? fs.readdirSync(s5.transcripts).filter((f) => f.endsWith('.txt')) : [];
     const lines = txt.length ? fs.readFileSync(path.join(s5.transcripts, txt[0]), 'utf8').trim().split('\n').length : 0;
     t.check('PROT-ERR-03', 'a disk that fills up while saving audio: the server keeps transcribing and saving the transcript, the page is told once, the WAV stays playable',
-      up && after >= 2 && lines === c.finals().length && errors.length === 1 && errors[0].startsWith('Could not save audio') && filled > 5 && header === data - (data % 2),
+      up && after >= 2 && lines === c.finals().length && errors.length === 1 && errors[0].startsWith('Could not save audio') && filled >= 4 && header === data - (data % 2),
       `alive ${up}; WAV ${filled.toFixed(1)} s of 40 s, header ${header === data ? 'matches the file' : `${header} bytes, file ${data}`}; ${after} sentences after it filled, ${c.finals().length} in all, ${lines} in the .txt; errors: ${errors.join(' | ') || 'none'}`);
     await c.close();
   } finally {
