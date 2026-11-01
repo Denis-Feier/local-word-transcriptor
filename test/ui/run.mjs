@@ -79,6 +79,14 @@ app.whenReady().then(async () => {
     return waitFor((x) => x.status === 'ready' && x.maxMics >= 1, 10000, w).then(() => sleep(300)).then(() => state(w));
   };
   const finals = (s) => s.lines.filter((l) => !l.partial);
+  // Counts the caption updates the main window sends to caption windows (a second channel in the same page hears them).
+  const tapCaptions = `window.__captions = 0; window.__tap = new BroadcastChannel('transcriber-captions'); window.__tap.onmessage = (e) => e.data?.type === 'snapshot' && window.__captions++; true`;
+  const captionHint = (w) => js(`(() => { const h = document.querySelector('.stage-hint'); return h.hidden ? '' : h.textContent; })()`, w);
+  const until = async (fn, ms) => {
+    for (const t0 = Date.now(); Date.now() - t0 < ms; await sleep(100)) if (await fn()) return true;
+    return false;
+  };
+  const closeWindow = (w) => new Promise((resolve) => (w.once('closed', resolve), w.close())); // close() lets the page say goodbye
 
   try {
     // ---------- one mic: the page as before ----------
@@ -104,6 +112,8 @@ app.whenReady().then(async () => {
     s = await state();
     t.check('UI-MIC-03', 'choosing Mic 2: coloured dots, two labelled meters, the separation slider is enabled',
       s.fields[0].dot === '1' && s.fields[1].dot === '2' && s.levels.map((l) => l.who).join() === 'Mic 1,Mic 2' && s.separation === false);
+    // No caption window or projector view is open yet: count the captions the page sends anyway (UI-PROJ-04).
+    await js(tapCaptions);
     await click('toggle');
     s = await waitFor((x) => x.levels.every((l) => l.width > 0), 5000);
     t.check('UI-MIC-04', 'both meters move while recording', s.levels.every((l) => l.width > 0), s.levels.map((l) => `${l.who} ${l.width.toFixed(0)}%`).join(', '));
@@ -127,11 +137,15 @@ app.whenReady().then(async () => {
       clip.split('\n').every((l) => /^Mic [12]: /.test(l)) && down.trim().split('\n').every((l) => /^\[\d\d:\d\d\] Mic [12]: /.test(l)), JSON.stringify(down.slice(0, 70)));
 
     // ---------- projector and caption window ----------
+    const unwatched = await js('window.__captions');
     const captions = newWindow(1000, 600);
     await captions.loadURL(`http://127.0.0.1:${server.port}/?display`);
     await sleep(600);
     const cap = await js(`[...document.querySelectorAll('.stage-line')].map((l) => (l.dataset.mic ?? '-') + ':' + l.textContent.slice(0, 12))`, captions);
     t.check('UI-PROJ-01', 'the caption window shows the lines in their mic colours', cap.some((c) => c.startsWith('1:')) && cap.some((c) => c.startsWith('2:')), cap.join(' | '));
+    const sent = await js('window.__captions');
+    t.check('UI-PROJ-04', 'no captions are sent while no caption window or projector view is open; a caption window that opens gets them at once',
+      unwatched === 0 && sent > 0, `${unwatched} caption updates during the recording, ${sent} once a caption window opened`);
     await shot('caption-window', captions);
     captions.destroy();
     await click('projector');
@@ -149,6 +163,31 @@ app.whenReady().then(async () => {
     await sleep(300);
     t.check('UI-PROJ-03', 'Esc leaves the projector view', (await stage()).hidden);
     await js(`localStorage.removeItem('stage')`);
+
+    // ---------- caption windows across a reload of the main window, and closing them ----------
+    const displays = [newWindow(1000, 600), newWindow(1000, 600)];
+    for (const d of displays) await d.loadURL(`http://127.0.0.1:${server.port}/?display`);
+    await win.loadURL(`http://127.0.0.1:${server.port}/`); // the old page says goodbye; the new one asks who is listening
+    await waitFor((x) => x.status === 'ready', 10000);
+    const fed = await until(async () => (await captionHint(displays[0])) === 'Microphone is off' && (await captionHint(displays[1])) === 'Microphone is off', 5000);
+    const reloaded = await Promise.all(displays.map(captionHint));
+    await click('toggle');
+    const listening = await until(async () => (await captionHint(displays[0])) === 'Listening…', 5000);
+    t.check('UI-PROJ-05', 'caption windows open while the main window is reloaded are fed again by the new page', fed && listening,
+      `after the reload: ${JSON.stringify(reloaded)}; after Start: ${JSON.stringify(await captionHint(displays[0]))}`);
+    await closeWindow(displays[0]);
+    await js(tapCaptions);
+    await until(async () => (await js('window.__captions')) > 0, 5000); // live text and speech changes go on meanwhile
+    await sleep(1000);
+    const stillFed = await js('window.__captions');
+    await closeWindow(displays[1]);
+    await sleep(300);
+    await js('window.__captions = 0');
+    await sleep(2500);
+    const afterAll = await js('window.__captions');
+    await click('toggle');
+    t.check('UI-PROJ-06', 'closing one caption window keeps the other fed; once both are closed the page stops sending captions', stillFed > 0 && afterAll === 0,
+      `${stillFed} caption updates with one window left, then ${afterAll} in 2.5 s of recording with none`);
 
     // ---------- settings drawer ----------
     await click('openSettings');

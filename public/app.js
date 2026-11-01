@@ -36,6 +36,8 @@ const CHANNEL = 'transcriber-captions'; // main window -> caption windows (/?dis
 const DISPLAY_ONLY = new URLSearchParams(location.search).has('display');
 const NONE = 'none'; // "no second mic" in the mic menus, "no speaker" in the speaker menu
 const OVERLAP_SEC = 0.5; // lines from two mics overlapping at least this long were spoken at the same time
+const BLOCK = 100; // lines per block of the transcript: a new word lays out one block, not the whole meeting
+const SHOWN = 5; // finished lines the projector gets (its Lines setting goes up to 5)
 
 let ws = null;
 let generation = 0; // bumps on every (re)connect; server segment ids restart per connection
@@ -61,8 +63,13 @@ const speaking = new Set(); // mics on which someone is talking right now
 let stage = null;
 let settings = null;
 let channel = null;
+const captionWindows = new Set(); // the caption windows (/?display) open in this browser, by their id
 const files = {};
+// Every message touches only the newest lines, so its cost stays the same however long the meeting gets.
 const lines = new Map(); // generation * 1e6 + segment id -> { el, text, start, end, mic, labeled, final }
+const order = []; // the keys of `lines` in transcript order (ascending); new lines are almost always last
+const live = new Set(); // keys of the lines not final yet (being spoken or transcribed): a few at a time
+let spoken = { connection: 0, lines: [], longest: 0 }; // this connection's final lines with a mic label, by start, for ⇄
 
 const store = {
   get: (key, fallback) => {
@@ -95,7 +102,7 @@ function connect() {
   ws.onmessage = (e) => handle(JSON.parse(e.data));
   ws.onclose = () => {
     engine = { ...engine, state: 'error', message: recording ? 'Server unreachable; still recording, will catch up…' : 'Disconnected, retrying…' };
-    for (const [key, line] of lines) if (!line.final) removeLine(key);
+    for (const key of [...live]) removeLine(key);
     render();
     setTimeout(connect, 1500);
   };
@@ -156,6 +163,11 @@ function handle(msg) {
 // ---------- microphones ----------
 
 const micName = (mic) => `Mic ${mic + 1}`;
+/** "Mic 2", "Mic 2 and Mic 3", "Mic 1, Mic 2 and Mic 4" */
+const listMics = (mics) => {
+  const names = [...mics].sort((a, b) => a - b).map(micName);
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0];
+};
 const used = () => picks.slice(0, maxMics);
 const multiMic = () => used().length > 1;
 
@@ -471,48 +483,100 @@ function upsertLine(key, { text, start, end, mic = 0, model, ms }, final) {
       el.dataset.mic = mic + 1;
       el.querySelector('.who').textContent = micName(mic);
     }
-    // Keep lines in order even if a live guess for a newer segment arrived first.
-    const after = [...lines.keys()].filter((k) => k > key).sort((a, b) => a - b)[0];
-    els.transcript.insertBefore(el, after ? lines.get(after).el : null);
-    line = { el, mic, labeled };
+    line = { el, mic, labeled, final: false };
     lines.set(key, line);
+    live.add(key);
+    place(key, el);
   }
   if (line.final && !final) return;
+  const finished = final && !line.final;
   Object.assign(line, { text, start, end, final });
   line.el.classList.toggle('partial', !final);
   line.el.querySelector('time').textContent = fmtTime(start);
   line.el.querySelector('.text').textContent = text;
   if (final && model) line.el.title = `${model} · ${ms} ms`;
-  if (final) markOverlap(key);
+  if (finished) {
+    live.delete(key);
+    markOverlap(key);
+  }
   els.empty.hidden = true;
   if (stick) els.transcript.scrollTop = els.transcript.scrollHeight;
   render();
 }
 
+/** Put a new line in order: a live guess for a newer segment can arrive before the older one's. */
+function place(key, el) {
+  let i = order.length;
+  while (i > 0 && order[i - 1] > key) i--; // the newest lines are last, so this is a step or two at most
+  order.splice(i, 0, key);
+  const next = lines.get(order[i + 1]);
+  if (next) {
+    next.el.before(el);
+    return;
+  }
+  // Lines go in blocks: a change lays out its own block and steps over the others, instead of every line.
+  let block = els.transcript.lastElementChild;
+  if (!block?.classList.contains('block') || block.childElementCount >= BLOCK) {
+    block = document.createElement('div');
+    block.className = 'block';
+    els.transcript.append(block);
+  }
+  block.append(el);
+}
+
+/** The index of the first line in `list` (sorted by start time) that starts after `time`. */
+function startsAfter(list, time) {
+  let lo = 0;
+  let hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (list[mid].start <= time) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 /** Mark a final line and the lines from other mics that were spoken at the same time. */
 function markOverlap(key) {
   const line = lines.get(key);
-  if (!line.labeled) return;
-  const sameConnection = (k) => Math.floor(k / 1e6) === Math.floor(key / 1e6); // times restart per connection
-  for (const [k, other] of lines) {
-    if (!other.final || !other.labeled || other.mic === line.mic || !sameConnection(k)) continue;
+  if (!line.labeled || !Number.isFinite(line.start) || !Number.isFinite(line.end)) return;
+  const connection = Math.floor(key / 1e6); // times restart per connection
+  if (spoken.connection !== connection) spoken = { connection, lines: [], longest: 0 };
+  // A line that overlaps this one starts at most `longest` seconds before it: look at those lines alone.
+  const list = spoken.lines;
+  for (let i = startsAfter(list, line.start - spoken.longest - 1); i < list.length && list[i].start < line.end; i++) {
+    const other = list[i];
+    if (other.mic === line.mic) continue;
     if (Math.min(line.end, other.end) - Math.max(line.start, other.start) < OVERLAP_SEC) continue;
     for (const [a, b] of [[line, other], [other, line]]) {
       a.el.classList.add('overlap');
-      a.el.querySelector('.who').title = `Spoken at the same time as ${micName(b.mic)}`;
+      a.with ??= new Set(); // with three or four mics, a line can overlap lines of two others
+      a.with.add(b.mic);
+      a.el.querySelector('.who').title = `Spoken at the same time as ${listMics(a.with)}`;
     }
   }
+  list.splice(startsAfter(list, line.start), 0, line);
+  spoken.longest = Math.max(spoken.longest, line.end - line.start);
 }
 
 function removeLine(key) {
-  lines.get(key)?.el.remove();
+  const line = lines.get(key);
+  if (!line) return; // the final of a click or cough that never had a live guess
+  const block = line.el.parentNode;
+  line.el.remove();
+  if (!block.firstChild) block.remove();
   lines.delete(key);
+  order.splice(order.lastIndexOf(key), 1);
+  live.delete(key);
+  const indexed = line.final ? spoken.lines.lastIndexOf(line) : -1; // the server never takes a final line back; in case
+  if (indexed >= 0) spoken.lines.splice(indexed, 1);
   els.empty.hidden = lines.size > 0;
   render();
 }
 
+/** The final lines in order, for Copy and Download (this looks at every line, so not on every message). */
 function finalLines() {
-  return [...lines.entries()].sort((a, b) => a[0] - b[0]).map(([, l]) => l).filter((l) => l.final);
+  return order.map((key) => lines.get(key)).filter((l) => l.final);
 }
 
 const lineText = (l) => (l.labeled ? `${micName(l.mic)}: ${l.text}` : l.text);
@@ -532,8 +596,11 @@ function downloadText() {
 }
 
 function clearTranscript() {
-  for (const line of lines.values()) line.el.remove();
+  els.transcript.replaceChildren(els.empty);
   lines.clear();
+  order.length = 0;
+  live.clear();
+  spoken = { connection: generation, lines: [], longest: 0 };
   els.empty.hidden = false;
   els.file.textContent = '';
   for (const kind of Object.keys(files)) delete files[kind];
@@ -545,20 +612,34 @@ function clearTranscript() {
 
 /** What the projector view needs: recent final sentences, the ones being spoken, and the mic state. */
 function snapshot() {
-  const entries = [...lines.entries()].sort((a, b) => a[0] - b[0]);
-  const row = ([key, l]) => ({ key, text: l.text, mic: l.labeled ? l.mic : null });
-  const finals = entries.filter(([, l]) => l.final).slice(-5).map(row);
+  const row = (key) => {
+    const l = lines.get(key);
+    return { key, text: l.text, mic: l.labeled ? l.mic : null };
+  };
+  // From the end of the transcript back: only the newest lines are looked at.
+  const finals = [];
+  for (let i = order.length - 1; i >= 0 && finals.length < SHOWN; i--) if (lines.get(order[i]).final) finals.unshift(row(order[i]));
   // The sentence being spoken on each mic: two when people talk at the same time.
-  const live = new Map(entries.filter(([, l]) => !l.final).map((entry) => [entry[1].mic, entry]));
-  const partials = [...live.values()].sort((a, b) => a[0] - b[0]).map(row);
+  const newest = new Map(); // mic -> key
+  for (const key of live) {
+    const { mic } = lines.get(key);
+    if (!(newest.get(mic) > key)) newest.set(mic, key);
+  }
+  const partials = [...newest.values()].sort((a, b) => a - b).map(row);
   return { finals, partials, recording, speaking: speaking.size > 0 };
 }
 
+/** Update the projector view and the caption windows; nothing to do while neither is open. */
 function publish() {
-  if (!stage) return;
+  if (!stage || (!stage.open && !captionWindows.size)) return;
   const snap = snapshot();
   stage.update(snap);
-  channel?.postMessage({ type: 'snapshot', ...snap });
+  if (captionWindows.size) channel?.postMessage({ type: 'snapshot', ...snap });
+}
+
+function showProjector() {
+  stage.update(snapshot()); // it was not kept up to date while closed
+  stage.show();
 }
 
 function openCaptionWindow() {
@@ -608,7 +689,7 @@ function render() {
   els.toggle.disabled = !recording && !usable;
   els.toggle.classList.toggle('recording', recording);
   els.toggleText.textContent = recording ? 'Stop' : 'Start';
-  const hasText = finalLines().length > 0;
+  const hasText = lines.size > live.size; // some line is final
   els.copy.disabled = !hasText;
   els.download.disabled = !hasText;
   els.clear.disabled = lines.size === 0;
@@ -644,16 +725,25 @@ function initMain() {
     onClose: () => stage.hide(),
   });
   if ('BroadcastChannel' in window) {
+    // Captions go out only while a caption window listens: each one says hello when it opens and goodbye when it closes.
     channel = new BroadcastChannel(CHANNEL);
-    channel.onmessage = (e) => e.data?.type === 'hello' && publish(); // a caption window just opened
+    channel.onmessage = ({ data }) => {
+      if (data?.type === 'hello') {
+        captionWindows.add(data.id);
+        publish();
+      } else if (data?.type === 'gone') captionWindows.delete(data.id);
+    };
+    const here = () => channel.postMessage({ type: 'here' }); // caption windows already open say hello again
+    here(); // e.g. this page was reloaded
     window.addEventListener('pagehide', () => channel.postMessage({ type: 'bye' }));
+    window.addEventListener('pageshow', (e) => e.persisted && here()); // back from the browser's page cache
   }
 
   els.toggle.addEventListener('click', () => (recording ? stop() : start()));
-  els.projector.addEventListener('click', () => stage.show());
+  els.projector.addEventListener('click', showProjector);
   els.openSettings.addEventListener('click', () => settings.toggle());
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'p' && !stage.open && !e.metaKey && !e.ctrlKey && !e.target.closest('input, select, textarea')) stage.show();
+    if (e.key === 'p' && !stage.open && !e.metaKey && !e.ctrlKey && !e.target.closest('input, select, textarea')) showProjector();
   });
   els.copy.addEventListener('click', copyText);
   els.download.addEventListener('click', downloadText);
@@ -697,11 +787,16 @@ function initDisplay() {
   stage.update({ ...empty, waiting: true });
   if (!('BroadcastChannel' in window)) return;
   channel = new BroadcastChannel(CHANNEL);
+  const id = Math.random().toString(36).slice(2); // the main window sends captions while any caption window is open
+  const hello = () => channel.postMessage({ type: 'hello', id });
   channel.onmessage = (e) => {
     if (e.data?.type === 'snapshot') stage.update(e.data);
     else if (e.data?.type === 'bye') stage.update({ ...empty, waiting: true });
+    else if (e.data?.type === 'here') hello(); // the main window was reloaded
   };
-  channel.postMessage({ type: 'hello' });
+  hello();
+  window.addEventListener('pagehide', () => channel.postMessage({ type: 'gone', id }));
+  window.addEventListener('pageshow', (e) => e.persisted && hello()); // back from the browser's page cache
 }
 
 if (DISPLAY_ONLY) initDisplay();

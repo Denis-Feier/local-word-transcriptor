@@ -207,6 +207,8 @@ select {
 
 .empty { color: var(--muted); font-size: 16px; margin: 0; }
 
+/* Lines come in blocks of 100 (app.js): a new word lays out its own block, not the whole meeting. */
+.transcript > .block { contain: layout; }
 .line { display: flex; gap: 14px; margin: 0 0 10px; }
 .line .meta {
   flex: none;
