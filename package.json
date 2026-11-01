@@ -14,6 +14,7 @@
     "test:quick": "node test/run-all.js quick",
     "test:full": "node test/run-all.js full",
     "test:ui": "node test/run-all.js --only ui",
+    "test:stress": "node test/run-all.js stress",
     "test:wav": "node test/stream-wav.js",
     "benchmark": "node scripts/benchmark.js",
     "manual": "node scripts/manual.mjs",

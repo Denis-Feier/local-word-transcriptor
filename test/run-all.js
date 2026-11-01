@@ -3,6 +3,8 @@
 //   npm test                       standard tier (~5 min): static, unit, protocol, smoke, scenarios, ui
 //   npm run test:quick             quick tier (~1 min): static, unit, protocol
 //   npm run test:full              full tier (~15 min): standard + every engine + 10-minute conversation
+//   npm run test:stress            stress tier (~4.5 h, TESTING.md §14): long meetings and failures; --short ~25 min,
+//                                  --hours 8, --only STRESS-<GROUP> (one group, e.g. MEET)
 //   node test/run-all.js --only ui            one suite: static, unit, protocol, smoke, scenarios, ui, engines, long
 //   node test/run-all.js full --recordings transcripts/a.wav,transcripts/b.wav   also real voices (stay local)
 import { spawn, execSync } from 'node:child_process';
@@ -14,9 +16,10 @@ import { ROOT } from './helpers.js';
 
 const require = createRequire(import.meta.url);
 const args = process.argv.slice(2);
-const tier = ['quick', 'standard', 'full'].find((x) => args.includes(x)) ?? 'standard';
-const only = args.includes('--only') ? args[args.indexOf('--only') + 1] : null;
-const recordings = args.includes('--recordings') ? args[args.indexOf('--recordings') + 1] : null;
+const tier = ['quick', 'standard', 'full', 'stress'].find((x) => args.includes(x)) ?? 'standard';
+const option = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : null);
+const only = option('--only');
+const recordings = option('--recordings');
 const git = (cmd) => {
   try {
     return execSync(`git ${cmd}`, { cwd: ROOT }).toString().trim();
@@ -33,7 +36,7 @@ const results = []; // { suite, cases: [{ id, title, status, detail }] , seconds
 // One engine per runtime, for the full tier.
 const ENGINES = ['canary-1b-v2', 'whisper-large-v3-turbo', 'parakeet-tdt-0.6b-v3', 'jackrabbit-110m-ro'];
 
-function run(name, cmd, cmdArgs, { minutes, env = {} } = {}) {
+function run(name, cmd, cmdArgs, { minutes, env = {}, tag = false } = {}) {
   return new Promise((resolve) => {
     const resultFile = path.join(OUT, `${name}.json`);
     const log = fs.createWriteStream(path.join(OUT, `${name}.log`));
@@ -47,7 +50,7 @@ function run(name, cmd, cmdArgs, { minutes, env = {} } = {}) {
     child.stdout.on('data', (d) => {
       const lines = (pending + d).split('\n');
       pending = lines.pop();
-      for (const l of lines) if (/^[✔✖◌–]/.test(l)) process.stdout.write(`  ${l}\n`);
+      for (const l of lines) if (/^[✔✖◌–]/.test(l)) process.stdout.write(`  ${tag ? `[${name}] ` : ''}${l}\n`); // tag: lanes run in parallel
     });
     const timer = setTimeout(() => child.kill('SIGKILL'), minutes * 60000);
     child.on('exit', (code, signal) => {
@@ -120,7 +123,7 @@ function staticChecks() {
   // The plan and the tests must agree: every test id in the code is described in TESTING.md, and every
   // automated id in TESTING.md exists in the code.
   const plan = fs.readFileSync(path.join(ROOT, 'TESTING.md'), 'utf8');
-  const ID = /\b(?:STATIC|UNIT|PROT|SMOKE|SCN|KNOWN|UI)-[A-Z0-9]+(?:-[0-9]+)?\b/g;
+  const ID = /\b(?:STATIC|UNIT|PROT|SMOKE|SCN|KNOWN|UI|STRESS)-[A-Z0-9]+(?:-[0-9]+)?\b/g;
   const inCode = new Set(files.filter((f) => f.startsWith('test')).flatMap((f) => fs.readFileSync(path.join(ROOT, f), 'utf8').match(ID) ?? []));
   for (const c of cases) inCode.add(c.id);
   const planRows = plan.split('\n').filter((l) => /^\| `?[A-Z]+-[A-Z0-9-]+`? \|/.test(l));
@@ -133,9 +136,48 @@ function staticChecks() {
   results.push({ suite: 'static', cases, seconds: 0, code: cases.some((c) => c.status === 'fail') ? 1 : 0 });
 }
 
-// ---------- the tiers ----------
+// ---------- the stress tier (TESTING.md §14) ----------
 const node = process.execPath;
 const electron = require('electron'); // in Node this is the path to the Electron binary
+
+/** Phase A: lanes in parallel (steady loads); phase B: alone (it measures limits). --only STRESS-<GROUP>: that group. */
+async function stressTier() {
+  const short = args.includes('--short');
+  const hours = Number(option('--hours') ?? 4);
+  const pass = [...(short ? ['--short'] : []), ...(option('--hours') ? ['--hours', String(hours)] : []), ...(recordings ? ['--recordings', recordings] : [])];
+  const env = { STRESS_OUT: path.join(OUT, 'stress'), NODE_BIN: node };
+  const server = (group, minutes) => () => run(`stress-${group.replace(/,/g, '-')}`, node, ['test/stress.js', '--group', group, ...pass], { minutes, env, tag: true });
+  const page = (group, minutes) => () => run(`stress-${group}`, electron, ['test/ui/stress.mjs', '--group', group, ...pass], { minutes, env, tag: true });
+  const groups = {
+    soak: page('soak', 150),
+    meet: server('meet', short ? 20 : (hours * 60) / 8 + 30),
+    mic3: server('mic3', 40),
+    page: page('page', 20),
+    'conn,conc,tune,disk': server('conn,conc,tune,disk', short ? 30 : 90),
+    net: page('net', short ? 20 : 100),
+    cap: server('cap', 240),
+    load: server('load', 90),
+    eng: server('eng', 120),
+  };
+  const area = only?.startsWith('STRESS-') ? only.split('-')[1].toLowerCase() : null;
+  if (area) {
+    const key = Object.keys(groups).find((g) => g.split(',').includes(area));
+    if (!key) return console.log(`  no stress group for ${only}`);
+    return key.includes(',') ? server(area, 60)() : groups[key]();
+  }
+  // Only steady loads share the computer: bursts (several clients, overload, crashes) would slow the model in the
+  // middle of the long meeting and make its trend checks fail for the wrong reason (first run, TESTING.md §12).
+  const lanes = short ? [['meet', 'page', 'net']] : [['soak'], ['meet', 'mic3', 'page', 'net']];
+  console.log(`  phase A: ${lanes.map((l) => l.join(' → ')).join('  ∥  ')}`);
+  await Promise.all(lanes.map(async (lane) => {
+    for (const g of lane) await groups[g]();
+  }));
+  const alone = short ? ['conn,conc,tune,disk', 'load'] : ['conn,conc,tune,disk', 'cap', 'load', 'eng'];
+  console.log(`  phase B (alone): ${alone.join(' → ')}`);
+  for (const g of alone) await groups[g]();
+}
+
+// ---------- the tiers ----------
 const plan = [
   ['static', 'quick', () => staticChecks()],
   ['unit', 'quick', () => run('unit', node, ['test/unit.js'], { minutes: 3 })],
@@ -157,11 +199,14 @@ const plan = [
   }],
   ['long', 'full', () => run('long', node, ['test/scenarios.js', '--long', '--only', 'SCN-07'], { minutes: 20 })],
   ['recordings', 'full', () => (recordings ? run('recordings', node, ['test/scenarios.js', '--recordings', recordings], { minutes: 20 }) : null)],
+  ['stress', 'stress', stressTier],
 ];
-const rank = { quick: 0, standard: 1, full: 2 };
+const rank = { quick: 0, standard: 1, full: 2, stress: 3 };
+// The stress tier runs alone (with the static checks); --only STRESS-<GROUP> runs one of its groups.
+const wanted = (name, level) => (only?.startsWith('STRESS-') ? name === 'stress' : only ? name === only : tier === 'stress' ? ['static', 'stress'].includes(name) : rank[level] <= rank[tier]);
 const t0 = Date.now();
 for (const [name, level, step] of plan) {
-  if (only ? name !== only : rank[level] > rank[tier]) continue;
+  if (!wanted(name, level)) continue;
   console.log(`\n▸ ${name}`);
   await step();
 }
@@ -174,7 +219,7 @@ const lines = [
   `# Test run ${stamp}`,
   '',
   `- Commit: \`${sha}\` on \`${git('rev-parse --abbrev-ref HEAD')}\`${dirty}`,
-  `- Tier: ${only ? `only ${only}` : tier}${recordings ? ' + real recordings' : ''}`,
+  `- Tier: ${only ? `only ${only}` : tier}${args.includes('--short') ? ' (short)' : ''}${recordings ? ' + real recordings' : ''}`,
   `- Machine: ${os.type()} ${os.release()} ${os.arch()}, Node ${process.version}, ${os.cpus()[0]?.model ?? ''}`,
   `- Time: ${Math.round((Date.now() - t0) / 60000)} min`,
   `- Result: **${count('fail') ? 'FAIL' : 'PASS'}** — ${count('pass')} passed, ${count('fail')} failed, ${count('known')} known limits, ${count('skip')} skipped`,

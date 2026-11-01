@@ -1,0 +1,63 @@
+# Sentence bank for the stress tier's synthetic meetings (TESTING.md §14.2). One sentence per line; text only.
+# test/meeting.js voices them with macOS `say -v Ioana` on the test computer (cached, never committed).
+# Sentences of one or two words are short replies: used as back-channel, not judged for accuracy.
+Bună ziua tuturor, să începem ședința de astăzi.
+Primul punct pe ordinea de zi este bugetul pentru anul viitor.
+Am pregătit o prezentare scurtă despre rezultatele trimestrului trei.
+Vânzările au crescut cu doisprezece la sută față de anul trecut.
+Cred că trebuie să discutăm mai întâi despre termenele de livrare.
+Echipa din Cluj a terminat testele aseară, înainte de miezul nopții.
+Clientul din Timișoara ne-a cerut o ofertă nouă până vineri.
+Avem o problemă serioasă cu furnizorul de componente electronice.
+Propun să amânăm decizia până la întâlnirea de săptămâna viitoare.
+Cine se ocupă de raportul pentru consiliul de administrație?
+Maria a trimis ieri documentele semnate către departamentul juridic.
+Costurile de transport au depășit estimarea inițială cu aproape o treime.
+Trebuie să angajăm încă doi programatori până la sfârșitul lunii.
+Serverele noi vor fi instalate în centrul de date din București.
+Am vorbit cu Andrei despre migrarea aplicației în cloud.
+Contractul de mentenanță expiră pe treizeci și unu decembrie.
+Vă rog să trimiteți comentariile voastre până marți la prânz.
+Nu sunt sigur că putem respecta acest calendar foarte strâns.
+Bugetul de marketing a fost redus la două sute de mii de euro.
+Ce părere aveți despre noua versiune a site-ului nostru?
+Clienții se plâng că aplicația pe telefon se mișcă foarte greu.
+Am programat o sesiune de instruire pentru noii colegi.
+Proiectul pilot din Iași a dat rezultate foarte bune.
+Trebuie să verificăm din nou cifrele înainte de a le publica.
+Raportul de audit va fi gata la începutul lunii martie.
+Propun să împărțim sarcinile între cele două echipe.
+Avem nevoie de aprobarea directorului financiar pentru această achiziție.
+Întârzierea vine de la vama din portul Constanța.
+Putem negocia un discount mai mare dacă semnăm pe trei ani.
+Să revenim la întrebarea despre programul de lucru flexibil.
+Colegii de la vânzări au depășit ținta cu cinci procente.
+Lansarea produsului este planificată pentru cincisprezece aprilie.
+Mai avem de rezolvat câteva erori grave înainte de lansare.
+Am primit trei oferte de la firme de curățenie.
+Recomand să alegem varianta cea mai ieftină, dar cu garanție.
+Departamentul de resurse umane pregătește evaluările anuale.
+Ședința următoare va avea loc joi la ora zece.
+Vă mulțumesc pentru răbdare și pentru toate ideile de astăzi.
+Haideți să facem o pauză de cafea de zece minute.
+Cine a luat notițe în timpul discuției de dimineață?
+Datele arată că majoritatea utilizatorilor vin de pe mobil.
+Trebuie să actualizăm politica de securitate a parolelor.
+Furnizorul nou livrează mai repede, dar prețurile sunt mai mari.
+Am putea organiza conferința anuală la Brașov, în luna mai.
+Partenerii noștri din Germania vor să ne viziteze în octombrie.
+Propunerea a fost aprobată în unanimitate de toți membrii.
+Mai sunt întrebări înainte să trecem la punctul următor?
+Rezultatele sondajului intern vor fi publicate săptămâna viitoare.
+Clientul a confirmat comanda de patru sute de bucăți.
+Aș vrea să adaug un punct nou pe ordinea de zi.
+Dacă nu primim piesele până la sfârșitul săptămânii, linia de producție din Pitești se va opri cel puțin trei zile, iar clientul va aplica penalități.
+Vreau să subliniez că toate cifrele prezentate astăzi sunt provizorii și pot fi modificate după închiderea contabilă de la sfârșitul lunii.
+Da.
+Exact.
+Bine.
+De acord.
+Nu chiar.
+Sigur.
+Mulțumesc.
+Perfect, mergem mai departe.

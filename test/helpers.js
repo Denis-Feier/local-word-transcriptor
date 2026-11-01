@@ -70,11 +70,12 @@ export async function startServer({ model = process.env.TEST_MODEL ?? 'parakeet-
     transcripts: path.join(dir, 'transcripts'),
     settingsFile: path.join(dir, 'settings.json'),
     async stop() {
-      if (child.exitCode === null) {
+      const running = () => child.exitCode === null && child.signalCode === null; // a killed server has only a signal
+      if (running()) {
         const exited = new Promise((r) => child.once('exit', r));
         child.kill('SIGTERM');
         await Promise.race([exited, sleep(8000)]);
-        if (child.exitCode === null) child.kill('SIGKILL');
+        if (running()) child.kill('SIGKILL');
       }
       fs.rmSync(dir, { recursive: true, force: true });
     },
@@ -121,7 +122,7 @@ export function concat(...parts) {
 }
 
 /** What a mic across the room hears: a few early reflections and duller sound (one-pole low-pass). */
-function room(x) {
+export function room(x) {
   const taps = [[0, 1], [0.011, 0.5], [0.023, 0.35], [0.041, 0.25], [0.067, 0.15]].map(([t, g]) => [Math.round(t * SR), g]);
   const out = new Float32Array(x.length + taps.at(-1)[0]);
   for (const [delay, gain] of taps) for (let i = 0; i < x.length; i++) out[i + delay] += gain * x[i];

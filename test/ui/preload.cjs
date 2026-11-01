@@ -12,6 +12,7 @@ const read = (file) => {
   return Float32Array.from(pcm, (s) => s / 32768);
 };
 const AUDIO = { a: read('a.wav'), b: read('b.wav'), c: read('c.wav') };
+const LOOP = process.argv.includes('--ui-loop'); // the stress tier's soak: each mic plays its meeting over and over
 const saved = (() => { try { return JSON.parse(sessionStorage.getItem('__fake')); } catch { return null; } })();
 window.__fake = saved ?? {
   devices: [
@@ -52,6 +53,7 @@ md.getUserMedia = async ({ audio }) => {
   buffer.copyToChannel(AUDIO[dev.audio], 0);
   const src = ctx.createBufferSource();
   src.buffer = buffer;
+  src.loop = LOOP;
   const dest = ctx.createMediaStreamDestination();
   src.connect(dest);
   src.start();
