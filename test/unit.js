@@ -1,15 +1,16 @@
-// Logic checks that need no speech model (seconds). The crosstalk and session checks use the Silero voice
-// detector (models/silero_vad.onnx) and are skipped without it. Case ids match TESTING.md.
+// Logic checks that need no speech model (seconds). The crosstalk, session and detector-reuse checks use the Silero
+// voice detector (models/silero_vad.onnx) and are skipped without it. Case ids match TESTING.md.
 //
 //   node test/unit.js
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { normalize, resultToText, contextTail } from '../lib/text.js';
 import { wordErrorRate, sharedWords } from '../lib/wer.js';
 import { TUNING, sanitizeTuning, applyTuning, tuningFrom } from '../lib/tuning.js';
 import { encodeWav, decodeWav, WavWriter } from '../lib/wav.js';
 import { Segmenter } from '../lib/segmenter.js';
-import { EnergyDetector, createDetector } from '../lib/vad.js';
+import { EnergyDetector, SileroDetector, VadPool, createDetector } from '../lib/vad.js';
 import { CrosstalkGate } from '../lib/crosstalk.js';
 import { Session } from '../lib/session.js';
 import { config } from '../lib/config.js';
@@ -326,6 +327,147 @@ if (!silero) {
     s.files.filter((f) => /-mic[12]\.wav$/.test(f)).length === 2 && /^\[\d\d:\d\d\] Mic [12]: /m.test(s.text)
       && one.files.some((f) => /\d\.wav$/.test(f)) && /^\[\d\d:\d\d\] o propoziție/m.test(one.text),
     `${s.files.join(', ')} | ${one.files.join(', ')}`);
+}
+
+// ---------- voice detectors are reused, not rebuilt (#4) ----------
+// A Silero detector holds ~3 MB of native memory that V8 does not see, so a dropped one stayed until V8 happened to
+// collect it. Detectors now go back to a pool (lib/vad.js) when a connection closes, the mics change or the threshold
+// changes. Without the fix every connection made 3 and every threshold change 2, and they stayed in memory.
+
+// The pool's rules, with stand-ins for sherpa-onnx's detectors.
+let collections = 0;
+const pool = new VadPool({ create: (model, threshold) => ({ threshold, resets: 0, reset() { this.resets++; } }), collect: () => collections++ });
+const [p1, p2] = [pool.acquire('m', 0.5), pool.acquire('m', 0.5)];
+pool.release(p1, 'm', 0.5);
+pool.release(p2, 'm', 0.5);
+const reused = pool.acquire('m', 0.5) === p2 && pool.acquire('m', 0.5) === p1 && pool.created === 2 && p1.resets === 1;
+[p1, p2].forEach((p) => pool.release(p, 'm', 0.5));
+const p3 = pool.acquire('m', 0.3); // the threshold changed: the 0.5 spares will not be wanted again
+const switched = p3.threshold === 0.3 && pool.idle.length === 0 && pool.dropped === 2 && collections === 1;
+const six = Array.from({ length: 6 }, () => pool.acquire('m', 0.3));
+six.forEach((p) => pool.release(p, 'm', 0.3));
+const capped = pool.idle.length === 4 && pool.dropped === 4 && pool.idle.every((d, i) => d.vad === six[i + 2]);
+t.check('UNIT-VAD-01', 'detector pool: a detector given back is reset and handed out again; spares with another threshold, or beyond 4, are dropped and collected',
+  reused && switched && capped, `reused ${reused}, threshold change ${switched}, at most 4 spares ${capped}; ${pool.created} made, ${pool.dropped} dropped, ${collections} collections`);
+
+/** Counts the Silero detectors sherpa-onnx makes while it is in place, and how many of them are still in memory. */
+const sherpa = createRequire(import.meta.url)('sherpa-onnx-node');
+function vadCounter() {
+  const Real = sherpa.Vad;
+  let freed = 0;
+  const registry = new FinalizationRegistry(() => freed++);
+  const counter = { made: 0, registry, alive: () => counter.made - freed, restore: () => (sherpa.Vad = Real) };
+  sherpa.Vad = class extends Real {
+    constructor(...args) {
+      super(...args);
+      counter.made++;
+      registry.register(this);
+    }
+  };
+  return counter;
+}
+const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null, transcribe: async () => ({ text: 'o propoziție', model: 'stub', ms: 1 }) };
+/** Two mics' audio from `from` to `to` seconds, in the page's 1600-sample chunks; mics: 1 sends mic 1 only. */
+function stream(session, [m1, m2], from, to, mics = 2) {
+  for (let i = Math.round(from * SR); i + 1600 <= Math.round(to * SR); i += 1600) {
+    const frame = new Float32Array(mics * 1600);
+    frame.set(m1.subarray(i, i + 1600));
+    if (mics === 2) frame.set(m2.subarray(i, i + 1600), 1600);
+    session.audio(frame, mics);
+  }
+}
+const turns = () => new Promise((resolve) => setTimeout(resolve, 20)); // a few turns of the event loop: collections run
+
+const VAD_IDS = ['UNIT-VAD-02', 'UNIT-VAD-03', 'UNIT-VAD-04', 'UNIT-VAD-05'];
+if (!silero) {
+  for (const id of VAD_IDS) t.skip(id, 'Silero detectors reused', `no ${config.vad.sileroModel} (npm run setup)`);
+} else {
+  const talk = twoMics(concat(silence(0.3), A), concat(silence(0.6), B), { bleedDb: 12 });
+  const model = config.vad.sileroModel;
+
+  // A detector given back mid-sentence and handed out again decides exactly as a new one.
+  const own = new VadPool({ collect: () => {} });
+  const decide = (d, x) => Array.from({ length: Math.floor(x.length / 512) }, (_, i) => (d.isSpeech(x.subarray(i * 512, (i + 1) * 512)) ? 1 : 0)).join('');
+  const fresh = new SileroDetector({ model, threshold: 0.5, pool: own });
+  const first = decide(fresh, lead(A));
+  decide(fresh, B.subarray(0, 2 * SR)); // stops in the middle of B's sentence
+  const midSentence = fresh.vad.isDetected();
+  const handle = fresh.vad;
+  fresh.release();
+  const again = new SileroDetector({ model, threshold: 0.5, pool: own });
+  const second = decide(again, lead(A));
+  const other = new SileroDetector({ model, threshold: 0.3, pool: own });
+  const spoken = first.split('').filter((c) => c === '1').length;
+  t.check('UNIT-VAD-02', 'a Silero detector given back mid-sentence comes back as good as new: the same detector, the same decision on every frame',
+    midSentence && again.vad === handle && second === first && spoken > 50 && other.vad !== handle && own.created === 2,
+    `${midSentence ? 'given back mid-sentence' : 'given back in silence'}, ${again.vad === handle ? 'the same detector came back' : 'another detector came back'}; ${spoken} of ${first.length} frames speech, ${[...first].filter((c, i) => c !== second[i]).length} decided differently; another threshold got ${other.vad === handle ? 'the same one' : 'its own'}`);
+
+  // 20 connections, each closed mid-sentence, then the mics changed 1 ↔ 2 twenty times in one session.
+  const conf = { ...structuredClone(config), transcriptsDir: scratch('pool') };
+  let count = vadCounter();
+  const heard = new Set(); // what each connection's detectors decided, as the page sees it
+  for (let k = 0; k < 20; k++) {
+    const sent = [];
+    const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
+    stream(session, talk, 0, 1);
+    session.close();
+    heard.add(JSON.stringify(sent.filter((m) => m.type === 'vad')));
+  }
+  const byConnections = count.made;
+  const session = new Session({ send: () => {}, transcriber: stub, config: conf });
+  for (let k = 0; k < 21; k++) stream(session, talk, 0.2 * k, 0.2 * (k + 1), k % 2 ? 1 : 2);
+  session.close();
+  count.restore();
+  t.check('UNIT-VAD-03', 'connections and mic changes reuse the Silero detectors: 20 connections with two mics and 20 mic changes make at most 2',
+    count.made <= 2 && heard.size === 1, `${byConnections} made by 20 connections, ${count.made - byConnections} by 20 mic changes (without the fix 60 and 33); ${heard.size === 1 ? 'every connection heard the same' : `${heard.size} different results`}`);
+
+  // 20 threshold changes (random slider values) while two mics talk, a message at a time as from the page.
+  count = vadCounter();
+  const tuned = new Session({ send: () => {}, transcriber: stub, config: conf });
+  stream(tuned, talk, 0, 0.4);
+  await turns();
+  const rss0 = process.memoryUsage().rss;
+  let seed = 11;
+  const values = Array.from({ length: 20 }, () => Number((0.1 + 0.05 * ((seed = (seed * 16807) % 2147483647) % 17)).toFixed(2)));
+  for (const [k, vadThreshold] of values.entries()) {
+    applyTuning(conf, { vadThreshold });
+    tuned.retune();
+    stream(tuned, talk, 0.4 + 0.1 * k, 0.5 + 0.1 * k);
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  await turns();
+  const last = values.at(-1);
+  const applied = tuned.mics.every(({ segmenter: { detector } }) => detector.threshold === last && detector.vad.config.sileroVad.threshold === last);
+  const alive = count.alive();
+  const grown = Math.round((process.memoryUsage().rss - rss0) / 1048576);
+  tuned.close();
+  count.restore();
+  t.check('UNIT-VAD-04', 'threshold changes free the detectors they replace: after 20 changes with two mics at most 4 are in memory, the last threshold applied',
+    alive <= 4 && applied, `${count.made} made, ${alive} still in memory (without the fix all of them); last threshold ${last} ${applied ? 'applied on both mics' : 'not applied'}; process memory ${grown >= 0 ? '+' : ''}${grown} MB`);
+
+  // A closed session gives its detectors back and takes no more audio (the page keeps sending while Ctrl+C waits for
+  // the last sentence); before, saving that audio reopened the WAVs and wiped the recording.
+  const out = scratch('closed');
+  const closing = new Session({ send: () => {}, transcriber: stub, config: { ...conf, transcriptsDir: out } });
+  closing.setOptions({ saveAudio: true });
+  stream(closing, talk, 0, 2);
+  closing.close();
+  const given = closing.mics.every(({ segmenter }) => segmenter.detector.vad === null);
+  const wavs = () => fs.readdirSync(out).filter((f) => f.endsWith('.wav')).sort().map((f) => (fs.statSync(path.join(out, f)).size - 44) / (2 * SR));
+  const before = wavs();
+  let thrown = null;
+  try {
+    stream(closing, talk, 2, 3);
+  } catch (err) {
+    thrown = err;
+  }
+  const after = wavs();
+  await turns(); // the last sentence is still being saved
+  fs.rmSync(out, { recursive: true, force: true });
+  fs.rmSync(conf.transcriptsDir, { recursive: true, force: true });
+  t.check('UNIT-VAD-05', 'a closed session gives its detectors back and ignores audio sent after: the WAVs keep the recording',
+    given && !thrown && before.length === 2 && before.every((s) => s === 2) && after.join() === before.join(),
+    `detectors ${given ? 'given back' : 'kept'}; ${thrown ? `audio after close threw ${thrown.message}; ` : ''}WAVs ${before.map((s) => `${s} s`).join(', ')} at close, ${after.map((s) => `${s} s`).join(', ')} after 1 s more audio`);
 }
 
 fs.rmSync(dir, { recursive: true, force: true });
