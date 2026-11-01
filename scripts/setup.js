@@ -1,7 +1,7 @@
 // Downloads models into models/, where they stay for offline use.
 //   npm run setup                  voice detector + the default model (Canary 1B v2)
 //   npm run setup -- <model-id>    another model (or several, space separated)
-//   npm run setup -- --all         every model (~10 GB, plus ~1.4 GB of Python for Jackrabbit)
+//   npm run setup -- --all         every model (~10 GB, plus ~1.4 GB of Python for the NeMo models)
 //   npm run setup -- --list        show all models and which are downloaded
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -36,8 +36,8 @@ const probe = spawnSync('which', [config.whisper.bin], { encoding: 'utf8' });
 if (probe.status === 0) console.log(`✔ whisper-server found: ${probe.stdout.trim()}`);
 else console.log('! whisper-server not found; only needed for the Whisper models. Install: brew install whisper-cpp');
 const uv = spawnSync('which', [process.env.UV_BIN ?? 'uv'], { encoding: 'utf8' });
-if (uv.status === 0) console.log(`✔ uv found (sets up Python for Jackrabbit): ${uv.stdout.trim()}`);
-else console.log('! uv not found; only needed for Jackrabbit (Python). Install: brew install uv');
+if (uv.status === 0) console.log(`✔ uv found (sets up Python for the NeMo models): ${uv.stdout.trim()}`);
+else console.log('! uv not found; only needed for the NeMo models (Python). Install: brew install uv');
 
 // 2. voice activity detector
 const vadPath = path.join(MODELS_DIR, SILERO_VAD.file);

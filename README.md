@@ -27,7 +27,7 @@ the app once, then System Settings → Privacy & Security → **Open Anyway** (m
 calling the download "damaged".
 
 The desktop app runs the models that need no extra software: NVIDIA Canary (the default and most accurate) and
-the Parakeet family. The Whisper models, Jackrabbit and Apple's dictation appear only in the developer setup
+the Parakeet family. The Whisper models, the NeMo models (Jackrabbit, the UPB FastConformer) and Apple's dictation appear only in the developer setup
 below, where whisper.cpp, Python and the Xcode command-line tools are installed.
 
 **Building the installers:** `npm run dist:mac` on a Mac, `npm run dist:win` on Windows; the result is in
@@ -58,13 +58,13 @@ Download models from the page's **Model** menu, or all at once with `docker comp
 **Native: fastest, uses the GPU.**
 
 ```bash
-brew install whisper-cpp uv      # whisper.cpp for the Whisper models, uv for Jackrabbit's Python
+brew install whisper-cpp uv      # whisper.cpp for the Whisper models, uv for the NeMo models' Python
 npm install
 npm run setup                    # voice detector + the default model (Canary 1B v2, 1.1 GB)
 npm start                        # or: PORT=3421 npm start
 ```
 
-`npm run setup -- --all` downloads every model (~10 GB, plus ~1.4 GB of Python for Jackrabbit).
+`npm run setup -- --all` downloads every model (~10 GB, plus ~1.4 GB of Python for the NeMo models).
 
 Open **http://localhost:3000**, press **Start**, and allow the microphone.
 
@@ -191,6 +191,7 @@ Pick a model from the **Model** menu. Models that aren't downloaded yet show the
 | Orukeet 0.6B | 9.3 % | 3.6–5.4 % | 93–111× | 740 MB | GPU, transcribe.cpp |
 | Parakeet Ultra 0.6B | 9–10 % | 3.6–8.1 % | 96–111× | 740 MB | GPU, transcribe.cpp |
 | Parakeet Romanian 110M (Politehnica)⁴ | 10.6 % | 0–5.4 % | 236–279× | 135 MB | GPU, transcribe.cpp |
+| FastConformer Romanian 114M (UPB NLP)⁶ | none (11.6 % on FLEURS here) | not measured | 53× on FLEURS | 454 MB | CPU, Python/NeMo |
 | Whisper small Romanian (readerbench)³ | 10.9 % | 4.8–10.8 % | 30–39× | 260 MB | GPU, whisper.cpp |
 | NVIDIA Parakeet TDT 0.6B v3 | 12.4 % | 3.6–18.9 % | 40–53× | 487 MB | CPU, sherpa-onnx |
 | Apple on-device dictation (macOS 26)⁵ | none (17.6 % on FLEURS here) | not measured | 59× on FLEURS | kept by macOS | Mac only, Apple's Speech framework |
@@ -200,6 +201,7 @@ Pick a model from the **Model** menu. Models that aren't downloaded yet show the
 ³ Hugging Face Whisper fine-tunes with no ready-made whisper.cpp version. The app downloads the original weights, converts them to whisper.cpp's format with `lib/convert-whisper.js` (a JavaScript port of whisper.cpp's converter, no Python needed), quantizes them to q8_0 with `whisper-quantize`, and keeps only the result. BuzzASR downloads 3.1 GB, readerbench 967 MB. The readerbench model runs without the previous-text context, which made it invent words.
 ⁴ Outputs lowercase text without punctuation (that is how it was trained), but its words are very accurate and it is by far the fastest.
 ⁵ Apple's own recognizer (the macOS 26 `DictationTranscriber`), fully on the Mac; macOS downloads and keeps the Romanian model itself. Not the default and not recommended for Romanian: on FLEURS Romanian (883 sentences, `npm run benchmark`) it scored 17.6 % WER against 6.6 % for Canary, because it leaves words out and adds no punctuation (Apple's newer `SpeechTranscriber` has no Romanian). The menu offers it on macOS 26 or later, from source with the Xcode command-line tools: choosing it, or `npm run setup -- apple-dictation`, compiles a small Swift helper (`native/apple-speech/`, ~11 s). The desktop app does not ship the helper.
+⁶ `upb-nlp/ro-fast-conformer`, a NeMo FastConformer fine-tuned on Romanian (MDPI Applied Sciences 16(4):1928). The authors report 3.0 % WER on their own test sets, but no FLEURS score; on FLEURS Romanian (883 sentences, `npm run benchmark`) it scored 11.6 % here, about the same as Parakeet Romanian 110M, against 6.6 % for Canary. Some of that is numbers written as words ("o sută" for "100"): without the sentences that have digits, 8.0 % against Canary's 6.2 %. Like Parakeet Romanian 110M it writes lowercase without punctuation. Its RNNT decoder is used; its CTC head scored 13.7 %. Needs Python (installed with it, like Jackrabbit), so the desktop app does not offer it.
 
 ### Where models come from and where they live
 
@@ -214,13 +216,14 @@ Everything is stored in the project's `models/` folder (ignored by git; about 7 
 | Orukeet | Hugging Face `oruk/orukeet` | `models/orukeet-transcribe-cpp-Q8_0.gguf` |
 | Parakeet Ultra | Hugging Face `handy-computer/parakeet-ultra-gguf` | `models/parakeet-ultra-Q8_0.gguf` |
 | Parakeet Romanian 110M | Hugging Face `jonah1024/Sped_ParakeetRomanian_110M_TDT-CTC_gguf` | `models/Sped_ParakeetRomanian_110M_TDT-CTC-Q8_0.gguf` |
+| FastConformer Romanian 114M | Hugging Face `upb-nlp/ro-fast-conformer` | `models/ro-fast-conformer/` |
 | Parakeet TDT v3 | GitHub release of `k2-fsa/sherpa-onnx` | `models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/` |
 | Apple on-device dictation | built on this Mac from `native/apple-speech/` (nothing downloaded); macOS keeps the language model | `models/apple-speech-server` |
 | Silero voice detector | GitHub release of `k2-fsa/sherpa-onnx` | `models/silero_vad.onnx` |
 
 Each model is downloaded once and then used from disk; nothing is fetched while transcribing, so the app works offline. To remove a model, delete its file or folder; the menu then offers it for download again. Download from the command line with `npm run setup -- <id>`, all at once with `npm run setup -- --all`, and see the list with `npm run setup -- --list`.
 
-Licenses: Whisper, BuzzASR: MIT. readerbench, Parakeet Romanian 110M: Apache-2.0. Canary, Parakeet v3, Parakeet Ultra: CC-BY-4.0. Orukeet: CC-BY-SA-4.0. All allow commercial use.
+Licenses: Whisper, BuzzASR: MIT. readerbench, Parakeet Romanian 110M: Apache-2.0. Canary, Parakeet v3, Parakeet Ultra: CC-BY-4.0. Orukeet: CC-BY-SA-4.0. All allow commercial use. The FastConformer Romanian 114M has no license on Hugging Face (no model card), so it is not clear that it may be used at all; ask its authors before using it for work.
 
 Not included, as of October 2026:
 - **Meta Seamless M4T v2** (8.9 %): only available as PyTorch weights (~9 GB), so it would need a Python runtime; non-commercial license; less accurate than Canary.
@@ -280,7 +283,7 @@ mics → AudioWorklet ─WS─▶  Silero VAD + Segmenter per mic        ──�
 | `lib/crosstalk.js` | With several mics: decides which mic each moment of speech belongs to, by clarity above each mic's own noise |
 | `lib/transcriber.js` | Owns the active model, serialises requests, switches models, restarts a crashed model |
 | `lib/engines/*.js` | One adapter per runtime: whisper.cpp, transcribe.cpp, sherpa-onnx, Python/NeMo. `sidecar.js` is the shared logic for models served by a separate process |
-| `python/nemo_server.py` | Small local HTTP server that runs NeMo models (Jackrabbit) for the Node app; its environment lives in `python/.venv` |
+| `python/nemo_server.py` | Small local HTTP server that runs NeMo models (Jackrabbit, the UPB FastConformer) for the Node app; its environment lives in `python/.venv` |
 | `lib/models.js` | Model catalogue, download, unpack, and conversion of Whisper fine-tunes (`lib/convert-whisper.js`) |
 | `lib/text.js` | Fixes ş/ţ → ș/ț, removes `[Muzică]` tags, drops Whisper's known silence hallucinations ("Mulțumim pentru vizionare!") |
 | `scripts/compare.js` | Runs several models over one of your recordings and reports speed and WER |

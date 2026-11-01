@@ -13,7 +13,8 @@ import { Segmenter } from '../lib/segmenter.js';
 import { EnergyDetector, SileroDetector, VadPool, createDetector } from '../lib/vad.js';
 import { CrosstalkGate } from '../lib/crosstalk.js';
 import { Session, fileStamp } from '../lib/session.js';
-import { config } from '../lib/config.js';
+import { config, ROOT } from '../lib/config.js';
+import { MODELS } from '../lib/models.js';
 import { SR, scratch, speakers, silence, concat, twoMics, sleep, suite } from './helpers.js';
 
 const t = suite('unit');
@@ -44,6 +45,16 @@ applyTuning(cfg, { vadThreshold: 0.35, silenceMs: 1200, minSpeechMs: 300, maxSeg
 const back = tuningFrom(cfg);
 t.check('UNIT-TUNE-02', 'every setting round-trips through the config', back.vadThreshold === 0.35 && back.silenceMs === 1200 && back.minSpeechMs === 300 && back.maxSegmentSec === 12 && back.partialEverySec === 1 && back.crosstalkDb === 5, JSON.stringify(back));
 t.check('UNIT-TUNE-03', 'every setting has a range for the Settings sliders', Object.keys(tuningFrom(config)).every((k) => TUNING[k]));
+
+// ---------- model list ----------
+// python/nemo_server.py refuses a decoder it does not know, but only once someone picks the model.
+const nemoDecoders = fs.readFileSync(path.join(ROOT, 'python', 'nemo_server.py'), 'utf8').match(/"--decoder", choices=\[([^\]]*)\]/)[1].match(/[\w-]+/g);
+const nemoModels = MODELS.filter((m) => m.engine === 'python-nemo');
+const badNemo = nemoModels.filter(({ nemo, files }) => !nemoDecoders.includes(nemo.decoder)
+  || (nemo.decoder === 'ctc-lm') !== Boolean(nemo.lm)
+  || ![nemo.model, nemo.lm].filter(Boolean).every((f) => files.some((x) => x.file === f)));
+t.check('UNIT-MODEL-01', 'every NeMo model uses a decoder nemo_server.py accepts and downloads the files it loads', nemoModels.length > 0 && !badNemo.length,
+  `decoders ${nemoDecoders.join('/')}; ${nemoModels.map((m) => `${m.id}: ${m.nemo.decoder}`).join(', ')}${badNemo.length ? `; wrong: ${badNemo.map((m) => m.id).join(', ')}` : ''}`);
 
 // ---------- WAV files ----------
 const tone = Float32Array.from({ length: SR }, (_, i) => 0.5 * Math.sin(i / 10));
