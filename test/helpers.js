@@ -35,8 +35,9 @@ export function scratch(name) {
  * Start server.js on a free port with its own settings and transcripts folders, so a test never touches the
  * user's files or a copy of the app that is already running. Models come from ./models (MODELS_DIR overrides).
  * model: null starts without MODEL (the saved or default model); env values of undefined are removed.
+ * maxFileBytes: no file the server writes can grow past this (ulimit -f; macOS and Linux), like a disk that fills up.
  */
-export async function startServer({ model = process.env.TEST_MODEL ?? 'parakeet-ro-110m', env = {}, timeoutMs = 120000 } = {}) {
+export async function startServer({ model = process.env.TEST_MODEL ?? 'parakeet-ro-110m', env = {}, timeoutMs = 120000, maxFileBytes = null } = {}) {
   const port = Number(env.PORT ?? (await freePort())); // env.PORT: restart on the same port (reconnect tests)
   const dir = scratch('server');
   let log = '';
@@ -51,7 +52,13 @@ export async function startServer({ model = process.env.TEST_MODEL ?? 'parakeet-
   };
   for (const key of Object.keys(childEnv)) if (childEnv[key] === undefined) delete childEnv[key];
   delete childEnv.ELECTRON_RUN_AS_NODE;
-  const child = spawn(NODE, [path.join(ROOT, 'server.js')], { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+  const script = path.join(ROOT, 'server.js');
+  // Past the limit a write is cut short, then fails with EFBIG (Node ignores SIGXFSZ): what a full disk does.
+  // sh counts ulimit -f in 512-byte blocks; exec keeps the pid.
+  const [cmd, args] = maxFileBytes
+    ? ['/bin/sh', ['-c', `ulimit -f ${Math.ceil(maxFileBytes / 512)} && exec "$0" "$@"`, NODE, script]]
+    : [NODE, [script]];
+  const child = spawn(cmd, args, { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
   child.stdout.on('data', (d) => (log += d));
   child.stderr.on('data', (d) => (log += d));
   const t0 = Date.now();

@@ -104,8 +104,8 @@ This is the maintenance loop. Do all steps; skipping one is how the plan goes st
 | `hdiutil` (macOS), ~3 GB free disk | stress tier: `STRESS-DISK-01`; WAVs of hours-long meetings | built in |
 
 Other systems: CI (`.github/workflows/desktop.yml`) runs `test/smoke.js` on macOS and Windows before building the
-installers. The other suites are written for macOS; on Windows `PROT-RUN-02` is skipped (no SIGINT) and `SCN-08`
-uses `ps` (macOS/Linux only).
+installers. The other suites are written for macOS; on Windows `PROT-RUN-02` (no SIGINT) and `PROT-ERR-03` (no
+`ulimit`) are skipped and `SCN-08` uses `ps` (macOS/Linux only).
 
 Time budgets (Apple M5): static < 5 s, unit ~1 s, protocol ~25 s, smoke ~40 s, scenarios ~70 s, UI ~50 s,
 engines 1–3 min each, long conversation ~2 min; standard tier ~3 min, full tier ~12 min. A suite taking 3× its
@@ -117,7 +117,7 @@ B ~2.5 h alone); measured: the 4-hour meeting 30 min at 8×, `PAGE` 5 min, the f
 | File | Role |
 |---|---|
 | `test/run-all.js` | Runs the tiers, the static checks (`STATIC-*`) and writes the report |
-| `test/helpers.js` | Isolated server per test (`startServer`), streaming client (`streamWav`), test speakers, two-mic room simulator (`twoMics`), result bookkeeping (`suite`) |
+| `test/helpers.js` | Isolated server per test (`startServer`; `maxFileBytes` caps its files with `ulimit -f`, like a full disk), streaming client (`streamWav`), test speakers, two-mic room simulator (`twoMics`), result bookkeeping (`suite`) |
 | `test/unit.js` | Logic without a speech model (`UNIT-*`) |
 | `test/protocol.js` | The server as clients use it (`PROT-*`) |
 | `test/smoke.js` | End to end on any OS, downloads the model if needed; CI runs it (`SMOKE-*`) |
@@ -203,6 +203,8 @@ screenshots or logs; `hardware` = a person with real devices (§9); `planned` = 
 | `UNIT-TUNE-03` | Every setting has a slider range | `TUNING` has a range for every `tuningFrom` key | auto |
 | `UNIT-WAV-01` | WAV encode/decode | 16-bit round trip within 1e-4 | auto |
 | `UNIT-WAV-02` | WAV being written | playable with the right length after every chunk | auto |
+| `UNIT-WAV-03` | The disk fills up while a WAV is written ([#1](https://github.com/Denis-Feier/local-word-transcriptor/issues/1)): a stand-in disk with room for 12,345½ samples, which cuts the last write short and fails the next one, as a real disk does | the chunk that does not fit throws `ENOSPC`; the header counts the 12,345 whole samples written; once there is room again the file carries on (without the fix: the error a chunk late, the header 12,800 samples) | auto |
+| `UNIT-WAV-04` | A WAV started on a full disk | `ENOSPC`, and the file is not left open (without the fix it is) | auto |
 | `UNIT-SEG-01` | Segmenting speech (loudness detector) | one segment, start ≈ speech − 0.3 s, end ≈ speech + 0.2 s (±0.15 s) | auto |
 | `UNIT-SEG-02` | Clicks | 0.1 s of sound is discarded | auto |
 | `UNIT-SEG-03` | Very long speech | 25 s of speech becomes 2 segments, the first ≤ 20 s | auto |
@@ -220,6 +222,7 @@ screenshots or logs; `hardware` = a person with real devices (§9); `planned` = 
 | `UNIT-SESS-05` | Files | two mics: `<stamp>-mic1.wav`, `-mic2.wav`, lines `[mm:ss] Mic N: …`; one mic: `<stamp>.wav`, plain lines | auto |
 | `UNIT-SESS-06` | Changing the mics keeps the clock ([#8](https://github.com/Denis-Feier/local-word-transcriptor/issues/8)): 1 ↔ 2 mics 11 times in 1600-sample chunks, 448 samples unframed at each change (loudness detector, no Silero needed) | after every chunk, on every mic, frames × 512 + unframed samples = the audio sent (0 samples behind; without the fix 4,928) | auto |
 | `UNIT-SESS-07` | A sentence after those 11 changes, on mic 1 and on mic 2 | starts within half a frame of the same run with two mics from the start (without the fix 0.32 s early) | auto |
+| `UNIT-SESS-08` | Save audio with two mics; the disk fills at 8 s of 24 s, a sentence every 4 s ([#1](https://github.com/Denis-Feier/local-word-transcriptor/issues/1); loudness detector, stand-in model, the stand-in disk of `UNIT-WAV-03`) | `audio()` never throws; one "Could not save audio" error; all 6 sentences, 4 of them after the disk filled; both WAVs playable up to 8 s (without the fix `audio()` throws at 8 s and nothing after it is transcribed) | auto |
 
 ### 7.3 Server and protocol (`test/protocol.js`)
 
@@ -243,6 +246,7 @@ screenshots or logs; `hardware` = a person with real devices (§9); `planned` = 
 | `PROT-MIC-06` | Clear | starts a new transcript file | auto |
 | `PROT-ERR-01` | Broken frames (2 bytes, 0 mics, uneven size, 5 mics), bad JSON | connection stays open, server keeps answering | auto |
 | `PROT-ERR-02` | Plain mono client without `?mics` (older clients, `stream-wav.js`) | transcribed, all on mic 0 | auto |
+| `PROT-ERR-03` | The disk fills up while Save audio is on ([#1](https://github.com/Denis-Feier/local-word-transcriptor/issues/1)): no file may grow past 300 KB (`ulimit -f`), so the WAV is full at 9.6 s of 40 s; skipped on Windows | the server stays up, keeps transcribing (≥ 2 sentences after the WAV filled) and saving the `.txt`; the page gets one error, "Could not save audio"; the WAV's header matches its data (without the fix the server exits at 9.6 s) | auto |
 | `PROT-RUN-01` | Port already in use | message "already in use", exit code 1 | auto |
 | `PROT-RUN-02` | Ctrl+C mid-sentence | the sentence is transcribed and saved before exit (skipped on Windows) | auto |
 | `PROT-MODEL-01` | Choosing another model | loads, status ready with the new model | auto |
@@ -537,7 +541,7 @@ Useful tools: `DEBUG=1` server logs (`[final #n mic m] … ms: text`, `dropped, 
 | Live settings and their saving | `UNIT-TUNE-*`, `PROT-TUNE-*`, `UI-SET-01` | — |
 | Models: list, choose, remember, download prompt | `PROT-WS-02`, `PROT-MODEL-*`, `UI-MODEL-01` | real download path (network) only via `SMOKE-01` in CI |
 | Engines (transcribe.cpp, whisper.cpp, sherpa-onnx, NeMo) | `SCN-ENGINE`, `PROT-MODEL-*` | `STRESS-ENG-*` (stress tier only) |
-| Transcript and audio files | `UNIT-SESS-05`, `PROT-MIC-04…06`, `PROT-RUN-02`; hours-long files, full disk, two recordings at once: `STRESS-MEET-09`, `STRESS-DISK-*`, `STRESS-CONC-02` | — |
+| Transcript and audio files | `UNIT-WAV-*`, `UNIT-SESS-05`, `PROT-MIC-04…06`, `PROT-RUN-02`; a full disk: `UNIT-SESS-08`, `PROT-ERR-03` (every run), `STRESS-DISK-01` (a real one, macOS); hours-long files, a drive unplugged, two recordings at once: `STRESS-MEET-09`, `STRESS-DISK-02`, `STRESS-CONC-02` | — |
 | Reconnect and buffering | `UI-NET-01`, `STRESS-NET-*` (repeated server kills; the 5-minute buffer limit) | what to keep beyond the buffer: decision D3 (§14.6) |
 | Long meetings (hours): attribution, accuracy, clock, files and memory over time | `SCN-07/08` (10 minutes), `STRESS-MEET-*`, `STRESS-MIC3-*`, `STRESS-SOAK-*` (§14); the clock across mic changes: `UNIT-SESS-06/07` | real rooms over hours: `HW-11`, `HW-21` |
 | A model slower than the talk; each model's capacity | `STRESS-LOAD-*`, `STRESS-CAP-01` | telling the page it is behind: decision D1 (§14.6) |
@@ -584,6 +588,7 @@ Add one row per run on `main` (§3 step 5), newest first. Feature-branch runs go
 | 2026-10-31 | After the first stress run (§12): only steady loads run in parallel (the soak beside `MEET`, `MIC3`, `PAGE`, `NET`); `CONN`/`CONC`/`TUNE`/`DISK` moved to phase B, alone, because their bursts slowed the model in the middle of the 4-hour meeting. §14.5 updated with the confirmed bugs and new findings #7–#11. |
 | 2026-11-01 | Findings tracked as GitHub issues #1–#13 (label `stress-test`): an Issue column in §14.5 and §14.6; §10.1 step 4 opens an issue for a product bug not fixed in the same branch. |
 | 2026-11-01 | Mic changes no longer shift the clock ([#8](https://github.com/Denis-Feier/local-word-transcriptor/issues/8), `fix/layout-change-clock-drift`): `UNIT-SESS-06/07` (fail without the fix: 308 ms behind after 11 changes); §14.5 #10 fixed; §11 clock row. |
+| 2026-11-01 | A full disk no longer stops the server ([#1](https://github.com/Denis-Feier/local-word-transcriptor/issues/1), `claude/project-thread-4onwzk`): `UNIT-WAV-03/04` and `UNIT-SESS-08` (a stand-in disk that fills, every platform) and `PROT-ERR-03` (a real server whose files cannot grow past 300 KB; `startServer({ maxFileBytes })`), each failing without the fix; §14.5 #1 fixed; §11 files row. |
 
 ## 14. Stress plan: long meetings (production readiness)
 
@@ -698,7 +703,7 @@ in full): fix it on a branch with its case as the regression test (§10.1), and 
 
 | # | Weak spot | Where | Case | Status | Issue |
 |---|---|---|---|---|---|
-| 1 | A full disk with Save audio on crashes the server. `Session.audio()` calls `WavWriter.append()` outside any `try`, so `ENOSPC` escapes the WebSocket handler as an uncaught exception, and the meeting stops being transcribed | `lib/session.js`, `lib/wav.js` | `STRESS-DISK-01` | **confirmed** twice: the server exits when the disk fills; nothing is transcribed after | [#1](https://github.com/Denis-Feier/local-word-transcriptor/issues/1) |
+| 1 | A full disk with Save audio on crashes the server. `Session.audio()` calls `WavWriter.append()` outside any `try`, so `ENOSPC` escapes the WebSocket handler as an uncaught exception, and the meeting stops being transcribed | `lib/session.js`, `lib/wav.js` | `STRESS-DISK-01` | **confirmed** twice: the server exits when the disk fills; nothing is transcribed after. Also found: the last write is cut short without an error, so the WAV's header counted audio that was never written. **Fixed** (`claude/project-thread-4onwzk`): a failed write stops Save audio with one error and the transcript goes on; each WAV keeps every whole sample written, with a matching header. `UNIT-WAV-03/04`, `UNIT-SESS-08` and `PROT-ERR-03` are the regression tests; `STRESS-DISK-01` checks it on a real disk | [#1](https://github.com/Denis-Feier/local-word-transcriptor/issues/1) |
 | 2 | Two recordings that start within the same second share their files. The file stamp has one-second resolution, so both write to one `.txt`, and the second `WavWriter` (opened with `'w'`) truncates the first's WAV. Seen with two tabs, or the desktop app plus a browser tab | `lib/session.js` (`fileStamp`, `#base`) | `STRESS-CONC-02` | **confirmed** twice: both sessions wrote `<stamp>.txt`, `-mic1.wav` and `-mic2.wav` | [#2](https://github.com/Denis-Feier/local-word-transcriptor/issues/2) |
 | 3 | No backpressure. When the model is slower than the talk, every sentence waits in the queue with its audio, live text stops (guesses run only when the model is idle), and the delay grows without telling anyone | `lib/transcriber.js`, `lib/session.js` | `STRESS-LOAD-*`, `STRESS-CAP-01` | **confirmed, nothing lost**: 10 min of meeting sent in 3 s left 98 sentences waiting and lines ~590 s of audio behind, every sentence then finished once, the server kept answering (≤ 0.5 s); the page is never told (D1) | [#9](https://github.com/Denis-Feier/local-word-transcriptor/issues/9) |
 | 4 | A reconnect is a new session, with a new transcript file whose clock restarts at 00:00. During an outage longer than 5 minutes the page keeps the first 5 minutes of audio and silently drops the rest | `server.js`, `public/app.js` (`MAX_BACKLOG`) | `STRESS-NET-*` | **confirmed** (short run): back within 2 s, buffered audio transcribed 7/7, nothing lost; 3 files for 2 restarts, each from `[00:00]` (D2). The outage beyond 5 minutes not run yet (D3) | [#10](https://github.com/Denis-Feier/local-word-transcriptor/issues/10), [#11](https://github.com/Denis-Feier/local-word-transcriptor/issues/11) |
