@@ -144,8 +144,8 @@ sentences with fewer than three such words are not judged.
 
 **Fake microphones (UI).** `preload.cjs` replaces the page's `enumerateDevices`/`getUserMedia` with three devices:
 `mic-a` "Built-in Microphone" (speaker A, also behind the `default` entry), `mic-b` "AirPods" (speaker B),
-`mic-c` "USB Microphone" (third sentence). The test plugs and unplugs them, re-pairs one under a new id, or makes one
-report 8 kHz. It also lists two outputs, `out-laptop` "MacBook Pro Speakers" and `out-bt` "Party Speaker", and records
+`mic-c` "USB Microphone" (third sentence). The test plugs and unplugs them, re-pairs one under a new id, makes one
+report 8 kHz, or makes one send only digital silence (`__fake.silent`). It also lists two outputs, `out-laptop` "MacBook Pro Speakers" and `out-bt` "Party Speaker", and records
 each mic the page opens with its auto-gain request (`window.__mics`). An output the page picks plays to a silent sink
 (`setSinkId({ type: 'none' })`), so a test run never makes sound on this computer. `window.__speakerLevel()` measures
 what it would have played. Clipboard and downloads are captured. Chromium's own test microphones
@@ -307,6 +307,8 @@ With `--recordings a.wav,b.wav` the same scenarios run on 60 s of two real voice
 | `UI-DEV-09` | A mic recording at 8 kHz | warning "less accurate" | auto |
 | `UI-DEV-10` | Reload | mic choices remembered | auto |
 | `UI-DEV-11` | Re-paired Bluetooth mic (new id, same name) | found again by name | auto |
+| `UI-DEV-12` | A mic that is open but sends only digital silence (muted, or a second Bluetooth headset on a Mac), next to a Bluetooth Mic 1 | after ~5 s "no sound" on its meter, a warning naming it with the one-Bluetooth-mic hint; Mic 1 keeps recording | auto |
+| `UI-DEV-13` | The same mic back with sound | "no sound" and the warning go | auto |
 | `UI-SPK-01` | Speaker menu | None, System default and each output; starts at None, no volume slider, nothing playing | auto |
 | `UI-SPK-02` | Choosing a speaker | plays the mic on that output at once, before Start (level > −50 dBFS); the speaker's mic stream asks for no auto gain; volume slider shown | auto |
 | `UI-SPK-03` | Mic 2 chosen while the speaker plays | the speaker reopens with both mics | auto |
@@ -468,6 +470,7 @@ distances.
 | HW-18 | Switch the Bluetooth speaker off, then on again, while it plays | silent, "not connected" + warning, nothing from the laptop's speakers; plays again by itself |
 | HW-19 | Start transcribing while the speaker plays, then turn the speaker on while transcribing | the text is as accurate as without the speaker; note whether the speaker gets louder in pauses (auto gain, see §10.2) |
 | HW-20 | A Bluetooth speaker with its own microphone, Mic 1 on *System default* | note whether the Mac switches its input to the speaker (call quality); with the real mic chosen it must not |
+| HW-22 | On a Mac, two Bluetooth headsets as Mic 1 and Mic 2 (e.g. G435 and Jabra Evolve 65), then the same with one of them on its USB receiver | with both on Bluetooth: one meter stays at zero, "no sound" and the one-Bluetooth-mic warning after ~5 s; with one on its receiver: both meters move. Note which headset went silent (the last connected?) |
 | HW-21 | A real meeting of 2 hours or more in the desktop app: two mics (one Bluetooth), Save audio, the caption window on a projector; the human counterpart of the stress tier (§14) | no freeze; the text keeps up (note the delay at the start and at the end); the app's memory in Activity Monitor at the start, after 1 hour and at the end; files complete |
 
 **Data to collect:** the transcript `.txt`, the two WAVs (`<stamp>-mic1.wav`, `<stamp>-mic2.wav`), the terminal
@@ -519,6 +522,7 @@ Useful tools: `DEBUG=1` server logs (`[final #n mic m] … ms: text`, `dropped, 
 | — | Killing the server mid-sentence loses what it had received of that sentence | The server is gone; the page only buffers audio sent while disconnected | Accepted |
 | — | Chromium's built-in fake microphones are silent in Electron | Electron build | The UI suite uses `preload.cjs`; real capture is covered by §9 |
 | — | The speaker may get the transcription's auto gain | Chromium processes a mic once per page: when the transcription opened the mic first, the speaker's stream gets its auto gain even though it asks for none (checked with Electron's fake devices; when the speaker opens first, each gets its own) | Hardware data (`HW-19`); a page-level fix would mean giving up auto gain for the text |
+| — | On a Mac, only one Bluetooth headset mic works at a time; the other sends digital silence | macOS runs one Bluetooth headset (HFP) microphone at a time; the app opens each mic on its own (`mics.js`), so this is below it. The page warns (`UI-DEV-12`) | Nothing in the app; a headset's USB receiver or a cable (README) |
 | — | Bluetooth speakers play ~0.2 s late | Bluetooth audio buffering in the speaker and the OS | Nothing in the app; README recommends a cable or USB speaker |
 | — | On 2026-10-31 a scenario run stopped producing sentences for ~8 minutes, twice, then continued; not reproduced in 19+ runs since | Unknown | If a stream times out: keep the server running, `sample <pid> 3`, save its log, and record it in §12 |
 
@@ -544,7 +548,7 @@ Useful tools: `DEBUG=1` server logs (`[final #n mic m] … ms: text`, `dropped, 
 | Projector view, caption window | `UI-PROJ-*`, `VIS-03` | full screen, idle hiding of controls |
 | Two mics: choosing, labels, colours | `UI-MIC-*`, `UI-TX-02…05`, `UI-CFG-01/02`, `VIS-01` | — |
 | Two mics: crosstalk gate and duplicates | `UNIT-GATE-*`, `UNIT-SESS-*`, `SCN-01…08`, `SMOKE-02` | `KNOWN-01`, real rooms (§9) |
-| Two mics: devices coming and going, 8 kHz | `UI-DEV-*`, `SCN-06` | real Bluetooth (`HW-06`) |
+| Two mics: devices coming and going, 8 kHz, a mic that sends no sound | `UI-DEV-*`, `SCN-06` | real Bluetooth (`HW-06`, `HW-22`) |
 | Speaker in the room: choosing, volume, coming and going, meters before Start | `UI-SPK-*`, `DESK-09`, `VIS-07` | real speakers, delay and howling only in §9 (`HW-14…20`); auto gain on the speaker (§10.2) |
 | Desktop app | `STATIC-02`, CI smoke, `DESK-*` | packaged app UI not automated |
 | User manual (PDFs, Help menu, release assets) | `STATIC-05`, `DESK-10`; content and screenshots reviewed by the user-manual skill on every rebuild | whether the text still matches the app is checked only when the manual is rebuilt (before each tag) |
@@ -578,6 +582,7 @@ Add one row per run on `main` (§3 step 5), newest first. Feature-branch runs go
 | 2026-10-31 | Stress plan for long meetings (`feature/stress-test`): §14 (design), §7.7 (45 cases, How = `planned`, a new How value), `HW-21`, §11 rows, the `STRESS` area. Not built yet. Six suspected weak spots found while planning (§14.5) and four product decisions needed (§14.6). |
 | 2026-10-31 | Stress tier built (`feature/stress-test`): `test/meeting.js` (synthetic meeting, room, judge), `test/stress.js`, `test/ui/stress.mjs`, the sentence bank `test/fixtures/meeting-ro.txt`, `npm run test:stress` (run-all.js tier `stress`: lanes in parallel, then alone), STATIC-03 knows the `STRESS` area. `preload.cjs`: `--ui-loop` (fake mics loop; off by default). `helpers.js`: `room()` exported; `stop()` no longer waits 8 s for a server killed by a signal. Added `STRESS-PAGE-08` (console errors). Two thresholds corrected once, because they measured the wrong thing (§14.3): `STRESS-LOAD-03` compared memory with before the burst, but a process keeps memory it has used (it reuses it), so it now checks that a second overload needs ≤ 50 MB more; `STRESS-CAP-01` used the delay's p95, which lines waiting for overlapping speech on the other mic spread by seconds whatever the model, so it now uses the median, the model's busy time and completion. The generator avoids a sentence anyone said in the last minute (an exact repeat by another person made the duplicate check drop lines more than real speech would). |
 | 2026-10-31 | After the first stress run (§12): only steady loads run in parallel (the soak beside `MEET`, `MIC3`, `PAGE`, `NET`); `CONN`/`CONC`/`TUNE`/`DISK` moved to phase B, alone, because their bursts slowed the model in the middle of the 4-hour meeting. §14.5 updated with the confirmed bugs and new findings #7–#11. |
+| 2026-11-01 | A mic that sends no sound (`claude/project-thread-hnz8ty`): `UI-DEV-12`, `UI-DEV-13`, `__fake.silent` in `preload.cjs`, `HW-22`, a known limit for two Bluetooth headset mics on a Mac. |
 | 2026-11-01 | Findings tracked as GitHub issues #1–#13 (label `stress-test`): an Issue column in §14.5 and §14.6; §10.1 step 4 opens an issue for a product bug not fixed in the same branch. |
 
 ## 14. Stress plan: long meetings (production readiness)

@@ -58,6 +58,7 @@ let speakerTurn = 0; // bumps on every (re)open, so an older open that finishes 
 let speakerOpening = false;
 let speakerMeter = null; // moves the meters from the speaker's mics while not recording
 const speaking = new Set(); // mics on which someone is talking right now
+const hush = []; // per mic: { stream, since, heard, silent } to find a mic that is open but sends no sound
 let stage = null;
 let settings = null;
 let channel = null;
@@ -260,17 +261,46 @@ function renderLevels() {
   const open = capture ?? speaker;
   used().forEach((_, mic) => {
     const missing = Boolean(open && !open.slots[mic]?.stream);
+    const silent = Boolean(open && silentNow(open.slots[mic], mic));
     for (const el of levelEls(mic)) {
       const label = el.querySelector('.speaking');
-      label.textContent = missing ? 'not connected' : speaking.has(mic) ? 'speech' : 'listening';
+      label.textContent = missing ? 'not connected' : silent ? 'no sound' : speaking.has(mic) ? 'speech' : 'listening';
       label.classList.toggle('on', speaking.has(mic));
-      label.classList.toggle('off', missing);
+      label.classList.toggle('off', missing || silent);
       if (missing || !open) el.querySelector('.meter-fill').style.width = '0';
     }
   });
 }
 
+const NO_SIGNAL = 1e-5; // -100 dBFS: digital silence, below any real mic's own noise (lib/crosstalk.js)
+const SILENT_MS = 5000;
+
+/**
+ * A mic that is open but has sent only digital silence since it was opened: muted, or on a Mac a second Bluetooth
+ * headset, whose mic macOS stops when another Bluetooth headset's mic is in use. Warned about until sound arrives.
+ */
+function checkSilence(rms, mic) {
+  const stream = (capture ?? speaker)?.slots[mic]?.stream;
+  if (!stream) return;
+  let h = hush[mic];
+  if (h?.stream !== stream) h = hush[mic] = { stream, since: performance.now(), heard: false, silent: false };
+  if (h.heard) return;
+  if (rms >= NO_SIGNAL) {
+    h.heard = true;
+    if (h.silent) {
+      h.silent = false;
+      devicesChanged();
+    }
+  } else if (!h.silent && performance.now() - h.since > SILENT_MS) {
+    h.silent = true;
+    devicesChanged();
+  }
+}
+
+const silentNow = (slot, mic) => Boolean(slot?.stream && hush[mic]?.stream === slot.stream && hush[mic].silent);
+
 function showLevel(rms, mic) {
+  checkSilence(rms, mic);
   // Map roughly -60..0 dBFS onto 0..100 %.
   const pct = Math.max(0, Math.min(100, ((20 * Math.log10(rms + 1e-9) + 60) / 60) * 100));
   for (const el of levelEls(mic)) el.querySelector('.meter-fill').style.width = `${pct}%`;
@@ -299,6 +329,15 @@ function openMics() {
   });
 }
 
+const isBluetooth = (mic) => /bluetooth|airpods/i.test(picks[mic]?.label ?? '');
+
+function silentNote(name, mic) {
+  const note = `${name} sends no sound. Check that it is not muted.`;
+  const otherBluetooth = used().some((_, other) => other !== mic && isBluetooth(other));
+  if (!isBluetooth(mic) || !otherBluetooth) return note;
+  return `${note} A computer often takes sound from only one Bluetooth headset mic at a time (a Mac always does): connect one of them through its USB receiver or a cable instead.`;
+}
+
 /** Mics or the speaker missing, or mics recording at a low rate, as a warning; the rest goes on without them. */
 function devicesChanged() {
   renderLevels();
@@ -307,6 +346,7 @@ function devicesChanged() {
   (capture ?? speaker)?.slots.forEach((slot, mic) => {
     const name = multiMic() ? `${micName(mic)} (${picks[mic].label || 'microphone'})` : picks[mic].label || 'The microphone';
     if (!slot.stream) notes.push(`${name} is not connected; it joins again as soon as it is back.`);
+    else if (silentNow(slot, mic)) notes.push(silentNote(name, mic));
     else if (slot.rate && slot.rate < 16000) notes.push(`${name} records at ${slot.rate / 1000} kHz (older Bluetooth headsets do), so its text will be less accurate.`);
   });
   if (speakerPick && !speakerConnected()) notes.push(`The speaker (${speakerPick.label || 'speaker'}) is not connected; it plays again as soon as it is back.`);
