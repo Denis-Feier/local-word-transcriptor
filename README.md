@@ -70,7 +70,9 @@ Open **http://localhost:3000**, press **Start**, and allow the microphone.
 
 - Grey text with a cursor is the live guess while someone speaks.
 - After a short pause (~0.7 s) the sentence is transcribed again in full and turns final.
-- Final lines are saved as you go to `transcripts/<date-time>.txt`. **Clear** starts a new file.
+- Final lines are saved as you go to `transcripts/<date-time>.txt`. **Clear** starts a new file. A recording that
+  starts in the same second as another (a second tab, or the desktop app beside `npm start`) gets `<date-time>-2`,
+  so two recordings never share a file.
 
 ## Projector captions and live settings
 
@@ -118,6 +120,11 @@ transcript. Lines spoken at the same time are marked ⇄.
 - **Talking at the same time** works: each mic is transcribed separately, and both lines appear.
 - **A mic that disconnects** (Bluetooth out of range, battery, cable) shows *not connected*. The other keeps
   recording, and it joins again on its own once it is back.
+- **Two Bluetooth headsets on a Mac don't work together**: macOS takes sound from only one Bluetooth headset mic at a
+  time, so the other sends silence (usually the one connected first). The page shows *no sound* on its meter and a
+  warning. Connect one of them another way: many headsets come with a USB receiver (Logitech G435: the LIGHTSPEED
+  receiver; Jabra Evolve 65: the Jabra Link 360 dongle), or use a USB or jack mic. A Bluetooth mic plus any
+  non-Bluetooth mic works.
 - With *Save audio* on, each mic gets its own WAV (`<stamp>-mic1.wav`, `<stamp>-mic2.wav`).
 - `MAX_MICS` changes the limit of 2.
 

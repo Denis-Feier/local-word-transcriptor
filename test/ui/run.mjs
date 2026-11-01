@@ -219,6 +219,24 @@ app.whenReady().then(async () => {
     t.check('UI-DEV-09', 'a mic recording at 8 kHz gets a "less accurate" warning', s.error.includes('8 kHz'), s.error);
     await click('toggle');
 
+    // A second Bluetooth headset on a Mac: open, but macOS sends only digital silence from its mic.
+    s = await open();
+    await js(`(() => { window.__fake.devices.find((d) => d.deviceId === 'mic-a').label = 'Jabra Evolve 65 TE (Bluetooth)'; window.__fake.silent = ['mic-b']; navigator.mediaDevices.dispatchEvent(new Event('devicechange')); })()`);
+    await sleep(300);
+    await pick(0, 'mic-a');
+    await pick(1, 'mic-b');
+    await click('toggle');
+    s = await waitFor((x) => x.error.includes('sends no sound'), 12000);
+    t.check('UI-DEV-12', 'a mic that sends only digital silence: "no sound", a warning naming it, the one-Bluetooth-mic hint, Mic 1 keeps recording',
+      s.recording && s.levels[1].state === 'no sound' && s.levels[0].state !== 'no sound' && s.error.includes('Mic 2 (AirPods) sends no sound') && s.error.includes('one Bluetooth headset'), s.error);
+    await js(`window.__fake.silent = []`);
+    await unplug('mic-b');
+    await waitFor((x) => x.levels[1].state === 'not connected');
+    await plug('mic-b');
+    s = await waitFor((x) => x.levels[1].state !== 'not connected' && x.levels[1].state !== 'no sound' && !x.error, 8000);
+    t.check('UI-DEV-13', 'the same mic back with sound: the warning goes', s.levels[1].state !== 'no sound' && !s.error, s.error);
+    await click('toggle');
+
     // ---------- remembered choices ----------
     s = await open();
     await pick(0, 'mic-a');

@@ -1,17 +1,18 @@
-// Logic checks that need no speech model (seconds). The crosstalk and session checks use the Silero voice
-// detector (models/silero_vad.onnx) and are skipped without it. Case ids match TESTING.md.
+// Logic checks that need no speech model (seconds). The crosstalk, session and detector-reuse checks use the Silero
+// voice detector (models/silero_vad.onnx) and are skipped without it. Case ids match TESTING.md.
 //
 //   node test/unit.js
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { normalize, resultToText, contextTail } from '../lib/text.js';
 import { wordErrorRate, sharedWords } from '../lib/wer.js';
 import { TUNING, sanitizeTuning, applyTuning, tuningFrom } from '../lib/tuning.js';
 import { encodeWav, decodeWav, WavWriter } from '../lib/wav.js';
 import { Segmenter } from '../lib/segmenter.js';
-import { EnergyDetector, createDetector } from '../lib/vad.js';
+import { EnergyDetector, SileroDetector, VadPool, createDetector } from '../lib/vad.js';
 import { CrosstalkGate } from '../lib/crosstalk.js';
-import { Session } from '../lib/session.js';
+import { Session, fileStamp } from '../lib/session.js';
 import { config } from '../lib/config.js';
 import { SR, scratch, speakers, silence, concat, twoMics, sleep, suite } from './helpers.js';
 
@@ -56,6 +57,84 @@ const half = decodeWav(fs.readFileSync(wavFile)).samples.length;
 writer.append(tone.subarray(8000));
 writer.close();
 t.check('UNIT-WAV-02', 'a WAV being written is playable after every chunk', half === 8000 && decodeWav(fs.readFileSync(wavFile)).samples.length === SR);
+
+/**
+ * Pretends the disk has `free` bytes left for the WAV files opened while it is in place, as a real disk behaves: a write
+ * that does not fit is cut short without an error, and the next one fails with ENOSPC; rewriting bytes a file already
+ * has needs no room. open() counts those files still open; restore() puts the real fs back.
+ */
+function smallDisk(free) {
+  const real = { openSync: fs.openSync, writeSync: fs.writeSync, closeSync: fs.closeSync };
+  const sizes = new Map(); // fd -> bytes in the file (the WAV writer creates a new, empty file)
+  fs.openSync = (file, ...rest) => {
+    const fd = real.openSync(file, ...rest);
+    if (String(file).endsWith('.wav')) sizes.set(fd, 0);
+    return fd;
+  };
+  fs.writeSync = (fd, buf, offset, length, position) => {
+    if (!sizes.has(fd)) return real.writeSync(fd, buf, offset, length, position);
+    const size = sizes.get(fd);
+    const fits = Math.min(length, size + free - position);
+    if (fits <= 0) throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC', syscall: 'write' });
+    const n = real.writeSync(fd, buf, offset, fits, position);
+    const grown = Math.max(0, position + n - size);
+    free -= grown;
+    sizes.set(fd, size + grown);
+    return n;
+  };
+  fs.closeSync = (fd) => {
+    sizes.delete(fd);
+    real.closeSync(fd);
+  };
+  return { open: () => sizes.size, restore: () => Object.assign(fs, real) };
+}
+
+// The disk fills up (#1): room for the header and 12,345½ samples, so chunk 8 is cut short and then fails.
+let disk = smallDisk(44 + 2 * 12345 + 1);
+const fullWav = path.join(dir, 'full.wav');
+const filling = new WavWriter(fullWav);
+let full = null;
+let chunk = 0;
+try {
+  for (; chunk < 10; chunk++) filling.append(tone.subarray(0, 1600));
+} catch (err) {
+  full = err;
+}
+disk.restore();
+const kept = fs.readFileSync(fullWav).readUInt32LE(40) / 2;
+filling.append(tone.subarray(0, 1600)); // room again (Save audio ticked again): the file carries on
+filling.close();
+const grown = fs.readFileSync(fullWav);
+t.check('UNIT-WAV-03', 'a disk that fills up: the chunk that does not fit throws ENOSPC; the WAV keeps every whole sample written, header included, and carries on once there is room',
+  full?.code === 'ENOSPC' && chunk === 7 && kept === 12345 && grown.readUInt32LE(40) === 2 * (12345 + 1600) && grown.length === 44 + 2 * (12345 + 1600) && decodeWav(grown).samples.length === 12345 + 1600,
+  `${full?.code ?? 'no error'} on chunk ${chunk + 1}; the header kept ${kept} of the 12,345 samples that fit; then ${grown.readUInt32LE(40) / 2} samples in the header, ${(grown.length - 44) / 2} in the file`);
+disk = smallDisk(0);
+let refused = null;
+try {
+  new WavWriter(path.join(dir, 'none.wav')).close();
+} catch (err) {
+  refused = err;
+}
+const leftOpen = disk.open();
+disk.restore();
+let again = 'started';
+try {
+  new WavWriter(path.join(dir, 'none.wav')).close(); // room again, Save audio ticked again: a new WavWriter never overwrites
+} catch (err) {
+  again = err.code;
+}
+t.check('UNIT-WAV-04', 'a WAV started on a full disk: ENOSPC; the file is neither left open nor left behind, so it starts once there is room',
+  refused?.code === 'ENOSPC' && leftOpen === 0 && again === 'started', `${refused?.code ?? 'no error'}; ${leftOpen} file(s) left open; once there is room: ${again}`);
+const keptFile = path.join(dir, 'kept.wav');
+fs.writeFileSync(keptFile, encodeWav(tone));
+let overwrote = 'opened it';
+try {
+  new WavWriter(keptFile).close();
+} catch (err) {
+  overwrote = err.code;
+}
+t.check('UNIT-WAV-05', 'a WAV writer never overwrites a file: it refuses one that exists and leaves it as it was',
+  overwrote === 'EEXIST' && fs.readFileSync(keptFile).equals(encodeWav(tone)), `${overwrote}; the file has ${fs.statSync(keptFile).size} of ${encodeWav(tone).length} bytes`);
 
 // ---------- segmenter (loudness detector: deterministic) ----------
 const timing = { silenceMs: 700, preRollMs: 300, minSpeechMs: 250, maxSegmentSec: 20 };
@@ -125,6 +204,149 @@ t.check('UNIT-SESS-06', 'changing the mics (1 ↔ 2, 11 times) keeps every mic\'
 t.check('UNIT-SESS-07', 'after 11 mic changes each mic\'s sentence starts when it does without them',
   moved.starts.every((s, mic) => Math.abs(s - steady.starts[mic]) < 0.016),
   moved.starts.map((s, mic) => `mic ${mic + 1}: ${s?.toFixed(3)} s (${steady.starts[mic]?.toFixed(3)} s without)`).join(', '));
+
+// ---------- the disk fills up while saving audio (#1; loudness detector, stand-in model) ----------
+// Two mics: a sentence on mic 1 every 4 s for 24 s, room noise on mic 2. The WAVs have room for 8 s of both mics and
+// 1,000 bytes, so mic 1's write at 8.0 s is cut short and then fails.
+async function diskFills() {
+  const sent = [];
+  const out = scratch('full');
+  const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
+  const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null, transcribe: async () => ({ text: 'o propoziție', model: 'stub', ms: 1 }) };
+  const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
+  session.setOptions({ saveAudio: true });
+  const talk = concat(...Array.from({ length: 6 }, () => concat(quiet(1), loud(1.5), quiet(1.5))));
+  const noise = quiet(0.1);
+  const small = smallDisk(2 * 44 + 8 * 2 * 2 * SR + 1000);
+  let thrown = null;
+  try {
+    for (let i = 0; i < talk.length; i += 1600) {
+      const frame = new Float32Array(3200);
+      frame.set(talk.subarray(i, i + 1600));
+      frame.set(noise, 1600);
+      session.audio(frame, 2);
+    }
+  } catch (err) {
+    thrown = err;
+  }
+  small.restore();
+  session.flush();
+  await sleep(50);
+  session.close();
+  const wavs = fs.readdirSync(out).filter((f) => f.endsWith('.wav')).sort().map((f) => fs.readFileSync(path.join(out, f)));
+  fs.rmSync(out, { recursive: true, force: true });
+  const whole = (b) => b.length - 44 - ((b.length - 44) % 2);
+  return {
+    thrown,
+    errors: sent.filter((m) => m.type === 'error').map((m) => m.message),
+    finals: sent.filter((m) => m.type === 'final' && m.text),
+    secs: wavs.map((b) => b.readUInt32LE(40) / (2 * SR)),
+    playable: wavs.length === 2 && wavs.every((b) => b.readUInt32LE(40) === whole(b)),
+  };
+}
+const filled = await diskFills();
+const after = filled.finals.filter((f) => f.start > Math.max(...filled.secs)).length;
+t.check('UNIT-SESS-08', 'the disk fills up while saving two mics: audio() never throws, one "Could not save audio", sentences keep coming, both WAVs playable up to there',
+  !filled.thrown && filled.errors.length === 1 && filled.errors[0].startsWith('Could not save audio: ENOSPC') && filled.finals.length === 6 && after === 4
+    && filled.playable && filled.secs.every((s) => Math.abs(s - 8) < 0.1),
+  `${filled.thrown ? `audio() threw ${filled.thrown.code}; ` : ''}errors: ${filled.errors.join(' | ') || 'none'}; ${filled.finals.length} sentences, ${after} after the disk filled; WAVs ${filled.secs.map((s) => `${s.toFixed(2)} s`).join(', ')}${filled.playable ? '' : ', a header and its file differ'}`);
+
+// ---------- recordings that start in the same second (#2; loudness detector: deterministic) ----------
+// File names have whole seconds. Two tabs, or the desktop app and `npm start` (they share transcripts/), can start
+// in the same second; so can a Clear, and the clock going back an hour when summer time ends.
+/**
+ * A recording with Save audio on in the transcripts folder `out`: mic 1 says one sentence, transcribed as `said`;
+ * mic 2 hears only its noise. `sign` -1 inverts the audio, so two recordings never send the same samples.
+ */
+function recording(out, said, { sign = 1, mics = 2 } = {}) {
+  const sent = [];
+  const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
+  const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null, transcribe: async () => ({ text: said, model: 'stub', ms: 1 }) };
+  const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
+  session.setOptions({ saveAudio: true });
+  const audio = [concat(quiet(1.5), loud(1.5), quiet(1.5)), quiet(4.5)].slice(0, mics).map((a) => a.map((s) => sign * s));
+  return {
+    session,
+    said,
+    chunks: audio[0].length / 1600,
+    /** Send 100 ms of every mic, as the page does. */
+    send(c) {
+      const frame = new Float32Array(mics * 1600);
+      audio.forEach((a, mic) => frame.set(a.subarray(c * 1600, (c + 1) * 1600), mic * 1600));
+      session.audio(frame, mics);
+    },
+    /** What `mic` sent in chunks from..to, as the WAV it must be. */
+    wav: (mic, from = 0, to = Infinity) => encodeWav(audio[mic].subarray(from * 1600, to * 1600)),
+    files: (kind) => sent.filter((m) => m.type === 'file' && m.kind === kind).map((m) => path.resolve(m.path)),
+    errors: () => sent.filter((m) => m.type === 'error').map((m) => m.message),
+    async stop() {
+      session.flush();
+      await sleep(50);
+      session.close();
+    },
+  };
+}
+const read = (file) => (fs.existsSync(file) ? fs.readFileSync(file) : Buffer.alloc(0));
+const names = (files) => files.map((f) => path.basename(f)).join(', ');
+/** What is wrong with a recording's files: errors, WAVs not holding `wavs` (in the order opened), a .txt not holding its one line. */
+function wrongFiles(r, wavs) {
+  const audio = r.files('audio');
+  const text = r.files('text');
+  const lines = text.flatMap((f) => read(f).toString().split('\n').filter(Boolean));
+  return [
+    ...r.errors(),
+    ...(audio.length === wavs.length ? audio.filter((f, i) => !read(f).equals(wavs[i])).map((f) => `${path.basename(f)} does not hold its audio`) : [`${audio.length} WAVs, not ${wavs.length}`]),
+    ...(text.length === 1 && lines.length === 1 && lines[0].includes(r.said) ? [] : [`${text.length} .txt with ${JSON.stringify(lines)}`]),
+  ];
+}
+/** Wait, if needed, until a new second has started, so the steps that follow happen within one second. */
+const sameSecond = async () => Date.now() % 1000 > 800 && sleep(1005 - (Date.now() % 1000));
+
+// Two recordings start in the same second, then stream at once.
+let out = scratch('same-second');
+await sameSecond();
+const first = recording(out, 'prima înregistrare aici');
+const second = recording(out, 'a doua înregistrare acolo', { sign: -1 });
+for (let c = 0; c < first.chunks; c++) [first, second].forEach((r) => r.send(c));
+await Promise.all([first.stop(), second.stop()]);
+const filesOf = (r) => [...r.files('text'), ...r.files('audio')];
+const sharedFiles = filesOf(first).filter((f) => filesOf(second).includes(f));
+let wrong = [first, second].flatMap((r) => wrongFiles(r, [r.wav(0), r.wav(1)]));
+const base = (r) => path.basename(r.files('text')[0] ?? '', '.txt');
+t.check('UNIT-SESS-09', 'two recordings started in the same second get their own .txt and WAVs (<stamp>, <stamp>-2), each with only its own lines and audio',
+  !sharedFiles.length && !wrong.length && base(second) === `${base(first)}-2`,
+  sharedFiles.length ? `both write to ${names(sharedFiles)}` : [`${names(filesOf(first))} | ${names(filesOf(second))}`, ...wrong].join('; '));
+fs.rmSync(out, { recursive: true, force: true });
+
+// Clear in the same second the recording started: the new transcript must not reopen the first one's files.
+out = scratch('clear-same-second');
+await sameSecond();
+const cleared = recording(out, 'după ce am golit');
+cleared.send(0);
+cleared.session.reset(); // Clear
+for (let c = 1; c < cleared.chunks; c++) cleared.send(c);
+await cleared.stop();
+wrong = wrongFiles(cleared, [cleared.wav(0, 0, 1), cleared.wav(1, 0, 1), cleared.wav(0, 1), cleared.wav(1, 1)]); // mic 1, mic 2 before Clear, then after
+t.check('UNIT-SESS-10', 'Clear in the same second the recording started: new files, the first transcript\'s WAVs keep their audio',
+  !wrong.length, [names(filesOf(cleared)), ...wrong].join('; '));
+fs.rmSync(out, { recursive: true, force: true });
+
+// Audio of an earlier recording with the same name and no .txt (Save audio on, nothing said; the clock put back an
+// hour since, at the end of summer time): it must not be overwritten.
+out = scratch('earlier');
+await sameSecond();
+const stamp = fileStamp(new Date());
+const earlier = encodeWav(loud(1));
+fs.writeFileSync(path.join(out, `${stamp}.wav`), earlier);
+const later = recording(out, 'o înregistrare nouă', { mics: 1 });
+for (let c = 0; c < later.chunks; c++) later.send(c);
+await later.stop();
+wrong = wrongFiles(later, [later.wav(0)]);
+const untouched = read(path.join(out, `${stamp}.wav`)).equals(earlier) && !fs.existsSync(path.join(out, `${stamp}.txt`));
+t.check('UNIT-SESS-11', 'an earlier recording\'s audio with the same name is left as it was; the new one gets <stamp>-2',
+  untouched && !wrong.length && base(later) === `${stamp}-2`,
+  [`${stamp}.wav ${untouched ? 'untouched' : 'changed, or given a .txt'}; new: ${names(filesOf(later))}`, ...wrong].join('; '));
+fs.rmSync(out, { recursive: true, force: true });
 
 // ---------- crosstalk gate and two-mic session (need Silero) ----------
 const silero = fs.existsSync(config.vad.sileroModel);
@@ -219,6 +441,147 @@ if (!silero) {
     s.files.filter((f) => /-mic[12]\.wav$/.test(f)).length === 2 && /^\[\d\d:\d\d\] Mic [12]: /m.test(s.text)
       && one.files.some((f) => /\d\.wav$/.test(f)) && /^\[\d\d:\d\d\] o propoziție/m.test(one.text),
     `${s.files.join(', ')} | ${one.files.join(', ')}`);
+}
+
+// ---------- voice detectors are reused, not rebuilt (#4) ----------
+// A Silero detector holds ~3 MB of native memory that V8 does not see, so a dropped one stayed until V8 happened to
+// collect it. Detectors now go back to a pool (lib/vad.js) when a connection closes, the mics change or the threshold
+// changes. Without the fix every connection made 3 and every threshold change 2, and they stayed in memory.
+
+// The pool's rules, with stand-ins for sherpa-onnx's detectors.
+let collections = 0;
+const pool = new VadPool({ create: (model, threshold) => ({ threshold, resets: 0, reset() { this.resets++; } }), collect: () => collections++ });
+const [p1, p2] = [pool.acquire('m', 0.5), pool.acquire('m', 0.5)];
+pool.release(p1, 'm', 0.5);
+pool.release(p2, 'm', 0.5);
+const reused = pool.acquire('m', 0.5) === p2 && pool.acquire('m', 0.5) === p1 && pool.created === 2 && p1.resets === 1;
+[p1, p2].forEach((p) => pool.release(p, 'm', 0.5));
+const p3 = pool.acquire('m', 0.3); // the threshold changed: the 0.5 spares will not be wanted again
+const switched = p3.threshold === 0.3 && pool.idle.length === 0 && pool.dropped === 2 && collections === 1;
+const six = Array.from({ length: 6 }, () => pool.acquire('m', 0.3));
+six.forEach((p) => pool.release(p, 'm', 0.3));
+const capped = pool.idle.length === 4 && pool.dropped === 4 && pool.idle.every((d, i) => d.vad === six[i + 2]);
+t.check('UNIT-VAD-01', 'detector pool: a detector given back is reset and handed out again; spares with another threshold, or beyond 4, are dropped and collected',
+  reused && switched && capped, `reused ${reused}, threshold change ${switched}, at most 4 spares ${capped}; ${pool.created} made, ${pool.dropped} dropped, ${collections} collections`);
+
+/** Counts the Silero detectors sherpa-onnx makes while it is in place, and how many of them are still in memory. */
+const sherpa = createRequire(import.meta.url)('sherpa-onnx-node');
+function vadCounter() {
+  const Real = sherpa.Vad;
+  let freed = 0;
+  const registry = new FinalizationRegistry(() => freed++);
+  const counter = { made: 0, registry, alive: () => counter.made - freed, restore: () => (sherpa.Vad = Real) };
+  sherpa.Vad = class extends Real {
+    constructor(...args) {
+      super(...args);
+      counter.made++;
+      registry.register(this);
+    }
+  };
+  return counter;
+}
+const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null, transcribe: async () => ({ text: 'o propoziție', model: 'stub', ms: 1 }) };
+/** Two mics' audio from `from` to `to` seconds, in the page's 1600-sample chunks; mics: 1 sends mic 1 only. */
+function stream(session, [m1, m2], from, to, mics = 2) {
+  for (let i = Math.round(from * SR); i + 1600 <= Math.round(to * SR); i += 1600) {
+    const frame = new Float32Array(mics * 1600);
+    frame.set(m1.subarray(i, i + 1600));
+    if (mics === 2) frame.set(m2.subarray(i, i + 1600), 1600);
+    session.audio(frame, mics);
+  }
+}
+const turns = () => new Promise((resolve) => setTimeout(resolve, 20)); // a few turns of the event loop: collections run
+
+const VAD_IDS = ['UNIT-VAD-02', 'UNIT-VAD-03', 'UNIT-VAD-04', 'UNIT-VAD-05'];
+if (!silero) {
+  for (const id of VAD_IDS) t.skip(id, 'Silero detectors reused', `no ${config.vad.sileroModel} (npm run setup)`);
+} else {
+  const talk = twoMics(concat(silence(0.3), A), concat(silence(0.6), B), { bleedDb: 12 });
+  const model = config.vad.sileroModel;
+
+  // A detector given back mid-sentence and handed out again decides exactly as a new one.
+  const own = new VadPool({ collect: () => {} });
+  const decide = (d, x) => Array.from({ length: Math.floor(x.length / 512) }, (_, i) => (d.isSpeech(x.subarray(i * 512, (i + 1) * 512)) ? 1 : 0)).join('');
+  const fresh = new SileroDetector({ model, threshold: 0.5, pool: own });
+  const first = decide(fresh, lead(A));
+  decide(fresh, B.subarray(0, 2 * SR)); // stops in the middle of B's sentence
+  const midSentence = fresh.vad.isDetected();
+  const handle = fresh.vad;
+  fresh.release();
+  const again = new SileroDetector({ model, threshold: 0.5, pool: own });
+  const second = decide(again, lead(A));
+  const other = new SileroDetector({ model, threshold: 0.3, pool: own });
+  const spoken = first.split('').filter((c) => c === '1').length;
+  t.check('UNIT-VAD-02', 'a Silero detector given back mid-sentence comes back as good as new: the same detector, the same decision on every frame',
+    midSentence && again.vad === handle && second === first && spoken > 50 && other.vad !== handle && own.created === 2,
+    `${midSentence ? 'given back mid-sentence' : 'given back in silence'}, ${again.vad === handle ? 'the same detector came back' : 'another detector came back'}; ${spoken} of ${first.length} frames speech, ${[...first].filter((c, i) => c !== second[i]).length} decided differently; another threshold got ${other.vad === handle ? 'the same one' : 'its own'}`);
+
+  // 20 connections, each closed mid-sentence, then the mics changed 1 ↔ 2 twenty times in one session.
+  const conf = { ...structuredClone(config), transcriptsDir: scratch('pool') };
+  let count = vadCounter();
+  const heard = new Set(); // what each connection's detectors decided, as the page sees it
+  for (let k = 0; k < 20; k++) {
+    const sent = [];
+    const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
+    stream(session, talk, 0, 1);
+    session.close();
+    heard.add(JSON.stringify(sent.filter((m) => m.type === 'vad')));
+  }
+  const byConnections = count.made;
+  const session = new Session({ send: () => {}, transcriber: stub, config: conf });
+  for (let k = 0; k < 21; k++) stream(session, talk, 0.2 * k, 0.2 * (k + 1), k % 2 ? 1 : 2);
+  session.close();
+  count.restore();
+  t.check('UNIT-VAD-03', 'connections and mic changes reuse the Silero detectors: 20 connections with two mics and 20 mic changes make at most 2',
+    count.made <= 2 && heard.size === 1, `${byConnections} made by 20 connections, ${count.made - byConnections} by 20 mic changes (without the fix 60 and 33); ${heard.size === 1 ? 'every connection heard the same' : `${heard.size} different results`}`);
+
+  // 20 threshold changes (random slider values) while two mics talk, a message at a time as from the page.
+  count = vadCounter();
+  const tuned = new Session({ send: () => {}, transcriber: stub, config: conf });
+  stream(tuned, talk, 0, 0.4);
+  await turns();
+  const rss0 = process.memoryUsage().rss;
+  let seed = 11;
+  const values = Array.from({ length: 20 }, () => Number((0.1 + 0.05 * ((seed = (seed * 16807) % 2147483647) % 17)).toFixed(2)));
+  for (const [k, vadThreshold] of values.entries()) {
+    applyTuning(conf, { vadThreshold });
+    tuned.retune();
+    stream(tuned, talk, 0.4 + 0.1 * k, 0.5 + 0.1 * k);
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  await turns();
+  const last = values.at(-1);
+  const applied = tuned.mics.every(({ segmenter: { detector } }) => detector.threshold === last && detector.vad.config.sileroVad.threshold === last);
+  const alive = count.alive();
+  const grown = Math.round((process.memoryUsage().rss - rss0) / 1048576);
+  tuned.close();
+  count.restore();
+  t.check('UNIT-VAD-04', 'threshold changes free the detectors they replace: after 20 changes with two mics at most 4 are in memory, the last threshold applied',
+    alive <= 4 && applied, `${count.made} made, ${alive} still in memory (without the fix all of them); last threshold ${last} ${applied ? 'applied on both mics' : 'not applied'}; process memory ${grown >= 0 ? '+' : ''}${grown} MB`);
+
+  // A closed session gives its detectors back and takes no more audio (the page keeps sending while Ctrl+C waits for
+  // the last sentence); before, saving that audio reopened the WAVs and wiped the recording.
+  const out = scratch('closed');
+  const closing = new Session({ send: () => {}, transcriber: stub, config: { ...conf, transcriptsDir: out } });
+  closing.setOptions({ saveAudio: true });
+  stream(closing, talk, 0, 2);
+  closing.close();
+  const given = closing.mics.every(({ segmenter }) => segmenter.detector.vad === null);
+  const wavs = () => fs.readdirSync(out).filter((f) => f.endsWith('.wav')).sort().map((f) => (fs.statSync(path.join(out, f)).size - 44) / (2 * SR));
+  const before = wavs();
+  let thrown = null;
+  try {
+    stream(closing, talk, 2, 3);
+  } catch (err) {
+    thrown = err;
+  }
+  const after = wavs();
+  await turns(); // the last sentence is still being saved
+  fs.rmSync(out, { recursive: true, force: true });
+  fs.rmSync(conf.transcriptsDir, { recursive: true, force: true });
+  t.check('UNIT-VAD-05', 'a closed session gives its detectors back and ignores audio sent after: the WAVs keep the recording',
+    given && !thrown && before.length === 2 && before.every((s) => s === 2) && after.join() === before.join(),
+    `detectors ${given ? 'given back' : 'kept'}; ${thrown ? `audio after close threw ${thrown.message}; ` : ''}WAVs ${before.map((s) => `${s} s`).join(', ')} at close, ${after.map((s) => `${s} s`).join(', ')} after 1 s more audio`);
 }
 
 fs.rmSync(dir, { recursive: true, force: true });
