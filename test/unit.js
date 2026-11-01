@@ -116,7 +116,14 @@ try {
 }
 const leftOpen = disk.open();
 disk.restore();
-t.check('UNIT-WAV-04', 'a WAV started on a full disk: ENOSPC, and the file is not left open', refused?.code === 'ENOSPC' && leftOpen === 0, `${refused?.code ?? 'no error'}; ${leftOpen} file(s) left open`);
+let again = 'started';
+try {
+  new WavWriter(path.join(dir, 'none.wav')).close(); // room again, Save audio ticked again: a new WavWriter never overwrites
+} catch (err) {
+  again = err.code;
+}
+t.check('UNIT-WAV-04', 'a WAV started on a full disk: ENOSPC; the file is neither left open nor left behind, so it starts once there is room',
+  refused?.code === 'ENOSPC' && leftOpen === 0 && again === 'started', `${refused?.code ?? 'no error'}; ${leftOpen} file(s) left open; once there is room: ${again}`);
 const keptFile = path.join(dir, 'kept.wav');
 fs.writeFileSync(keptFile, encodeWav(tone));
 let overwrote = 'opened it';

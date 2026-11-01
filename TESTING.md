@@ -204,7 +204,7 @@ screenshots or logs; `hardware` = a person with real devices (§9); `planned` = 
 | `UNIT-WAV-01` | WAV encode/decode | 16-bit round trip within 1e-4 | auto |
 | `UNIT-WAV-02` | WAV being written | playable with the right length after every chunk | auto |
 | `UNIT-WAV-03` | The disk fills up while a WAV is written ([#1](https://github.com/Denis-Feier/local-word-transcriptor/issues/1)): a stand-in disk with room for 12,345½ samples, which cuts the last write short and fails the next one, as a real disk does | the chunk that does not fit throws `ENOSPC`; the header counts the 12,345 whole samples written; once there is room again the file carries on (without the fix: the error a chunk late, the header 12,800 samples) | auto |
-| `UNIT-WAV-04` | A WAV started on a full disk | `ENOSPC`, and the file is not left open (without the fix it is) | auto |
+| `UNIT-WAV-04` | A WAV started on a full disk, then started again once there is room (Save audio ticked again) | `ENOSPC`; the file is not left open (without the fix for #1 it is) nor left behind, so the second try starts it (with `'wx'` (`UNIT-WAV-05`) a file left behind would be refused: `EEXIST`) | auto |
 | `UNIT-WAV-05` | A WAV writer given a file that exists ([#2](https://github.com/Denis-Feier/local-word-transcriptor/issues/2)) | refused (`EEXIST`), the file byte for byte as it was (without the fix: cut to its 44-byte header) | auto |
 | `UNIT-SEG-01` | Segmenting speech (loudness detector) | one segment, start ≈ speech − 0.3 s, end ≈ speech + 0.2 s (±0.15 s) | auto |
 | `UNIT-SEG-02` | Clicks | 0.1 s of sound is discarded | auto |
@@ -600,6 +600,7 @@ Add one row per run on `main` (§3 step 5), newest first. Feature-branch runs go
 | 2026-11-01 | Mic changes no longer shift the clock ([#8](https://github.com/Denis-Feier/local-word-transcriptor/issues/8), `fix/layout-change-clock-drift`): `UNIT-SESS-06/07` (fail without the fix: 308 ms behind after 11 changes); §14.5 #10 fixed; §11 clock row. |
 | 2026-11-01 | A full disk no longer stops the server ([#1](https://github.com/Denis-Feier/local-word-transcriptor/issues/1), `claude/project-thread-4onwzk`): `UNIT-WAV-03/04` and `UNIT-SESS-08` (a stand-in disk that fills, every platform) and `PROT-ERR-03` (a real server whose files cannot grow past 300 blocks; `startServer({ maxFileBlocks })`), each failing without the fix; §14.5 #1 fixed, #12 new (the transcript on a full disk, [#19](https://github.com/Denis-Feier/local-word-transcriptor/issues/19)); §11 files row. |
 | 2026-11-01 | Recordings started in the same second no longer share files ([#2](https://github.com/Denis-Feier/local-word-transcriptor/issues/2), `claude/project-thread-107v8s`): `UNIT-SESS-09…11`, `UNIT-WAV-05` (all four fail without the fix; `UNIT-SESS-08…10` and `UNIT-WAV-03` on the branch, renumbered when it was merged after the fix for #1, which took those ids); §14.5 #2 fixed; §11 files row, with the one gap (two servers at the same instant). |
+| 2026-11-01 | The two file fixes together (#2's merged after #1's): a WAV that could not be started on a full disk is removed again, because `'wx'` would refuse it when Save audio is ticked again (`EEXIST`), so that mic would not be saved again in that transcript; `UNIT-WAV-04` now also starts it a second time. |
 
 ## 14. Stress plan: long meetings (production readiness)
 
