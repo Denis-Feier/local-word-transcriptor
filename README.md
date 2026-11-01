@@ -113,8 +113,9 @@ mic's colour: Mic 1 blue, Mic 2 orange, on the page, in the projector view and a
 transcript. Lines spoken at the same time are marked ⇄.
 
 - **Each mic also hears the other person**, just less clearly. The app keeps those words only on the mic that heard
-  them best, so they don't show up twice. If the same words still reach both mics, the less clear copy is dropped
-  once both are transcribed.
+  them best, so they don't show up twice: a sentence another mic heard clearly better is not transcribed, and if the
+  same words still reach both mics, the less clear copy is dropped once both are transcribed. A few words of a
+  sentence that reach the other mic never cancel the whole sentence.
 - **Talking at the same time** works: each mic is transcribed separately, and both lines appear.
 - **A mic that disconnects** (Bluetooth out of range, battery, cable) shows *not connected*. The other keeps
   recording, and it joins again on its own once it is back.

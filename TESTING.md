@@ -213,6 +213,8 @@ screenshots or logs; `hardware` = a person with real devices (§9); `planned` = 
 | `UNIT-GATE-03` | Both talk at once (12 dB bleed) | each mic keeps > 30 % of its speech frames | auto |
 | `UNIT-GATE-04` | A mic sending digital silence (not connected) | its noise level is not learned; mic 1's is | auto |
 | `UNIT-GATE-05` | Speech from the very first moment, louder mic 2 | mic 2 keeps < 8 frames — **known limit** (§10.2) | auto |
+| `UNIT-GATE-06` | Words leaking onto the other mic ([#3](https://github.com/Denis-Feier/local-word-transcriptor/issues/3)): as `UNIT-GATE-01`, but the detector notices each start of speech after a pause 16 frames (0.5 s) late, as Silero does when someone starts softly (up to 24 frames on the FLEURS Romanian recordings) | mic 2 keeps < 8 frames; mic 1 keeps > 50 % of its speech (without the fix mic 2 keeps 87, mic 1 69 of 164: the start was learned as background noise) | auto |
+| `UNIT-GATE-07` | A starts 0.5 s after Start, so each mic's noise must come from the few quiet frames before; mic 2 is 12 dB louder and noisier (−50 dBFS) | mic 2 keeps < 8 frames, mic 1 > 50 % of its speech (without the fix mic 2 keeps 9) | auto |
 | `UNIT-SESS-01` | Same words on both mics at once (stand-in model) | only mic 1 (the clearer) keeps the sentence | auto |
 | `UNIT-SESS-02` | Different words at the same time | both mics keep their sentences | auto |
 | `UNIT-SESS-03` | Sentence ids with two mics | unique and rising in the order speech started | auto |
@@ -220,6 +222,9 @@ screenshots or logs; `hardware` = a person with real devices (§9); `planned` = 
 | `UNIT-SESS-05` | Files | two mics: `<stamp>-mic1.wav`, `-mic2.wav`, lines `[mm:ss] Mic N: …`; one mic: `<stamp>.wav`, plain lines | auto |
 | `UNIT-SESS-06` | Changing the mics keeps the clock ([#8](https://github.com/Denis-Feier/local-word-transcriptor/issues/8)): 1 ↔ 2 mics 11 times in 1600-sample chunks, 448 samples unframed at each change (loudness detector, no Silero needed) | after every chunk, on every mic, frames × 512 + unframed samples = the audio sent (0 samples behind; without the fix 4,928) | auto |
 | `UNIT-SESS-07` | A sentence after those 11 changes, on mic 1 and on mic 2 | starts within half a frame of the same run with two mics from the start (without the fix 0.32 s early) | auto |
+| `UNIT-SESS-11` | Words leaking onto the other mic ([#3](https://github.com/Denis-Feier/local-word-transcriptor/issues/3)): only A talks (12 dB bleed, mic 2 150 ms late), but mic 2 hears 0.8 s of A only 6 dB less clearly, and the stand-in model writes other words there | nothing on mic 2; A's sentence on mic 1 (without the fix a line on mic 2) | auto |
+| `UNIT-SESS-12` | A whole sentence dropped as a duplicate ([#3](https://github.com/Denis-Feier/local-word-transcriptor/issues/3)): mic 2 hears 1.5 s of A's sentence 4 dB more clearly, and the stand-in model writes 3 of its words there | A's whole sentence stays on mic 1 (without the fix it was dropped and only the 3 words were left, on mic 2) | auto |
+| `UNIT-SESS-13` | Mic 2 set to None and back (2 → 1 → 2 mics), A talks the moment it is back; mic 2 12 dB louder and noisier (−50 dBFS) | A's sentence only on mic 1 (without the fix on mic 2: the gate had to learn each mic's noise again) | auto |
 
 ### 7.3 Server and protocol (`test/protocol.js`)
 
@@ -508,7 +513,7 @@ output (the `[mics]` lines every 10 s), and what went wrong with the time it hap
    never paste recording transcripts into an issue (§2).
 
 Useful tools: `DEBUG=1` server logs (`[final #n mic m] … ms: text`, `dropped, another mic heard it more clearly`,
-`[mics] …`); `sample <pid> 3` (macOS) for a server that stops answering; the gate can be traced offline by running
+`not transcribed, another mic heard this speech N dB more clearly`, `[mics] …`); `sample <pid> 3` (macOS) for a server that stops answering; the gate can be traced offline by running
 `Segmenter.analyze()` + `CrosstalkGate.push()` over two WAVs (see `gate()` in `test/unit.js`).
 
 ### 10.2 Known limits (tracked, do not fail a run)
@@ -545,7 +550,7 @@ Useful tools: `DEBUG=1` server logs (`[final #n mic m] … ms: text`, `dropped, 
 | Several recording clients, many reconnects, many setting changes | `STRESS-CONC-*`, `STRESS-CONN-*`, `STRESS-TUNE-01` | — |
 | Projector view, caption window | `UI-PROJ-*`, `VIS-03` | full screen, idle hiding of controls |
 | Two mics: choosing, labels, colours | `UI-MIC-*`, `UI-TX-02…05`, `UI-CFG-01/02`, `VIS-01` | — |
-| Two mics: crosstalk gate and duplicates | `UNIT-GATE-*`, `UNIT-SESS-*`, `SCN-01…08`, `SMOKE-02` | `KNOWN-01`, real rooms (§9) |
+| Two mics: crosstalk gate and duplicates | `UNIT-GATE-*`, `UNIT-SESS-*`, `SCN-01…08`, `SMOKE-02`; over hours: `STRESS-MEET-01/02/11` | `KNOWN-01`, real rooms (§9); the whole-sentence check (a sentence another mic heard more clearly, by more than half of *Mic separation*, is not transcribed) is tuned in simulated rooms only, and can also drop a short reply said softly while the other person talks |
 | Two mics: devices coming and going, 8 kHz | `UI-DEV-*`, `SCN-06` | real Bluetooth (`HW-06`) |
 | Speaker in the room: choosing, volume, coming and going, meters before Start | `UI-SPK-*`, `DESK-09`, `VIS-07` | real speakers, delay and howling only in §9 (`HW-14…20`); auto gain on the speaker (§10.2) |
 | Desktop app | `STATIC-02`, CI smoke, `DESK-*` | packaged app UI not automated |
@@ -584,6 +589,7 @@ Add one row per run on `main` (§3 step 5), newest first. Feature-branch runs go
 | 2026-10-31 | After the first stress run (§12): only steady loads run in parallel (the soak beside `MEET`, `MIC3`, `PAGE`, `NET`); `CONN`/`CONC`/`TUNE`/`DISK` moved to phase B, alone, because their bursts slowed the model in the middle of the 4-hour meeting. §14.5 updated with the confirmed bugs and new findings #7–#11. |
 | 2026-11-01 | Findings tracked as GitHub issues #1–#13 (label `stress-test`): an Issue column in §14.5 and §14.6; §10.1 step 4 opens an issue for a product bug not fixed in the same branch. |
 | 2026-11-01 | Mic changes no longer shift the clock ([#8](https://github.com/Denis-Feier/local-word-transcriptor/issues/8), `fix/layout-change-clock-drift`): `UNIT-SESS-06/07` (fail without the fix: 308 ms behind after 11 changes); §14.5 #10 fixed; §11 clock row. |
+| 2026-11-01 | Words leaking onto the other mic, and whole sentences dropped as duplicates ([#3](https://github.com/Denis-Feier/local-word-transcriptor/issues/3), `claude/project-thread-180ypf`): `UNIT-GATE-06/07`, `UNIT-SESS-11…13`, all failing without the fix; `gate()` in `unit.js` can make the detector notice speech late, `run()` can change the number of mics and answer per mic. §14.5 #7 fixed (`STRESS-MEET-01/02/11` to be confirmed on main once all the bug fixes are merged, `SCN-04` with real recordings); §11 gate row; `not transcribed, another mic heard this speech …` in §10.1's `DEBUG` logs. |
 
 ## 14. Stress plan: long meetings (production readiness)
 
