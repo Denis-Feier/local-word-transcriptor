@@ -99,6 +99,7 @@ This is the maintenance loop. Do all steps; skipping one is how the plan goes st
 | `orukeet` (740 MB) | `PROT-MODEL-01/02` (model switching) | `npm run setup -- orukeet` |
 | Electron (dev dependency) | UI suite | `npm install` |
 | `canary-1b-v2`, `whisper-large-v3-turbo` + `brew install whisper-cpp`, `parakeet-tdt-0.6b-v3`, `jackrabbit-110m-ro` + `brew install uv` | full tier, one model per engine | `npm run setup -- <id>`; missing ones are skipped and reported |
+| macOS 26 or later with the Xcode command-line tools (`swiftc`) | `ENG-03`: Apple's on-device dictation (`apple-dictation`), by hand | `xcode-select --install`; `npm run setup -- apple-dictation` compiles `native/apple-speech/` into `models/apple-speech-server` (~11 s) |
 | two real recordings (16 kHz mono WAV, ≥ 60 s of speech each) | optional real-voice scenarios | the user's *Save audio* recordings in `transcripts/` |
 | macOS `say` with the Romanian voice *Ioana* | stress tier: the voiced sentence bank (§14.2); without it the fixture's three sentences | built into macOS (System Settings → Accessibility → Spoken Content → System voice → Manage voices) |
 | `hdiutil` (macOS), ~3 GB free disk | stress tier: `STRESS-DISK-01`; WAVs of hours-long meetings | built in |
@@ -443,6 +444,7 @@ mics). The page uses neither Node nor the preload, so this difference matters on
 | TOOL-03 | `npm run benchmark -- --models parakeet-ro-110m --limit 20 --name test-run` (downloads FLEURS ~500 MB the first time; ask before) | WER in the published range; delete `benchmarks/results/test-run*` afterwards |
 | ENG-01 | Kill `whisper-server` while a Whisper model is loaded and a server is running | the server restarts it (at most 3 times a minute) and keeps transcribing |
 | ENG-02 | Switch models several times while recording | old model unloaded (memory returns), no lost sentences beyond the switch moment |
+| ENG-03 | Apple's on-device dictation, on macOS 26: `npm run setup -- apple-dictation`, then `node test/scenarios.js --model apple-dictation` (one heavy suite: not beside another) | the helper builds and the server gets ready with it; `SCN-01…06` give each mic only its own speaker, as on the other engines (Apple's model leaves words out, so the text is shorter); `KNOWN-01` as a known limit. Not in the full tier: it needs macOS 26 and the Xcode tools, and nobody should pick it for Romanian (FLEURS 17.6 % WER) |
 | DOCK-01 | `docker compose up -d --build` (slow; ask before) | page on `127.0.0.1:3000`, Whisper marked "slow in Docker", stop saves the last sentence |
 
 ### 8.4 Performance — `review`
@@ -553,7 +555,7 @@ Useful tools: `DEBUG=1` server logs (`[final #n mic m] … ms: text`, `dropped, 
 | Segmenting (pause, lead-in, clicks, long speech) | `UNIT-SEG-01…05` | — |
 | Live settings and their saving | `UNIT-TUNE-*`, `PROT-TUNE-*`, `UI-SET-01` | — |
 | Models: list, choose, remember, download prompt | `PROT-WS-02`, `PROT-MODEL-*`, `UI-MODEL-01` | real download path (network) only via `SMOKE-01` in CI |
-| Engines (transcribe.cpp, whisper.cpp, sherpa-onnx, NeMo) | `SCN-ENGINE`, `PROT-MODEL-*` | `STRESS-ENG-*` (stress tier only) |
+| Engines (transcribe.cpp, whisper.cpp, sherpa-onnx, NeMo, Apple speech) | `SCN-ENGINE`, `PROT-MODEL-*`; Apple speech: `ENG-03` (by hand, macOS 26) | `STRESS-ENG-*` (stress tier only); Apple speech is not in the full tier, and the desktop app does not offer it (the installers ship no helper) |
 | Transcript and audio files | `UNIT-WAV-*`, `UNIT-SESS-05`, `PROT-MIC-04…06`, `PROT-RUN-02`; a full disk: `UNIT-SESS-08`, `PROT-ERR-03` (every run), `STRESS-DISK-01` (a real one, macOS); names never shared or reused (same second, Clear, the clock going back) and no file overwritten: `UNIT-SESS-09…11`, `UNIT-WAV-05`; hours-long files, a drive unplugged, two recordings at once: `STRESS-MEET-09`, `STRESS-DISK-02`, `STRESS-CONC-02` | two servers claiming one name at the same instant: guarded by the exclusive create (`'wx'`), not reproducible in a test |
 | Reconnect and buffering | `UI-NET-01`, `STRESS-NET-*` (repeated server kills; the 5-minute buffer limit) | what to keep beyond the buffer: decision D3 (§14.6) |
 | Long meetings (hours): attribution, accuracy, clock, files and memory over time | `SCN-07/08` (10 minutes), `STRESS-MEET-*`, `STRESS-MIC3-*`, `STRESS-SOAK-*` (§14); the clock across mic changes: `UNIT-SESS-06/07` | real rooms over hours: `HW-11`, `HW-21` |
@@ -607,6 +609,7 @@ Add one row per run on `main` (§3 step 5), newest first. Feature-branch runs go
 | 2026-11-01 | Recordings started in the same second no longer share files ([#2](https://github.com/Denis-Feier/local-word-transcriptor/issues/2), `claude/project-thread-107v8s`): `UNIT-SESS-09…11`, `UNIT-WAV-05` (all four fail without the fix; `UNIT-SESS-08…10` and `UNIT-WAV-03` on the branch, renumbered when it was merged after the fix for #1, which took those ids); §14.5 #2 fixed; §11 files row, with the one gap (two servers at the same instant). |
 | 2026-11-01 | The two file fixes together (#2's merged after #1's): a WAV that could not be started on a full disk is removed again, because `'wx'` would refuse it when Save audio is ticked again (`EEXIST`), so that mic would not be saved again in that transcript; `UNIT-WAV-04` now also starts it a second time. |
 | 2026-11-01 | Voice detectors are reused, not rebuilt ([#4](https://github.com/Denis-Feier/local-word-transcriptor/issues/4), `claude/project-thread-0ri8vs`): `UNIT-VAD-01…05`, a new topic (all five fail without the fix: 60 detectors made by 20 connections, every replaced one still in memory after threshold changes, the WAVs wiped by audio after close). Found on the way and fixed: audio reaching a closed session reopened its WAVs and wiped them (`UNIT-VAD-05`). §14.5 #6 fixed; §11 voice-detection and reconnect rows. |
+| 2026-11-01 | Apple's on-device dictation ([#20](https://github.com/Denis-Feier/local-word-transcriptor/pull/20), `claude/project-thread-rqwlch`): `apple-dictation`, a menu model on macOS 26, never the default, offered only where its Swift helper is built or can be built (from source, not in the desktop app). `ENG-03` (by hand: build the helper, the scenarios on it), §4 and §11 rows. Not one of the full tier's engines: it needs macOS 26 and the Xcode tools, and its Romanian is far weaker (FLEURS 17.6 % WER, Canary 6.6 %). |
 
 ## 14. Stress plan: long meetings (production readiness)
 

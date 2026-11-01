@@ -27,8 +27,8 @@ the app once, then System Settings → Privacy & Security → **Open Anyway** (m
 calling the download "damaged".
 
 The desktop app runs the models that need no extra software: NVIDIA Canary (the default and most accurate) and
-the Parakeet family. The Whisper models and Jackrabbit appear only in the developer setup below, where
-whisper.cpp and Python are installed.
+the Parakeet family. The Whisper models, Jackrabbit and Apple's dictation appear only in the developer setup
+below, where whisper.cpp, Python and the Xcode command-line tools are installed.
 
 **Building the installers:** `npm run dist:mac` on a Mac, `npm run dist:win` on Windows; the result is in
 `dist/`. Or let GitHub build both: Actions tab → *Desktop app* → **Run workflow**, or push a version tag
@@ -193,11 +193,13 @@ Pick a model from the **Model** menu. Models that aren't downloaded yet show the
 | Parakeet Romanian 110M (Politehnica)⁴ | 10.6 % | 0–5.4 % | 236–279× | 135 MB | GPU, transcribe.cpp |
 | Whisper small Romanian (readerbench)³ | 10.9 % | 4.8–10.8 % | 30–39× | 260 MB | GPU, whisper.cpp |
 | NVIDIA Parakeet TDT 0.6B v3 | 12.4 % | 3.6–18.9 % | 40–53× | 487 MB | CPU, sherpa-onnx |
+| Apple on-device dictation (macOS 26)⁵ | none (17.6 % on FLEURS here) | not measured | 59× on FLEURS | kept by macOS | Mac only, Apple's Speech framework |
 
 ¹ FLEURS Romanian (read, close-mic speech). Canary, Whisper large-v3 and Parakeet v3: NVIDIA's paper (arXiv 2509.14128, Table 11); the others: their authors or the Handy benchmarks. Lower is better. A room with several speakers will score worse for every model.
 ² Measured on this M5 with `npm run compare` on three synthetic Romanian clips (~100 words; differences of one word are noise). Speed = seconds of audio per second of compute; all are fast enough for live use.
 ³ Hugging Face Whisper fine-tunes with no ready-made whisper.cpp version. The app downloads the original weights, converts them to whisper.cpp's format with `lib/convert-whisper.js` (a JavaScript port of whisper.cpp's converter, no Python needed), quantizes them to q8_0 with `whisper-quantize`, and keeps only the result. BuzzASR downloads 3.1 GB, readerbench 967 MB. The readerbench model runs without the previous-text context, which made it invent words.
 ⁴ Outputs lowercase text without punctuation (that is how it was trained), but its words are very accurate and it is by far the fastest.
+⁵ Apple's own recognizer (the macOS 26 `DictationTranscriber`), fully on the Mac; macOS downloads and keeps the Romanian model itself. Not the default and not recommended for Romanian: on FLEURS Romanian (883 sentences, `npm run benchmark`) it scored 17.6 % WER against 6.6 % for Canary, because it leaves words out and adds no punctuation (Apple's newer `SpeechTranscriber` has no Romanian). The menu offers it on macOS 26 or later, from source with the Xcode command-line tools: choosing it, or `npm run setup -- apple-dictation`, compiles a small Swift helper (`native/apple-speech/`, ~11 s). The desktop app does not ship the helper.
 
 ### Where models come from and where they live
 
@@ -213,6 +215,7 @@ Everything is stored in the project's `models/` folder (ignored by git; about 7 
 | Parakeet Ultra | Hugging Face `handy-computer/parakeet-ultra-gguf` | `models/parakeet-ultra-Q8_0.gguf` |
 | Parakeet Romanian 110M | Hugging Face `jonah1024/Sped_ParakeetRomanian_110M_TDT-CTC_gguf` | `models/Sped_ParakeetRomanian_110M_TDT-CTC-Q8_0.gguf` |
 | Parakeet TDT v3 | GitHub release of `k2-fsa/sherpa-onnx` | `models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/` |
+| Apple on-device dictation | built on this Mac from `native/apple-speech/` (nothing downloaded); macOS keeps the language model | `models/apple-speech-server` |
 | Silero voice detector | GitHub release of `k2-fsa/sherpa-onnx` | `models/silero_vad.onnx` |
 
 Each model is downloaded once and then used from disk; nothing is fetched while transcribing, so the app works offline. To remove a model, delete its file or folder; the menu then offers it for download again. Download from the command line with `npm run setup -- <id>`, all at once with `npm run setup -- --all`, and see the list with `npm run setup -- --list`.
