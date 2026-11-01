@@ -49,7 +49,7 @@ console.log(`✔ ${SILERO_VAD.label}`);
 
 // 3. speech models
 const named = args.filter((a) => !a.startsWith('--'));
-const ids = args.includes('--all') ? MODELS.map((m) => m.id) : named.length ? named : [config.defaultModel];
+const ids = args.includes('--all') ? MODELS.filter((m) => !m.cloud).map((m) => m.id) : named.length ? named : [config.defaultModel];
 for (const id of ids) {
   const model = findModel(id);
   if (!model) {
@@ -68,7 +68,7 @@ for (const id of ids) {
       continue;
     }
   }
-  console.log(`✔ ${model.label}: ${path.relative(ROOT, modelPath(model))}`);
+  console.log(`✔ ${model.label}: ${model.cloud ? 'cloud, with ELEVENLABS_API_KEY' : path.relative(ROOT, modelPath(model))}`);
 }
 
 if (!process.exitCode) console.log(`\nReady. Run: npm start   and open http://localhost:${config.port}\n`);

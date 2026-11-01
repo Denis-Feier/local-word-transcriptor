@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import WebSocket from 'ws';
-import { ROOT, SR, startServer, speakers, sleep, suite } from './helpers.js';
+import { ROOT, SR, startServer, speakers, sleep, suite, fakeElevenLabs } from './helpers.js';
 
 const t = suite('protocol');
 const { A, B } = speakers();
@@ -92,7 +92,19 @@ try {
   await sleep(300);
   t.check('PROT-WS-04', 'unknown model ids, installing an installed model and unknown messages change nothing',
     c.last('status').state === 'ready' && c.last('status').model === 'parakeet-ro-110m' && !c.msgs.some((m) => m.type === 'error'));
+  t.check('PROT-CLOUD-01', 'without an ElevenLabs key the cloud model is not offered', !c.last('models').models.some((m) => m.cloud || m.engine === 'elevenlabs'),
+    c.last('models').models.map((m) => m.id).join(', '));
   await c.close();
+
+  // ---------- only the app's own page may connect ----------
+  const tryOrigin = (origin) => new Promise((resolve) => {
+    const ws = new WebSocket(server.ws('?mics'), { origin });
+    ws.once('open', () => (ws.close(), resolve('open')));
+    ws.once('error', (err) => resolve(err.message));
+  });
+  const [foreign, own] = await Promise.all([tryOrigin('https://example.com'), tryOrigin(server.url)]);
+  t.check('PROT-WS-05', 'a WebSocket from another website is refused; the page\'s own origin and clients without one connect',
+    /401/.test(foreign) && own === 'open', `example.com: ${foreign}; own page: ${own}`);
 
   // ---------- mic layouts, Stop, files ----------
   c = await connect(server);
@@ -233,6 +245,31 @@ try {
 } finally {
   await s4.stop();
   fs.rmSync(savedSettings, { force: true });
+}
+
+// ---------- the ElevenLabs cloud model, against the stand-in (never the real service, TESTING.md §2) ----------
+const fake = await fakeElevenLabs();
+const s5 = await startServer({ model: 'elevenlabs-scribe-v2', env: { ELEVENLABS_API_KEY: 'test-key', ELEVENLABS_BASE_URL: fake.url } });
+try {
+  const c = await connect(s5);
+  await c.audio([A, null], 10);
+  c.json({ type: 'flush' });
+  await waitFor(() => c.finals().length && fake.connections.every((x) => !x.audio.length || x.committed), 10000);
+  await sleep(300);
+  const offered = c.last('models').models.find((m) => m.id === 'elevenlabs-scribe-v2');
+  const sentences = fake.connections.filter((x) => x.audio.length);
+  const partials = c.msgs.filter((m) => m.type === 'partial');
+  const lines = fs.readdirSync(s5.transcripts).filter((f) => f.endsWith('.txt')).flatMap((f) => fs.readFileSync(path.join(s5.transcripts, f), 'utf8').split('\n').filter(Boolean));
+  t.check('PROT-CLOUD-02', 'with a key: the cloud model is offered and marked cloud, every sentence is streamed to ElevenLabs once, its texts are the live and final lines and the transcript',
+    c.last('status').state === 'ready' && offered?.cloud && offered.installed && sentences.length >= 1 && sentences.every((x) => x.commits === 1 && x.key === 'test-key')
+      && c.finals().length === sentences.length && c.finals().every((f) => /^propoziția \d+$/.test(f.text) && f.model === 'elevenlabs-scribe-v2')
+      && partials.length > 0 && partials.every((p) => /^ascult \d+$/.test(p.text)) && lines.length === sentences.length,
+    `${c.last('status').state}; ${sentences.length} sentence connection(s), ${(sentences.reduce((n, x) => n + x.audio.length, 0) / SR).toFixed(1)} s of 10 s sent; finals ${c.finals().map((f) => f.text).join(' | ')}; ${partials.length} live texts; ${lines.length} transcript lines`);
+  t.check('PROT-CLOUD-03', 'the API key never reaches the page', !JSON.stringify(c.msgs).includes('test-key'));
+  await c.close();
+} finally {
+  await s5.stop();
+  await fake.close();
 }
 
 async function waitFor(cond, ms = 15000) {

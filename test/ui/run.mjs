@@ -6,7 +6,7 @@
 import { app, BrowserWindow, session, nativeTheme } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT, SR, FIXTURE, startServer, speakers, loadWav, saveWav, scratch, sleep, suite } from '../helpers.js';
+import { ROOT, SR, FIXTURE, startServer, speakers, loadWav, saveWav, scratch, sleep, suite, fakeElevenLabs } from '../helpers.js';
 
 const OUT = process.env.UI_OUT ?? scratch('ui');
 fs.mkdirSync(OUT, { recursive: true });
@@ -29,6 +29,7 @@ app.whenReady().then(async () => {
   };
   let server = await serve();
   const scratchDirs = [];
+  const fakes = [];
   const pageErrors = [];
   const newWindow = (width = 1100, height = 900) => {
     const w = new BrowserWindow({
@@ -388,12 +389,35 @@ app.whenReady().then(async () => {
     s = await state();
     t.check('UI-MODEL-01', 'a model not downloaded shows its size and asks before downloading; No changes nothing',
       s.models.some((m) => /\(download .+\)/.test(m)) && asked.length === 1 && /Download Orukeet/.test(asked[0]) && s.status === 'ready', asked[0]);
+    // The ElevenLabs cloud model, against the stand-in (never the real service): the page says the audio leaves.
+    const fake = await fakeElevenLabs();
+    fakes.push(fake);
+    const cloudServer = await serve({ model: 'elevenlabs-scribe-v2', env: { ELEVENLABS_API_KEY: 'test-key', ELEVENLABS_BASE_URL: fake.url } });
+    s = await open(cloudServer);
+    const privacy = () => js(`(() => { const p = document.getElementById('privacy'); return { text: p.textContent, color: getComputedStyle(p).color, cloud: p.classList.contains('cloud') }; })()`);
+    const onCloud = await privacy();
+    await click('toggle');
+    s = await waitFor((x) => x.lines.some((l) => l.partial && /^ascult \d+$/.test(l.text)), 15000);
+    const live = s.lines.filter((l) => l.partial).map((l) => l.text);
+    s = await waitFor((x) => finals(x).length >= 1, 20000);
+    await shot('cloud');
+    await click('toggle');
+    const cloudFinals = finals(s).map((l) => l.text);
+    await js(`(() => { const m = document.getElementById('model'); m.value = 'parakeet-ro-110m'; m.dispatchEvent(new Event('change')); })()`);
+    for (let n = 0; n < 75 && (await privacy()).cloud; n++) await sleep(200); // the server confirms the switch
+    s = await waitFor((x) => x.status === 'ready', 15000);
+    const onLocal = await privacy();
+    t.check('UI-MODEL-02', 'the ElevenLabs model (with a key): in the menu; the footer says the speech goes to the internet, in the warning colour; live and final lines are its texts; a local model brings the local note back',
+      s.models.some((m) => /ElevenLabs/.test(m)) && onCloud.cloud && /internet/.test(onCloud.text) && onCloud.color !== onLocal.color
+        && live.length > 0 && cloudFinals.length > 0 && cloudFinals.every((x) => /^propoziția \d+$/.test(x)) && !onLocal.cloud && /No audio leaves/.test(onLocal.text),
+      `footer: "${onCloud.text}"; live ${live.join(' | ')}; finals ${cloudFinals.join(' | ')}; after switching: "${onLocal.text}"`);
 
     t.check('UI-LOAD-02', 'no errors in the page console', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
   } catch (err) {
     t.check('UI-RUN', 'the UI run finished', false, err.stack);
   } finally {
     for (const s of servers) await s.stop().catch(() => {});
+    for (const fake of fakes) await fake.close();
     for (const dir of [SPEAKERS, ...scratchDirs]) fs.rmSync(dir, { recursive: true, force: true });
     console.log(`\nscreenshots: ${OUT}`);
     t.finish();

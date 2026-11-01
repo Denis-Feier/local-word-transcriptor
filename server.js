@@ -63,6 +63,7 @@ const modelsMessage = () => ({
     size: m.size,
     download: m.downloadSize ?? m.size,
     notes: config.inDocker && m.dockerSlow ? `${m.notes} Too slow for live use in Docker: no GPU there.` : m.notes,
+    cloud: Boolean(m.cloud), // the page says that the audio leaves the computer
     installed: isInstalled(m),
     progress: progress.get(m.id) ?? null,
   })),
@@ -124,7 +125,18 @@ const server = http.createServer((req, res) => {
   });
 });
 
-const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 1 << 20 });
+// Only this server's own page may connect. Any website open in the browser could otherwise reach ws://localhost,
+// switch to the cloud model and so send the room's audio off the computer. Tools that are not browsers send no Origin.
+const sameOrigin = ({ origin, req }) => {
+  if (!origin) return true;
+  try {
+    return new URL(origin).host === req.headers.host;
+  } catch {
+    return false;
+  }
+};
+
+const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 1 << 20, verifyClient: sameOrigin });
 
 wss.on('connection', (ws, req) => {
   // The page connects to /ws?mics and prefixes every audio frame with its number of mics;

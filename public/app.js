@@ -29,6 +29,7 @@ const els = {
   file: $('file'),
   projector: $('projector'),
   openSettings: $('openSettings'),
+  privacy: $('privacy'),
 };
 
 const MAX_BACKLOG = 3000; // 100 ms chunks = 5 minutes of audio kept while the server is unreachable
@@ -36,6 +37,7 @@ const CHANNEL = 'transcriber-captions'; // main window -> caption windows (/?dis
 const DISPLAY_ONLY = new URLSearchParams(location.search).has('display');
 const NONE = 'none'; // "no second mic" in the mic menus, "no speaker" in the speaker menu
 const OVERLAP_SEC = 0.5; // lines from two mics overlapping at least this long were spoken at the same time
+const LOCAL_NOTE = els.privacy.textContent;
 
 let ws = null;
 let generation = 0; // bumps on every (re)connect; server segment ids restart per connection
@@ -643,6 +645,10 @@ function render() {
   }
   const active = models.find((m) => m.id === engine.model);
   els.modelNotes.textContent = active ? `${active.notes} (${active.engine})` : '';
+  els.privacy.textContent = active?.cloud
+    ? `${active.label} sends the speech to the internet for transcription. The other models run on this computer.`
+    : LOCAL_NOTE;
+  els.privacy.classList.toggle('cloud', Boolean(active?.cloud));
 
   const usable = engine.state === 'ready' || engine.state === 'loading';
   els.toggle.disabled = !recording && !usable;

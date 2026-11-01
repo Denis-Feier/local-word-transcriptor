@@ -1,7 +1,9 @@
 # Live Transcriber (Romanian)
 
 Put the laptop on the table, press Start, and get Romanian text live as people talk.
-Everything runs locally on the computer. No API keys, no accounts, and no audio leaves the machine.
+Everything runs locally on the computer. No accounts, and no audio leaves the machine. The one exception is optional:
+with your own ElevenLabs API key, a cloud model appears in the menu, and it sends the speech to ElevenLabs
+(*ElevenLabs, in the cloud*, below).
 
 ## Desktop app (no technical setup)
 
@@ -27,7 +29,7 @@ the app once, then System Settings → Privacy & Security → **Open Anyway** (m
 calling the download "damaged".
 
 The desktop app runs the models that need no extra software: NVIDIA Canary (the default and most accurate) and
-the Parakeet family. The Whisper models, the NeMo models (Jackrabbit, the UPB FastConformer) and Apple's dictation appear only in the developer setup
+the Parakeet family, plus ElevenLabs' cloud model once you add your API key (*ElevenLabs, in the cloud*, below). The Whisper models, the NeMo models (Jackrabbit, the UPB FastConformer) and Apple's dictation appear only in the developer setup
 below, where whisper.cpp, Python and the Xcode command-line tools are installed.
 
 **Building the installers:** `npm run dist:mac` on a Mac, `npm run dist:win` on Windows; the result is in
@@ -195,6 +197,7 @@ Pick a model from the **Model** menu. Models that aren't downloaded yet show the
 | Whisper small Romanian (readerbench)³ | 10.9 % | 4.8–10.8 % | 30–39× | 260 MB | GPU, whisper.cpp |
 | NVIDIA Parakeet TDT 0.6B v3 | 12.4 % | 3.6–18.9 % | 40–53× | 487 MB | CPU, sherpa-onnx |
 | Apple on-device dictation (macOS 26)⁵ | none (17.6 % on FLEURS here) | not measured | 59× on FLEURS | kept by macOS | Mac only, Apple's Speech framework |
+| ElevenLabs Scribe v2 Realtime (cloud)⁷ | ≤ 5 % (ElevenLabs' group for Romanian) | not measured | ~150 ms per sentence (ElevenLabs) | nothing | ElevenLabs' servers, over the internet |
 
 ¹ FLEURS Romanian (read, close-mic speech). Canary, Whisper large-v3 and Parakeet v3: NVIDIA's paper (arXiv 2509.14128, Table 11); the others: their authors or the Handy benchmarks. Lower is better. A room with several speakers will score worse for every model.
 ² Measured on this M5 with `npm run compare` on three synthetic Romanian clips (~100 words; differences of one word are noise). Speed = seconds of audio per second of compute; all are fast enough for live use.
@@ -202,6 +205,41 @@ Pick a model from the **Model** menu. Models that aren't downloaded yet show the
 ⁴ Outputs lowercase text without punctuation (that is how it was trained), but its words are very accurate and it is by far the fastest.
 ⁵ Apple's own recognizer (the macOS 26 `DictationTranscriber`), fully on the Mac; macOS downloads and keeps the Romanian model itself. Not the default and not recommended for Romanian: on FLEURS Romanian (883 sentences, `npm run benchmark`) it scored 17.6 % WER against 6.6 % for Canary, because it leaves words out and adds no punctuation (Apple's newer `SpeechTranscriber` has no Romanian). The menu offers it on macOS 26 or later, from source with the Xcode command-line tools: choosing it, or `npm run setup -- apple-dictation`, compiles a small Swift helper (`native/apple-speech/`, ~11 s). The desktop app does not ship the helper.
 ⁶ `upb-nlp/ro-fast-conformer`, a NeMo FastConformer fine-tuned on Romanian (MDPI Applied Sciences 16(4):1928). The authors report 3.0 % WER on their own test sets, but no FLEURS score; on FLEURS Romanian (883 sentences, `npm run benchmark`) it scored 11.6 % here, about the same as Parakeet Romanian 110M, against 6.6 % for Canary. Some of that is numbers written as words ("o sută" for "100"): without the sentences that have digits, 8.0 % against Canary's 6.2 %. Like Parakeet Romanian 110M it writes lowercase without punctuation. Its RNNT decoder is used; its CTC head scored 13.7 %. Needs Python (installed with it, like Jackrabbit), so the desktop app does not offer it.
+⁷ The only model that sends audio off the computer, and only offered when you add your own API key. See *ElevenLabs, in the cloud*.
+
+### ElevenLabs, in the cloud
+
+ElevenLabs' realtime speech-to-text (Scribe v2 Realtime, `scribe_v2_realtime`) can be picked like any other model.
+It is never the default, and it is offered only when there is an ElevenLabs API key:
+
+1. Create a key at [elevenlabs.io](https://elevenlabs.io/app/settings/api-keys) (access to *Speech to Text* is enough).
+2. From source: `cp .env.example .env.local`, then put the key after `ELEVENLABS_API_KEY=`. Git ignores `.env.local`.
+   Desktop app: create `.env.local` with that line in the app's data folder (Mac:
+   `~/Library/Application Support/Live Transcriber/`, Windows: `%APPDATA%\Live Transcriber\`).
+   A real `ELEVENLABS_API_KEY` environment variable works too.
+3. Restart. *ElevenLabs Scribe v2 Realtime (cloud)* is now in the **Model** menu. Choosing it checks the key at once
+   (a wrong key turns the status red and says so).
+
+What to know before using it:
+
+- **The speech leaves the computer.** Each sentence goes to ElevenLabs over an encrypted connection; the page's footer
+  turns amber while this model is picked. ElevenLabs keeps request history by default (its zero-retention mode is for
+  enterprise accounts). Use a local model for anything that must stay on the computer.
+- **It costs money.** ElevenLabs bills each second of audio it receives: $0.39 an hour of audio for Scribe v2 Realtime
+  (November 2026). Only speech is sent: the app's own voice detector decides when someone is talking, and silence,
+  coughs and the pause after a sentence are not sent.
+- **How it works.** Each sentence gets its own realtime connection, opened when someone starts talking. The audio
+  streams while they speak, the grey live text is ElevenLabs' own, and when the pause ends the sentence the app asks for
+  the final text (about 150 ms, plus the network). The end of the transcript so far goes with each sentence as context.
+  With two mics each mic streams on its own, and the mic separation works as with the local models.
+- **Network trouble.** A sentence whose connection fails is sent once more, whole; if that fails too, the page shows
+  ElevenLabs' reason (no credits left, wrong key, no internet) and the next sentence tries again. Tick **Save audio** if
+  you might want to transcribe a meeting again later with a local model.
+- **Not measured here.** ElevenLabs puts Romanian in its best group (≤ 5 % WER); `npm run benchmark` and
+  `npm run compare` leave it out unless you name it (`--models elevenlabs-scribe-v2`), because that sends the audio and
+  bills for it. The tests use a stand-in server and never reach ElevenLabs.
+- Another region (data residency): `ELEVENLABS_BASE_URL=https://api.eu.residency.elevenlabs.io` (or `api.us`,
+  `api.in.residency`, `api.sg.residency`).
 
 ### Where models come from and where they live
 
@@ -219,6 +257,7 @@ Everything is stored in the project's `models/` folder (ignored by git; about 7 
 | FastConformer Romanian 114M | Hugging Face `upb-nlp/ro-fast-conformer` | `models/ro-fast-conformer/` |
 | Parakeet TDT v3 | GitHub release of `k2-fsa/sherpa-onnx` | `models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/` |
 | Apple on-device dictation | built on this Mac from `native/apple-speech/` (nothing downloaded); macOS keeps the language model | `models/apple-speech-server` |
+| ElevenLabs Scribe v2 Realtime | ElevenLabs' servers, with your API key (nothing downloaded) | nothing; the key in `.env.local` |
 | Silero voice detector | GitHub release of `k2-fsa/sherpa-onnx` | `models/silero_vad.onnx` |
 
 Each model is downloaded once and then used from disk; nothing is fetched while transcribing, so the app works offline. To remove a model, delete its file or folder; the menu then offers it for download again. Download from the command line with `npm run setup -- <id>`, all at once with `npm run setup -- --all`, and see the list with `npm run setup -- --list`.
@@ -227,7 +266,7 @@ Licenses: Whisper, BuzzASR: MIT. readerbench, Parakeet Romanian 110M: Apache-2.0
 
 Not included, as of October 2026:
 - **Meta Seamless M4T v2** (8.9 %): only available as PyTorch weights (~9 GB), so it would need a Python runtime; non-commercial license; less accurate than Canary.
-- **Cloud services** such as ElevenLabs Scribe (claims ~3 %): need an API key and send the audio off the machine.
+- **Other cloud services**: need an API key and send the audio off the machine, like ElevenLabs (which is included, as an option).
 - **Qwen3-ASR** (20–44 %) and **NVIDIA Nemotron streaming** (26–32 %): much worse on Romanian. **Meta Omnilingual**: its strong variant is a 7B model with no Mac runtime.
 - **Voxtral, Phi-4, Granite Speech, Kyutai, Cohere Transcribe**: no Romanian.
 
@@ -236,7 +275,8 @@ Not included, as of October 2026:
 Published benchmarks are read speech recorded close to the mic. The only reliable test is your room, your voices, your vocabulary:
 
 1. Tick **Save audio** in the page and record a real conversation (10–30 min is plenty). The audio is saved as `transcripts/<date-time>.wav`.
-2. Run every downloaded model over exactly the same utterances:
+2. Run every downloaded model over exactly the same utterances (the ElevenLabs cloud model only with
+   `--models elevenlabs-scribe-v2`, since it sends the recording to ElevenLabs and bills for it):
    ```bash
    npm run compare -- transcripts/2026-10-29_21-00-43.wav
    ```
@@ -276,13 +316,13 @@ mics → AudioWorklet ─WS─▶  Silero VAD + Segmenter per mic        ──�
 | `public/app.js` | UI: models, mic and speaker choice, live and final lines (coloured per mic), wake lock, reconnect buffering |
 | `public/stage.js` | Projector view: large centred captions, display preferences, full screen; also the caption window (`/?display`) |
 | `public/settings.js` | Settings panel: live speech-detection sliders (`lib/tuning.js` on the server) and projector display options |
-| `server.js` | Static files, WebSocket, model downloads and switching |
+| `server.js` | Static files, WebSocket (only from its own page), model downloads and switching |
 | `lib/vad.js` | Speech detectors: Silero (neural, default) and a loudness fallback |
 | `lib/segmenter.js` | Turns detector frames into utterances: pre-roll, pause timeout, splits monologues longer than 20 s at the quietest point |
-| `lib/session.js` | One browser tab: a segmenter per mic, schedules live guesses and finals, drops a sentence another mic heard more clearly, writes transcript/audio files |
+| `lib/session.js` | One browser tab: a segmenter per mic, schedules live guesses and finals (or streams each sentence to a streaming model), drops a sentence another mic heard more clearly, writes transcript/audio files |
 | `lib/crosstalk.js` | With several mics: decides which mic each moment of speech belongs to, by clarity above each mic's own noise |
 | `lib/transcriber.js` | Owns the active model, serialises requests, switches models, restarts a crashed model |
-| `lib/engines/*.js` | One adapter per runtime: whisper.cpp, transcribe.cpp, sherpa-onnx, Python/NeMo. `sidecar.js` is the shared logic for models served by a separate process |
+| `lib/engines/*.js` | One adapter per runtime: whisper.cpp, transcribe.cpp, sherpa-onnx, Python/NeMo, Apple speech, ElevenLabs (`elevenlabs.js`: a realtime connection per sentence). `sidecar.js` is the shared logic for models served by a separate process |
 | `python/nemo_server.py` | Small local HTTP server that runs NeMo models (Jackrabbit, the UPB FastConformer) for the Node app; its environment lives in `python/.venv` |
 | `lib/models.js` | Model catalogue, download, unpack, and conversion of Whisper fine-tunes (`lib/convert-whisper.js`) |
 | `lib/text.js` | Fixes ş/ţ → ș/ț, removes `[Muzică]` tags, drops Whisper's known silence hallucinations ("Mulțumim pentru vizionare!") |
@@ -302,6 +342,8 @@ Live guesses refresh every 0.5 s, or less often for slow models (twice the model
 
 The speech-detection values (`VAD_THRESHOLD`, `VAD_SILENCE_MS`, `VAD_MAX_SEGMENT_SEC`, `PARTIAL_EVERY_SEC`, `CROSSTALK_DB`) can also be changed live in **Settings**, which overrides them until *Reset to defaults*.
 
+Any of these can also go in `.env.local` (git ignores it; see `.env.example`), one `NAME=value` per line. Real environment variables win.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `PORT` | `3000` | Web UI port |
@@ -317,6 +359,9 @@ The speech-detection values (`VAD_THRESHOLD`, `VAD_SILENCE_MS`, `VAD_MAX_SEGMENT
 | `INITIAL_PROMPT` | empty | Whisper only: names or jargon to prime the first sentence, e.g. `INITIAL_PROMPT="Ședința cu Andrei și Mihaela despre Kubernetes."` Later sentences use the previous text as context automatically |
 | `THREADS` | `4` | CPU threads for the models |
 | `DEBUG` | unset | `DEBUG=1` prints model logs and per-sentence timings |
+| `ELEVENLABS_API_KEY` | unset | Your ElevenLabs key: offers the cloud model, which sends the speech to ElevenLabs (*ElevenLabs, in the cloud*) |
+| `ELEVENLABS_BASE_URL` | ElevenLabs' main API | Another ElevenLabs region, e.g. `https://api.eu.residency.elevenlabs.io` |
+| `ENV_FILE` | `.env.local` | The file these variables are also read from (the desktop app: `.env.local` in its data folder) |
 
 ## Tests
 

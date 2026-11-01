@@ -12,19 +12,21 @@ const TEST = process.env.LT_TEST === '1'; // automated checks: no microphone pro
 
 if (!app.requestSingleInstanceLock()) app.quit(); // a second launch just focuses the first window
 
-// Packaged: models and settings in the app's data folder, transcripts in Documents where people find them.
-// From source: the repository's folders, shared with `npm start`.
+// Packaged: models, settings and API keys (.env.local) in the app's data folder, transcripts in Documents where
+// people find them. From source: the repository's folders, shared with `npm start`.
 const userData = app.getPath('userData');
 const paths = app.isPackaged
   ? {
       models: path.join(userData, 'models'),
       settings: path.join(userData, 'settings.json'),
+      env: path.join(userData, '.env.local'),
       transcripts: path.join(app.getPath('documents'), 'Live Transcriber'),
       logs: path.join(userData, 'logs'),
     }
   : {
       models: path.join(ROOT, 'models'),
       settings: path.join(ROOT, '.settings.json'),
+      env: path.join(ROOT, '.env.local'),
       transcripts: path.join(ROOT, 'transcripts'),
       logs: path.join(userData, 'logs'),
     };
@@ -62,6 +64,7 @@ async function startServer() {
       PORT: String(port),
       MODELS_DIR: process.env.MODELS_DIR ?? paths.models,
       SETTINGS_FILE: process.env.SETTINGS_FILE ?? paths.settings,
+      ENV_FILE: process.env.ENV_FILE ?? paths.env,
       TRANSCRIPTS_DIR: process.env.TRANSCRIPTS_DIR ?? paths.transcripts,
       AUTO_INSTALL: '1', // first run downloads the default model with a progress bar in the page
     },

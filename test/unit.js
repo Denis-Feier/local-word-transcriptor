@@ -13,9 +13,10 @@ import { Segmenter } from '../lib/segmenter.js';
 import { EnergyDetector, SileroDetector, VadPool, createDetector } from '../lib/vad.js';
 import { CrosstalkGate } from '../lib/crosstalk.js';
 import { Session, fileStamp } from '../lib/session.js';
+import { Transcriber } from '../lib/transcriber.js';
 import { config, ROOT } from '../lib/config.js';
 import { MODELS } from '../lib/models.js';
-import { SR, scratch, speakers, silence, concat, twoMics, sleep, suite } from './helpers.js';
+import { SR, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs } from './helpers.js';
 
 const t = suite('unit');
 
@@ -358,6 +359,120 @@ t.check('UNIT-SESS-11', 'an earlier recording\'s audio with the same name is lef
   untouched && !wrong.length && base(later) === `${stamp}-2`,
   [`${stamp}.wav ${untouched ? 'untouched' : 'changed, or given a .txt'}; new: ${names(filesOf(later))}`, ...wrong].join('; '));
 fs.rmSync(out, { recursive: true, force: true });
+
+// ---------- the ElevenLabs cloud model, against a stand-in (never the real service, TESTING.md §2) ----------
+// Seeded noise makes every 512-sample frame different, so the stand-in's audio can be found in what was streamed.
+let seed = 11;
+const noisy = (x) => x.map((v) => v + 0.0003 * (((seed = (seed * 16807) % 2147483647) / 2147483647) * 2 - 1));
+const pcm16 = (x) => Int16Array.from(x, (v) => Math.round(Math.max(-1, Math.min(1, v)) * 32767));
+/** Where a connection's audio is in the input: [from, to) in samples, or null when it is not one piece of it. */
+function piece(input, audio) {
+  for (let at = 0; audio.length && at + audio.length <= input.length; at += 512) {
+    if (audio.every((v, i) => v === input[at + i])) return [at, at + audio.length];
+  }
+  return null;
+}
+/**
+ * One mic on the ElevenLabs model through the real Transcriber and Session (loudness detector), streamed in 100 ms
+ * chunks; after each chunk the stand-in answers what was committed. close: end with session.close() and drain().
+ */
+async function cloud(audio, fakeOptions = {}, { close = false } = {}) {
+  const fake = await fakeElevenLabs(fakeOptions);
+  const keep = { ...config.elevenlabs };
+  Object.assign(config.elevenlabs, { apiKey: 'test-key', baseUrl: fake.url }); // models.js looks for the key here
+  const out = scratch('cloud');
+  const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
+  const transcriber = new Transcriber(conf);
+  await transcriber.select('elevenlabs-scribe-v2');
+  const sent = [];
+  const session = new Session({ send: (m) => sent.push(m), transcriber, config: conf });
+  for (let i = 0; i < audio.length; i += 1600) {
+    session.audio(audio.subarray(i, i + 1600));
+    await sleep(1);
+    for (let n = 0; transcriber.pending && n < 1000; n++) await sleep(1);
+  }
+  if (close) session.close();
+  else session.flush();
+  await transcriber.drain(5000);
+  await sleep(50);
+  const text = fs.readdirSync(out).filter((f) => f.endsWith('.txt')).map((f) => fs.readFileSync(path.join(out, f), 'utf8')).join('');
+  session.close();
+  await transcriber.shutdown();
+  await fake.close();
+  Object.assign(config.elevenlabs, keep);
+  fs.rmSync(out, { recursive: true, force: true });
+  const input = pcm16(audio);
+  const sentences = fake.connections.filter((c) => c.audio.length);
+  return {
+    state: transcriber.state,
+    fake,
+    text,
+    probe: fake.connections[0],
+    sentences,
+    pieces: sentences.map((c) => piece(input, c.audio)),
+    finals: sent.filter((m) => m.type === 'final' && m.text),
+    partials: sent.filter((m) => m.type === 'partial'),
+    errors: sent.filter((m) => m.type === 'error').map((m) => m.message),
+  };
+}
+const secs = (n) => `${(n / SR).toFixed(2)} s`;
+const span = (p) => (p ? `${secs(p[0])}–${secs(p[1])}` : 'not a piece of the input');
+const apart = (pieces) => pieces.every((p, i) => p && (i === 0 || p[0] >= pieces[i - 1][1]));
+
+let c = await cloud(noisy(concat(quiet(1), loud(2.5), quiet(1.5), loud(2), quiet(1.5))));
+const q = c.probe?.query ?? {};
+t.check('UNIT-CLOUD-01', 'choosing the model starts one ElevenLabs session to check the key, with the realtime settings, and sends it no audio',
+  c.state === 'ready' && c.probe.key === 'test-key' && q.model_id === 'scribe_v2_realtime' && q.audio_format === 'pcm_16000' && q.commit_strategy === 'manual' && q.language_code === 'ro'
+    && c.probe.audio.length === 0 && c.probe.closed,
+  `${c.state}; ${JSON.stringify(q)}; ${c.probe?.audio.length} samples`);
+const keyFake = await fakeElevenLabs();
+const keep = config.elevenlabs.apiKey;
+config.elevenlabs.apiKey = 'wrong-key';
+const wrongKey = new Transcriber({ ...structuredClone(config), elevenlabs: { apiKey: 'wrong-key', baseUrl: keyFake.url } });
+const logError = console.error;
+console.error = () => {}; // the transcriber logs the error with ✖, which reads like a failed test in the run's output
+await wrongKey.select('elevenlabs-scribe-v2');
+console.error = logError;
+config.elevenlabs.apiKey = keep;
+await keyFake.close();
+t.check('UNIT-CLOUD-01', 'a wrong key: the model is in error, saying ElevenLabs refused the key and where it goes',
+  wrongKey.state === 'error' && /Invalid API key/.test(wrongKey.message) && /\.env\.local/.test(wrongKey.message), wrongKey.message);
+
+// Speech at 1–3.5 s and 5–7 s: each connection gets its lead-in, the speech and ≤ 0.2 s after it, not the pause.
+const sentence = (p, from, to) => p && p[0] <= from * SR && p[1] >= to * SR && p[1] <= (to + 0.25) * SR;
+t.check('UNIT-CLOUD-02', 'two sentences: one connection each, committed once, each sent its own audio only (not the pause after it), no frame twice',
+  c.sentences.length === 2 && c.sentences.every((x) => x.commits === 1) && apart(c.pieces) && sentence(c.pieces[0], 1, 3.5) && sentence(c.pieces[1], 5, 7),
+  `${c.fake.connections.length} connections; sent ${c.pieces.map(span).join(', ')} of ${secs(8.5 * SR)}`);
+t.check('UNIT-CLOUD-02', 'the finals are ElevenLabs\' committed texts, the live text its partial texts, and the second sentence gets the first as context',
+  c.finals.map((f) => f.text).join(' | ') === 'propoziția 1 | propoziția 2' && c.finals.every((f) => f.model === 'elevenlabs-scribe-v2')
+    && c.partials.length > 0 && c.partials.every((p) => p.text === `ascult ${c.finals.findIndex((f) => f.id === p.id) + 1}`)
+    && c.sentences[0].previousText.every((x) => x === null) && c.sentences[1].previousText[0] === 'propoziția 1' && c.sentences[1].previousText.slice(1).every((x) => x === null),
+  `finals ${c.finals.map((f) => f.text).join(' | ')}; ${c.partials.length} live texts (${[...new Set(c.partials.map((p) => p.text))].join(', ')}); context ${JSON.stringify(c.sentences.map((x) => x.previousText[0]))}`);
+
+c = await cloud(noisy(concat(quiet(1), loud(25), quiet(1.5), loud(0.1), quiet(1.5))));
+const click = c.sentences.filter((x) => !x.commits);
+t.check('UNIT-CLOUD-03', 'speech split at the longest sentence: two connections whose audio meets exactly, nothing sent twice or left out',
+  c.sentences.filter((x) => x.commits).length === 2 && apart(c.pieces.slice(0, 2)) && c.pieces[0]?.[1] === c.pieces[1]?.[0] && c.finals.length === 2,
+  `sent ${c.pieces.slice(0, 2).map(span).join(', ')}; ${c.finals.length} finals`);
+t.check('UNIT-CLOUD-03', 'a click: its connection is closed without a commit, and it gives no line',
+  click.length <= 1 && click.every((x) => x.closed) && c.fake.connections.every((x) => x.closed) && c.finals.length === 2,
+  `${click.length} uncommitted connection(s), ${click.map((x) => secs(x.audio.length)).join(', ')} sent`);
+
+c = await cloud(noisy(concat(quiet(1), loud(2), quiet(1.5))), { fail: (x) => (x.index === 1 ? 'transcriber_error' : null) });
+t.check('UNIT-CLOUD-04', 'the commit fails once: the sentence is sent again, whole, on a new connection, and still transcribed, with no error shown',
+  c.sentences.length === 2 && c.sentences[0].commits === 1 && !c.sentences[0].committed && c.sentences[1].committed && c.pieces[1]?.[0] <= c.pieces[0]?.[0]
+    && c.finals.map((f) => f.text).join() === 'propoziția 2' && !c.errors.length,
+  `sent ${c.pieces.map(span).join(', then ')}; finals ${c.finals.map((f) => f.text).join(' | ')}; errors ${c.errors.join(' | ') || 'none'}`);
+
+c = await cloud(noisy(concat(quiet(1), loud(2), quiet(1.5), loud(2), quiet(1.5))), { fail: (x) => (x.index === 1 || x.index === 2 ? 'quota_exceeded' : null) });
+t.check('UNIT-CLOUD-05', 'the commit and its retry fail: one error with ElevenLabs\' reason, and the next sentence is transcribed',
+  c.errors.length === 1 && /stand-in quota_exceeded\. The ElevenLabs account has no credits left/.test(c.errors[0]) && c.finals.map((f) => f.text).join() === 'propoziția 3',
+  `errors ${c.errors.join(' | ')}; finals ${c.finals.map((f) => f.text).join(' | ')}`);
+
+c = await cloud(noisy(concat(quiet(1), loud(2), quiet(1.5), loud(1.5))), {}, { close: true });
+t.check('UNIT-CLOUD-06', 'closed mid-sentence (Ctrl+C, the window closed): the sentence is committed and saved before drain() returns',
+  c.sentences.length === 2 && c.sentences.every((x) => x.committed) && c.text.split('\n').filter(Boolean).length === 2 && /propoziția 2/.test(c.text),
+  JSON.stringify(c.text));
 
 // ---------- crosstalk gate and two-mic session (need Silero) ----------
 const silero = fs.existsSync(config.vad.sileroModel);

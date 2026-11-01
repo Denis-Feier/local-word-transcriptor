@@ -6,6 +6,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { WebSocketServer } from 'ws';
 import { decodeWav, encodeWav } from '../lib/wav.js';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -35,6 +36,7 @@ export function scratch(name) {
  * Start server.js on a free port with its own settings and transcripts folders, so a test never touches the
  * user's files or a copy of the app that is already running. Models come from ./models (MODELS_DIR overrides).
  * model: null starts without MODEL (the saved or default model); env values of undefined are removed.
+ * Never the user's .env.local or ElevenLabs key: an ElevenLabs key is allowed only with the stand-in (fakeElevenLabs).
  * maxFileBlocks: no file the server writes can grow past this many blocks, like a disk that fills up (sh's ulimit -f:
  * blocks of 1,024 bytes on macOS, 512 on Linux; not on Windows).
  */
@@ -49,8 +51,14 @@ export async function startServer({ model = process.env.TEST_MODEL ?? 'parakeet-
     DEBUG: '1',
     SETTINGS_FILE: path.join(dir, 'settings.json'),
     TRANSCRIPTS_DIR: path.join(dir, 'transcripts'),
+    ENV_FILE: os.devNull,
+    ELEVENLABS_API_KEY: undefined,
+    ELEVENLABS_BASE_URL: undefined,
     ...env,
   };
+  if (childEnv.ELEVENLABS_API_KEY && !/^http:\/\/127\.0\.0\.1:/.test(childEnv.ELEVENLABS_BASE_URL ?? '')) {
+    throw new Error('A test server may use an ElevenLabs key only with the stand-in (fakeElevenLabs): ElevenLabs bills real audio.');
+  }
   for (const key of Object.keys(childEnv)) if (childEnv[key] === undefined) delete childEnv[key];
   delete childEnv.ELECTRON_RUN_AS_NODE;
   const script = path.join(ROOT, 'server.js');
@@ -107,6 +115,68 @@ export function streamWav(port, args, { timeoutMs = 300000 } = {}) {
       resolve({ finals, partials, code, out, timedOut: Date.now() - t0 >= timeoutMs, seconds: (Date.now() - t0) / 1000 });
     });
   });
+}
+
+/**
+ * A stand-in for ElevenLabs' realtime speech-to-text (wss://api.elevenlabs.io/v1/speech-to-text/realtime), speaking
+ * its protocol as @elevenlabs/elevenlabs-js does, so no test sends audio to the real service or needs a real key.
+ * Pass ELEVENLABS_BASE_URL: fake.url (with any key) to a server. Each connection is recorded:
+ *   { index, key, query, audio (Int16Array of everything received), chunks (samples per message), previousText (per
+ *   message), commits, committed, closed }.
+ * text(conn) answers a commit (default "propoziția <index>"), partial(conn) each chunk (null: none);
+ * fail(conn) returns a server error type (e.g. 'quota_exceeded') to answer the commit with instead.
+ */
+export async function fakeElevenLabs({ key = 'test-key', text = (c) => `propoziția ${c.index}`, partial = (c) => `ascult ${c.index}`, fail = () => null } = {}) {
+  const port = await freePort();
+  const wss = new WebSocketServer({ host: '127.0.0.1', port, path: '/v1/speech-to-text/realtime' });
+  const connections = [];
+  wss.on('connection', (ws, req) => {
+    const c = { index: connections.length, key: req.headers['xi-api-key'], query: Object.fromEntries(new URL(req.url, 'http://x').searchParams), audio: new Int16Array(0), chunks: [], previousText: [], commits: 0, committed: false, closed: false };
+    connections.push(c);
+    const send = (msg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
+    ws.on('close', () => (c.closed = true));
+    if (c.key !== key) {
+      send({ message_type: 'auth_error', error: 'Invalid API key' });
+      ws.close();
+      return;
+    }
+    send({ message_type: 'session_started', session_id: `fake-${c.index}`, config: { sample_rate: 16000, model_id: c.query.model_id } });
+    ws.on('message', (data) => {
+      const msg = JSON.parse(data);
+      if (msg.message_type !== 'input_audio_chunk') return;
+      const bytes = Buffer.from(msg.audio_base_64, 'base64');
+      const samples = new Int16Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+      if (samples.length) {
+        const audio = new Int16Array(c.audio.length + samples.length);
+        audio.set(c.audio);
+        audio.set(samples, c.audio.length);
+        c.audio = audio;
+        c.chunks.push(samples.length);
+        c.previousText.push(msg.previous_text ?? null);
+        const live = partial(c);
+        if (live) send({ message_type: 'partial_transcript', text: live });
+      }
+      if (!msg.commit) return;
+      c.commits++;
+      const error = fail(c);
+      if (error) {
+        send({ message_type: error, error: `stand-in ${error}` });
+        ws.close();
+        return;
+      }
+      c.committed = true;
+      send({ message_type: 'committed_transcript', text: text(c) });
+    });
+  });
+  await new Promise((resolve) => wss.once('listening', resolve));
+  return {
+    url: `http://127.0.0.1:${port}`,
+    connections,
+    close: () => new Promise((resolve) => {
+      for (const client of wss.clients) client.terminate();
+      wss.close(resolve);
+    }),
+  };
 }
 
 export const loadWav = (file) => decodeWav(fs.readFileSync(file)).samples;

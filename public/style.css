@@ -246,6 +246,8 @@ select {
   color: var(--faint);
 }
 
+.foot .cloud { color: var(--warn); }
+
 @keyframes pulse { 50% { opacity: 0.35; } }
 @keyframes blink { 50% { opacity: 0; } }
 

@@ -26,6 +26,8 @@
     "node": ">=22.12"
   },
   "dependencies": {
+    "@elevenlabs/elevenlabs-js": "^2.75.0",
+    "dotenv": "^18.0.9",
     "sherpa-onnx-node": "^2.0.1",
     "transcribe-cpp": "^0.4.1",
     "ws": "^8.18.0"
@@ -51,7 +53,8 @@
       "public/**",
       "desktop/main.mjs",
       "docs/manual/*.pdf",
-      "!**/*.md"
+      "!**/*.md",
+      "!node_modules/@elevenlabs/elevenlabs-js/dist/**"
     ],
     "mac": {
       "target": [
@@ -67,7 +70,7 @@
       "identity": "-",
       "hardenedRuntime": false,
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Live Transcriber listens to the meeting to turn speech into text. The audio never leaves this computer."
+        "NSMicrophoneUsageDescription": "Live Transcriber listens to the meeting to turn speech into text. The audio never leaves this computer, unless you pick the ElevenLabs cloud model."
       },
       "artifactName": "Live-Transcriber-${version}-mac-${arch}.${ext}"
     },
