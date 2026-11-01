@@ -45,7 +45,19 @@ app.whenReady().then(async () => {
   };
   const win = newWindow();
   const js = (code, w = win) => w.webContents.executeJavaScript(code);
-  const shot = async (name, w = win) => fs.writeFileSync(path.join(OUT, `${name}.png`), (await w.webContents.capturePage()).toPNG());
+  // capturePage now and then fails with UnknownVizError (Chromium's compositor, not the page; 2 of 6 runs on
+  // 2026-11-01, each time at another screenshot). Retry; a screenshot that still fails is left out of the visual
+  // review (§8.1) instead of ending the run before the remaining checks.
+  const shot = async (name, w = win) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return fs.writeFileSync(path.join(OUT, `${name}.png`), (await w.webContents.capturePage()).toPNG());
+      } catch (err) {
+        if (attempt === 3) return console.log(`screenshot ${name}.png not taken: ${err.message}`);
+        await sleep(500);
+      }
+    }
+  };
   const state = (w = win) => js(`(() => ({
     fields: [...document.querySelectorAll('#mics .field')].map((f) => ({ name: f.querySelector('span').textContent, value: f.querySelector('select').value, text: f.querySelector('select').selectedOptions[0]?.text, options: [...f.querySelector('select').options].map((o) => o.value + (o.disabled ? ':off' : '')), dot: f.dataset.mic ?? null })),
     levels: [...document.querySelectorAll('#levels .level')].map((l) => ({ who: l.querySelector('.who').textContent, state: l.querySelector('.speaking').textContent, width: parseFloat(l.querySelector('.meter-fill').style.width) || 0 })),

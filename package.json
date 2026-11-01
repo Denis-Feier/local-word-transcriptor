@@ -1,7 +1,7 @@
 {
   "name": "local-word-transcriptor",
   "productName": "Live Transcriber",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Live Romanian speech-to-text from your laptop mic, fully local",
   "type": "module",
   "private": true,

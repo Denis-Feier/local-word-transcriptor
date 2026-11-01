@@ -11,9 +11,9 @@
   <h1>Live Transcriber</h1>
   <p class="subtitle">User manual</p>
   <p class="edition">Version <span data-version>dev</span> · <span data-date></span></p>
-  <p class="lead">Live Transcriber turns Romanian speech into text while people talk. Put the computer on the table,
-    press <b class="ui">Start</b>, and read along. Everything runs on your own computer: no account, no internet after
-    the first start, and the audio never leaves the machine.</p>
+  <p class="lead">Live Transcriber turns Romanian speech into text while people talk. Everything runs on your own
+    computer: no account, no internet after the first start, and the audio never leaves the machine, except with an
+    optional cloud model (section 8).</p>
 </header>
 
 <h2><span class="n">1</span>Install and first start</h2>
@@ -187,6 +187,9 @@
     <td><b class="ui">Mic separation</b>: 12 dB.</td></tr>
   <tr><td>A presenter who walks around</td>
     <td>A wireless clip-on mic as <b class="ui">Mic 1</b>.</td></tr>
+  <tr><td>Two Bluetooth headsets: one of them shows <i>no sound</i></td>
+    <td>A Mac takes sound from only one Bluetooth headset mic at a time. Connect the other one through its USB
+      receiver or a cable.</td></tr>
   <tr><td>A group around a table</td>
     <td>The laptop in the middle, screen up. For a long table, a USB conference mic.</td></tr>
   <tr><td>Text appears late on an older computer</td>
@@ -201,6 +204,10 @@
   choose <i>Parakeet Romanian 110M</i>: it is much faster, but writes in lowercase without punctuation. The other
   models in the list are alternatives to try. Models not downloaded yet show their size; choosing one asks first,
   downloads it and switches to it when it is ready. The choice is remembered.</p>
+<p><i>ElevenLabs Scribe v2 Realtime (cloud)</i> appears in the list only once an ElevenLabs API key has been added
+  (the project's GitHub page explains how). It is the only model that sends the speech over the internet, to
+  ElevenLabs, which charges for each hour of speech. While it is chosen, the note at the bottom of the window turns
+  orange and says so. Choose another model for anything that must stay on this computer.</p>
 
 <h2><span class="n">9</span>When something goes wrong</h2>
 <table>
@@ -210,9 +217,17 @@
       <i>Settings → Privacy &amp; security → Microphone</i>, allow desktop apps. Then restart the app.</td></tr>
   <tr><td>A mic or the speaker shows <i>not connected</i></td>
     <td>Plug it in, switch it on or pair it again. It joins again by itself.</td></tr>
+  <tr><td>A mic shows <i>no sound</i></td>
+    <td>It is connected but sends only silence: it is muted, or it is a second Bluetooth headset (section 7).</td></tr>
   <tr><td>The meter moves but no text appears</td>
     <td>Check that the right mic is chosen; lower <b class="ui">Speech detection threshold</b>.</td></tr>
   <tr><td>The speaker howls</td><td>See section 4.</td></tr>
+  <tr><td>“Could not save audio”</td>
+    <td>The disk is full or the drive was removed. The text is still saved; free some space, then untick and
+      tick <b class="ui">Save audio</b> again.</td></tr>
+  <tr><td>With the ElevenLabs model: an error starting with “ElevenLabs:”</td>
+    <td>No internet, a wrong key, or no credits left on the ElevenLabs account; the message says which. Choose another
+      model to carry on.</td></tr>
   <tr><td>Anything else</td>
     <td>Menu <i>Help → Open logs folder</i>, and send the file <code>server.log</code> with a short description on
       the project's GitHub page (<i>Issues</i>).</td></tr>

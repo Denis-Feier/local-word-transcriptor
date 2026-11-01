@@ -12,8 +12,8 @@
   <p class="subtitle">Manual de utilizare</p>
   <p class="edition">Versiunea <span data-version>dev</span> · <span data-date></span></p>
   <p class="lead">Live Transcriber transformă vorbirea în limba română în text, chiar în timp ce oamenii vorbesc.
-    Puneți calculatorul pe masă, apăsați <b class="ui">Start</b> și citiți. Totul rulează pe calculatorul
-    dumneavoastră: fără cont, fără internet după prima pornire, iar sunetul nu părăsește niciodată calculatorul.</p>
+    Totul rulează pe calculatorul dumneavoastră: fără cont, fără internet după prima pornire, iar sunetul nu
+    părăsește niciodată calculatorul, cu excepția unui model opțional în cloud (secțiunea 8).</p>
 </header>
 
 <h2><span class="n">1</span>Instalare și prima pornire</h2>
@@ -192,6 +192,9 @@
     <td><b class="ui">Mic separation</b>: 12 dB.</td></tr>
   <tr><td>Un prezentator care se plimbă</td>
     <td>Un microfon wireless cu clips (lavalieră) ca <b class="ui">Mic 1</b>.</td></tr>
+  <tr><td>Două căști Bluetooth: una dintre ele afișează <i>no sound</i></td>
+    <td>Un Mac preia sunetul de la un singur microfon de cască Bluetooth odată. Conectați-o pe cealaltă prin
+      receptorul ei USB sau prin cablu.</td></tr>
   <tr><td>Un grup în jurul unei mese</td>
     <td>Laptopul la mijloc, deschis. La o masă lungă, un microfon USB de conferință.</td></tr>
   <tr><td>Textul apare târziu pe un calculator mai vechi</td>
@@ -206,6 +209,10 @@
   mai vechi, alegeți <i>Parakeet Romanian 110M</i>: este mult mai rapid, dar scrie cu litere mici și fără punctuație.
   Celelalte modele din listă sunt alternative de încercat. Modelele încă nedescărcate își arată mărimea; când alegeți
   unul, aplicația întreabă mai întâi, îl descarcă și trece la el când este gata. Alegerea este ținută minte.</p>
+<p><i>ElevenLabs Scribe v2 Realtime (cloud)</i> apare în listă doar după ce a fost adăugată o cheie API ElevenLabs
+  (pagina proiectului de pe GitHub explică cum). Este singurul model care trimite vorbirea prin internet, la
+  ElevenLabs, care taxează fiecare oră de vorbire. Cât timp este ales, nota din partea de jos a ferestrei devine
+  portocalie și spune acest lucru. Alegeți alt model pentru tot ce trebuie să rămână pe acest calculator.</p>
 
 <h2><span class="n">9</span>Când ceva nu merge</h2>
 <table>
@@ -216,9 +223,17 @@
       aplicația.</td></tr>
   <tr><td>Un microfon sau boxa afișează <i>not connected</i></td>
     <td>Conectați-l, porniți-l sau asociați-l din nou. Revine singur.</td></tr>
+  <tr><td>Un microfon afișează <i>no sound</i></td>
+    <td>Este conectat, dar trimite doar liniște: are sunetul oprit sau este a doua cască Bluetooth (secțiunea 7).</td></tr>
   <tr><td>Indicatorul se mișcă, dar nu apare text</td>
     <td>Verificați că este ales microfonul potrivit; coborâți <b class="ui">Speech detection threshold</b>.</td></tr>
   <tr><td>Boxa fluieră</td><td>Vedeți secțiunea 4.</td></tr>
+  <tr><td>„Could not save audio”</td>
+    <td>Discul este plin sau unitatea a fost scoasă. Textul se salvează în continuare; eliberați spațiu, apoi debifați
+      și bifați din nou <b class="ui">Save audio</b>.</td></tr>
+  <tr><td>Cu modelul ElevenLabs: o eroare care începe cu „ElevenLabs:”</td>
+    <td>Fără internet, o cheie greșită sau fără credite în contul ElevenLabs; mesajul spune care. Alegeți alt model ca
+      să continuați.</td></tr>
   <tr><td>Altceva</td>
     <td>Meniul <i>Help → Open logs folder</i>: trimiteți fișierul <code>server.log</code>, cu o scurtă descriere, pe
       pagina proiectului de pe GitHub (<i>Issues</i>).</td></tr>
