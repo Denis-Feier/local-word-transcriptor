@@ -29,11 +29,11 @@ function openStream(deviceId, processing) {
 }
 
 /**
- * Open the given mics (device ids; '' = system default) as slots { deviceId, stream, source, rate, error }.
- * A mic that can't be opened has no stream. Throws if none of them can be opened.
+ * Open the given mics (device ids; '' = system default) as slots { deviceId, stream, source, rate, error, muted }.
+ * muted: per mic, whether it starts muted. A mic that can't be opened has no stream. Throws if none of them can be opened.
  */
-export async function openMics(deviceIds, processing) {
-  const slots = deviceIds.map((deviceId) => ({ deviceId, stream: null, source: null, rate: null, error: null }));
+export async function openMics(deviceIds, processing, muted = []) {
+  const slots = deviceIds.map((deviceId, i) => ({ deviceId, stream: null, source: null, rate: null, error: null, muted: Boolean(muted[i]) }));
   const opened = await Promise.allSettled(deviceIds.map((id) => openStream(id, processing)));
   opened.forEach((result, i) => {
     if (result.status === 'fulfilled') slots[i].stream = result.value;
@@ -45,7 +45,7 @@ export async function openMics(deviceIds, processing) {
 
 /**
  * Feed the slots' mics into ctx, each through connect(source, input), and keep them fed: a mic that ends drops out
- * and onChange() runs; reattach() opens it again. close() stops the mics, not ctx.
+ * and onChange() runs; reattach() opens it again. mute() silences a mic and keeps it open. close() stops the mics, not ctx.
  */
 export function feedMics(ctx, slots, processing, connect, onChange) {
   const drop = (slot) => {
@@ -54,6 +54,8 @@ export function feedMics(ctx, slots, processing, connect, onChange) {
     Object.assign(slot, { stream: null, source: null });
   };
   const attach = (slot, input) => {
+    const track = slot.stream.getAudioTracks()[0];
+    track.enabled = !slot.muted; // a disabled track plays digital silence
     try {
       slot.source ??= ctx.createMediaStreamSource(slot.stream);
       connect(slot.source, input);
@@ -62,7 +64,6 @@ export function feedMics(ctx, slots, processing, connect, onChange) {
       slot.error = err;
       return;
     }
-    const track = slot.stream.getAudioTracks()[0];
     slot.rate = track.getSettings().sampleRate ?? null;
     // Unplugged, switched off or out of Bluetooth range.
     track.addEventListener('ended', () => {
@@ -91,6 +92,12 @@ export function feedMics(ctx, slots, processing, connect, onChange) {
       }
       if (!closed) onChange();
     },
+    /** Mute or unmute a mic: muted, it sends silence but stays open, so it is back at once, and a reattach keeps it muted. */
+    mute(input, muted) {
+      const slot = slots[input];
+      slot.muted = muted;
+      slot.stream?.getAudioTracks().forEach((t) => (t.enabled = !muted));
+    },
     close() {
       closed = true;
       slots.forEach(drop);
@@ -100,13 +107,13 @@ export function feedMics(ctx, slots, processing, connect, onChange) {
 
 /**
  * Record the given mics together (device ids; '' = system default). onChunk(buffer) gets each chunk
- * (see pcm-worklet.js); onChange() runs when a mic disconnects or comes back. A mic that can't be opened records
- * silence until reattach() succeeds. Throws if none of them can be opened.
+ * (see pcm-worklet.js); onChange() runs when a mic disconnects or comes back. A mic that can't be opened, or is
+ * muted (per mic in muted), records silence until reattach() succeeds or it is unmuted. Throws if none of them can be opened.
  */
-export async function openCapture(deviceIds, { noiseSuppression, onChunk, onChange }) {
+export async function openCapture(deviceIds, { noiseSuppression, muted, onChunk, onChange }) {
   // The browser's noise filter can eat distant voices; auto gain lifts quiet or far-away speakers.
   const processing = { noiseSuppression, autoGainControl: true };
-  const slots = await openMics(deviceIds, processing);
+  const slots = await openMics(deviceIds, processing, muted);
   const first = slots.find((slot) => slot.stream);
 
   // Ask the browser to resample to 16 kHz; Firefox refuses to mix rates, so fall back to the native rate
@@ -130,6 +137,7 @@ export async function openCapture(deviceIds, { noiseSuppression, onChunk, onChan
   return {
     slots,
     reattach: mics.reattach,
+    mute: mics.mute,
     close() {
       node.port.onmessage = null;
       mics.close();

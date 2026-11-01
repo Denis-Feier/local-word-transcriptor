@@ -141,6 +141,9 @@ button.primary.recording .rec { border-radius: 2px; }
 .level .who:empty { display: none; }
 .level[data-mic] .meter-fill { background: var(--mic); }
 .level[data-mic] .speaking.on { color: var(--mic); }
+.level .mute { font-size: 12px; padding: 3px 10px; }
+.level.muted .mute { border-color: var(--bad); color: var(--bad); font-weight: 600; }
+.level.muted .meter { opacity: 0.4; }
 
 .settings {
   display: flex;

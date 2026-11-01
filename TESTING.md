@@ -355,6 +355,12 @@ With `--recordings a.wav,b.wav` the same scenarios run on 60 s of two real voice
 | `UI-SPK-08` | Speaker back under a new id (re-paired) | found by name, plays again, warning gone | auto |
 | `UI-SPK-09` | Speaker → None | playing stops, volume slider hidden, the meters (moving before) back to zero | auto |
 | `UI-SPK-10` | Sound check before Start | the meter moves while only the speaker plays | auto |
+| `UI-MUTE-01` | Mute button | a Mute button on each mic's meter; Mute on Mic 2 before Start: "muted" and "Unmute", also in Settings | auto |
+| `UI-MUTE-02` | Recording with Mic 2 muted from Start | every chunk the page sends has exact zeros for Mic 2; Mic 1 is transcribed, no line under Mic 2, no "no sound" warning after 5 s | auto |
+| `UI-MUTE-03` | Stop, Start, then Unmute while recording | still muted after Start; unmuted, Mic 2's sound is in the chunks at once (peak > 0.01) and the mic was not reopened | auto |
+| `UI-MUTE-04` | Mute while recording | exact zeros from Mic 2 from 0.3 s after the click; what it heard before is still transcribed under Mic 2; Mic 1 records on | auto |
+| `UI-MUTE-05` | Muted mic and the speaker | opened muted: nothing plays (< −90 dBFS); unmuted it plays (> −50); muted while playing, silent again | auto |
+| `UI-MUTE-06` | Mute is not remembered | a mic picked in its menu starts unmuted; after a reload the mics are remembered and none is muted | auto |
 | `UI-NET-01` | Server restarted mid-recording | page reconnects, buffered audio transcribed on the right mics | auto |
 | `UI-LOOK-01` | Phone width (390 px) | no sideways scrolling | auto |
 | `UI-CFG-01` | `MAX_MICS=1` | one "Microphone" menu, the page as before two mics existed | auto |
@@ -437,6 +443,7 @@ Open `test-results/<run>/screenshots/` and check:
 | VIS-05 | `mic-disconnected.png` | red "not connected" next to Mic 2, warning above the transcript |
 | VIS-06 | `phone.png` | everything reachable at 390 px, nothing cut off |
 | VIS-07 | `speaker.png`, `speaker-disconnected.png` | Speaker menu and Volume slider in the settings row, the meter moving before Start; "(not connected)" in the menu and the warning above the transcript |
+| VIS-09 | `mic-muted.png` | Mic 2 "muted" in red with a dimmed meter and a red Unmute button, Mic 1's Mute button plain; only Mic 1 lines |
 | VIS-08 | `cloud.png` | the cloud model in the menu and status; the amber footer saying the speech goes to the internet, readable; the model notes about billing |
 
 ### 8.2 Desktop app — `manual`
@@ -514,6 +521,8 @@ distances.
 | HW-20 | A Bluetooth speaker with its own microphone, Mic 1 on *System default* | note whether the Mac switches its input to the speaker (call quality); with the real mic chosen it must not |
 | HW-22 | On a Mac, two Bluetooth headsets as Mic 1 and Mic 2 (e.g. G435 and Jabra Evolve 65), then the same with one of them on its USB receiver | with both on Bluetooth: one meter stays at zero, "no sound" and the one-Bluetooth-mic warning after ~5 s; with one on its receiver: both meters move. Note which headset went silent (the last connected?) |
 | HW-21 | A real meeting of 2 hours or more in the desktop app: two mics (one Bluetooth), Save audio, the caption window on a projector; the human counterpart of the stress tier (§14) | no freeze; the text keeps up (note the delay at the start and at the end); the app's memory in Activity Monitor at the start, after 1 hour and at the end; files complete |
+
+| HW-23 | Two mics recording, one person on each; press **Mute** on Mic 2 while its person talks, wait 30 s, then **Unmute** (with the speaker playing too) | Mic 2's sentence in progress is finished, then nothing more under Mic 2, its meter stays at zero and it is silent on the speaker; Mic 1 goes on; no "no sound" warning; after Unmute, Mic 2 is transcribed and played again at once. The macOS microphone indicator stays on while muted (the mic stays open) |
 
 **Data to collect:** the transcript `.txt`, the two WAVs (`<stamp>-mic1.wav`, `<stamp>-mic2.wav`), the terminal
 output (the `[mics]` lines every 10 s), and what went wrong with the time it happened.
@@ -593,6 +602,7 @@ Useful tools: `DEBUG=1` server logs (`[final #n mic m] … ms: text`, `dropped, 
 | Two mics: choosing, labels, colours | `UI-MIC-*`, `UI-TX-02…05`, `UI-CFG-01/02`, `VIS-01` | — |
 | Two mics: crosstalk gate and duplicates | `UNIT-GATE-*`, `UNIT-SESS-*`, `SCN-01…08`, `SMOKE-02` | `KNOWN-01`, real rooms (§9) |
 | Two mics: devices coming and going, 8 kHz, a mic that sends no sound | `UI-DEV-*`, `SCN-06` | real Bluetooth (`HW-06`, `HW-22`) |
+| Muting a mic (the page's Mute button): silence to the transcript, saved audio and speaker; not remembered | `UI-MUTE-*`, `VIS-09` | the saved WAV of a muted mic is not checked (it gets the same zeros the server gets); real mics: `HW-23` |
 | Speaker in the room: choosing, volume, coming and going, meters before Start | `UI-SPK-*`, `DESK-09`, `VIS-07` | real speakers, delay and howling only in §9 (`HW-14…20`); auto gain on the speaker (§10.2) |
 | Desktop app | `STATIC-02`, CI smoke, `DESK-*`; its `.env.local` (the ElevenLabs key): `DESK-11` | packaged app UI not automated |
 | User manual (PDFs, Help menu, release assets) | `STATIC-05`, `DESK-10`; content and screenshots reviewed by the user-manual skill on every rebuild | whether the text still matches the app is checked only when the manual is rebuilt (before each tag) |
@@ -643,6 +653,7 @@ Add one row per run on `main` (§3 step 5), newest first. Feature-branch runs go
 | 2026-11-01 | The UI suite no longer ends at a screenshot that cannot be captured: `shot()` retries `capturePage` (`UnknownVizError`, 2 of 6 runs on 2026-11-01) and reports a screenshot it still cannot take, so the remaining checks run (§12). For the v1.0.1 release, with the user manual updated for 1.0.1. |
 | 2026-11-01 | ElevenLabs Scribe v2 Realtime as a cloud model to pick (`feature/elevenlabs`), offered only with the user's key (`.env.local`, `ELEVENLABS_API_KEY`), never the default: `UNIT-CLOUD-01…06`, `PROT-CLOUD-01…03`, `PROT-WS-05` (WebSocket from another website refused; added with the cloud model, which a website could otherwise switch to), `UI-MODEL-02`, `VIS-08`, `ENG-05` (the real service, by hand, only when the user asks), `DESK-11` (the desktop app's `.env.local`), all on a stand-in server (`fakeElevenLabs`). §2 rule 9: tests never use the real service or read `.env.local` (`run-all.js` sets `ENV_FILE`, `startServer` drops the key and refuses one without the stand-in). §4, §5, §11 rows. |
 | 2026-11-01 | The UPB FastConformer ([#21](https://github.com/Denis-Feier/local-word-transcriptor/issues/21), `ro-fast-conformer`): `ro-fast-conformer`, a second NeMo model in the menu, never the default (FLEURS 11.6 % WER on its RNNT decoder, 13.7 % on CTC; Canary 6.6 %). `UNIT-MODEL-01` (each NeMo model's decoder is one `nemo_server.py` accepts, which now also takes the name `rnnt`; it fails without that), `ENG-04` (by hand: the scenarios on it), §4 and §11 rows. Not in the full tier, which keeps one model per engine. Merged with only the quick tier run (PASS, 71 / 0 / 1 / 0), at the user's request; `ENG-04` not run yet. |
+| 2026-11-01 | Mute per mic (`feature/mic-mute`): a Mute button on each mic's meter (and in Settings) silences that mic in the transcript, the saved audio and the speaker, keeping it open; not remembered across reloads. `UI-MUTE-01…06` (they read the audio the page sends, so a muted mic must give exact zeros, not just an empty meter), `VIS-09`, `HW-23`, §11 row. |
 
 ## 14. Stress plan: long meetings (production readiness)
 

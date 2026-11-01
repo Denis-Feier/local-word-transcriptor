@@ -49,7 +49,7 @@ let backlog = [];
 let wakeLock = null;
 let modelSignature = '';
 let maxMics = 1; // how many mics may be used at once; the server says (MAX_MICS)
-let picks = []; // the chosen mics in order (Mic 1, Mic 2, …): { id, label }; id '' = system default
+let picks = []; // the chosen mics in order (Mic 1, Mic 2, …): { id, label, muted }; id '' = system default
 let inputs = []; // the audio inputs the browser lists
 let defaultId = ''; // the input behind "System default"
 let micWarning = '';
@@ -168,6 +168,9 @@ function loadPicks() {
   return [{ id: store.get('mic', ''), label: '' }]; // the single-mic setting of earlier versions
 }
 
+/** The mics are remembered, not their mute: the app always opens with every mic on, so none is left muted by mistake. */
+const savePicks = () => store.set('mics', picks.map(({ id, label }) => ({ id, label })));
+
 /** The device a pick means right now: by id, else by name (a re-paired Bluetooth device can get a new id). */
 function findDevice(pick, devices) {
   if (devices.some((d) => d.deviceId === pick.id)) return pick.id;
@@ -184,8 +187,9 @@ async function refreshDevices() {
   outputs = await listOutputs();
   // Names appear once the mic is allowed; remember them, to find a mic again if its id changes.
   const named = picks.map((p) => ({ ...p, label: inputs.find((d) => d.deviceId === p.id)?.label || p.label }));
-  if (named.some((p, i) => p.label !== picks[i].label)) store.set('mics', named);
+  const renamed = named.some((p, i) => p.label !== picks[i].label);
   picks = named;
+  if (renamed) savePicks();
   renderMicFields();
   // A mic that was switched off or out of range is back: let it join the recording, and the speaker, again.
   for (const open of [capture, speaker]) {
@@ -229,8 +233,8 @@ function renderMicFields() {
 
 function chooseMic(mic, id) {
   if (id === NONE) picks.splice(mic, 1);
-  else picks[mic] = { id, label: inputs.find((d) => d.deviceId === id)?.label ?? '' };
-  store.set('mics', picks);
+  else picks[mic] = { id, label: inputs.find((d) => d.deviceId === id)?.label ?? '' }; // another mic starts unmuted
+  savePicks();
   micsUpdated();
   restartCapture();
   if (speakerPick) restartSpeaker();
@@ -246,7 +250,8 @@ function micsUpdated() {
     used().forEach((_, mic) => {
       const el = document.createElement('div');
       el.className = 'level';
-      el.innerHTML = '<span class="who"></span><div class="meter" title="Microphone level"><div class="meter-fill"></div></div><span class="speaking"></span>';
+      el.innerHTML = '<span class="who"></span><div class="meter" title="Microphone level"><div class="meter-fill"></div></div><span class="speaking"></span><button class="ghost mute" type="button"></button>';
+      el.querySelector('.mute').addEventListener('click', () => toggleMute(mic));
       if (multiMic()) {
         el.dataset.mic = mic + 1;
         el.querySelector('.who').textContent = micName(mic);
@@ -261,18 +266,36 @@ const levelEls = (mic) => [els.levels, els.settingsLevels].map((root) => root.ch
 
 function renderLevels() {
   const open = capture ?? speaker;
-  used().forEach((_, mic) => {
+  used().forEach(({ muted = false }, mic) => {
     const missing = Boolean(open && !open.slots[mic]?.stream);
     const silent = Boolean(open && silentNow(open.slots[mic], mic));
+    const name = multiMic() ? micName(mic) : 'the microphone';
     for (const el of levelEls(mic)) {
       const label = el.querySelector('.speaking');
-      label.textContent = missing ? 'not connected' : silent ? 'no sound' : speaking.has(mic) ? 'speech' : 'listening';
-      label.classList.toggle('on', speaking.has(mic));
-      label.classList.toggle('off', missing || silent);
+      label.textContent = missing ? 'not connected' : muted ? 'muted' : silent ? 'no sound' : speaking.has(mic) ? 'speech' : 'listening';
+      label.classList.toggle('on', speaking.has(mic) && !muted);
+      label.classList.toggle('off', missing || muted || silent);
+      el.classList.toggle('muted', muted);
+      const button = el.querySelector('.mute');
+      button.textContent = muted ? 'Unmute' : 'Mute';
+      button.setAttribute('aria-label', `${muted ? 'Unmute' : 'Mute'} ${name}`);
+      button.title = muted ? `Unmute ${name}` : `Mute ${name}: silence instead of its sound in the transcript, the saved audio and the speaker`;
       if (missing || !open) el.querySelector('.meter-fill').style.width = '0';
     }
   });
 }
+
+/** Mute a mic that misbehaves during a meeting, or unmute it. It stays open, so it is back at once. */
+function toggleMute(mic) {
+  picks[mic].muted = !picks[mic].muted;
+  for (const open of [capture, speaker]) open?.mute(mic, picks[mic].muted);
+  hush[mic] = null; // silence while muted is not a fault; unmuted, it gets a fresh wait for sound
+  devicesChanged();
+}
+
+/** Mutes as chosen now, for mics that were still opening when one was muted or unmuted. */
+const syncMutes = (open) => open.slots.forEach((_, mic) => open.mute(mic, Boolean(picks[mic]?.muted)));
+const mutedMics = () => used().map((pick) => Boolean(pick.muted));
 
 const NO_SIGNAL = 1e-5; // -100 dBFS: digital silence, below any real mic's own noise (lib/crosstalk.js)
 const SILENT_MS = 5000;
@@ -283,7 +306,7 @@ const SILENT_MS = 5000;
  */
 function checkSilence(rms, mic) {
   const stream = (capture ?? speaker)?.slots[mic]?.stream;
-  if (!stream) return;
+  if (!stream || picks[mic]?.muted) return;
   let h = hush[mic];
   if (h?.stream !== stream) h = hush[mic] = { stream, since: performance.now(), heard: false, silent: false };
   if (h.heard) return;
@@ -319,9 +342,10 @@ function showLevels(buffer) {
   }
 }
 
-function openMics() {
-  return openCapture(used().map(openId), {
+async function openMics() {
+  const opened = await openCapture(used().map(openId), {
     noiseSuppression: els.noise.checked,
+    muted: mutedMics(),
     onChunk: (buffer) => {
       showLevels(buffer);
       if (ws?.readyState === WebSocket.OPEN) ws.send(buffer);
@@ -329,6 +353,8 @@ function openMics() {
     },
     onChange: devicesChanged,
   });
+  syncMutes(opened);
+  return opened;
 }
 
 const isBluetooth = (mic) => /bluetooth|airpods/i.test(picks[mic]?.label ?? '');
@@ -348,6 +374,7 @@ function devicesChanged() {
   (capture ?? speaker)?.slots.forEach((slot, mic) => {
     const name = multiMic() ? `${micName(mic)} (${picks[mic].label || 'microphone'})` : picks[mic].label || 'The microphone';
     if (!slot.stream) notes.push(`${name} is not connected; it joins again as soon as it is back.`);
+    else if (picks[mic].muted) return; // muted on purpose: its silence and its quality are no news
     else if (silentNow(slot, mic)) notes.push(silentNote(name, mic));
     else if (slot.rate && slot.rate < 16000) notes.push(`${name} records at ${slot.rate / 1000} kHz (older Bluetooth headsets do), so its text will be less accurate.`);
   });
@@ -457,8 +484,9 @@ async function restartSpeaker() {
   if (speakerPick && speakerConnected()) {
     speakerOpening = true;
     try {
-      const opened = await openSpeaker(used().map(openId), { sinkId: speakerId(), volume: volume(), onChange: devicesChanged });
+      const opened = await openSpeaker(used().map(openId), { sinkId: speakerId(), volume: volume(), muted: mutedMics(), onChange: devicesChanged });
       if (turn !== speakerTurn) return opened.close(); // chosen again meanwhile
+      syncMutes(opened);
       speaker = opened;
       refreshDevices(); // speaker names become available once the mics are allowed
     } catch (err) {

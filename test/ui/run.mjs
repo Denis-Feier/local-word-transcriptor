@@ -60,7 +60,7 @@ app.whenReady().then(async () => {
   };
   const state = (w = win) => js(`(() => ({
     fields: [...document.querySelectorAll('#mics .field')].map((f) => ({ name: f.querySelector('span').textContent, value: f.querySelector('select').value, text: f.querySelector('select').selectedOptions[0]?.text, options: [...f.querySelector('select').options].map((o) => o.value + (o.disabled ? ':off' : '')), dot: f.dataset.mic ?? null })),
-    levels: [...document.querySelectorAll('#levels .level')].map((l) => ({ who: l.querySelector('.who').textContent, state: l.querySelector('.speaking').textContent, width: parseFloat(l.querySelector('.meter-fill').style.width) || 0 })),
+    levels: [...document.querySelectorAll('#levels .level')].map((l) => ({ who: l.querySelector('.who').textContent, state: l.querySelector('.speaking').textContent, width: parseFloat(l.querySelector('.meter-fill').style.width) || 0, mute: l.querySelector('.mute').textContent })),
     lines: [...document.querySelectorAll('#transcript .line')].map((l) => ({ mic: l.dataset.mic ?? null, who: l.querySelector('.who').textContent, text: l.querySelector('.text').textContent, partial: l.classList.contains('partial'), overlap: l.classList.contains('overlap'), color: getComputedStyle(l.querySelector('.text')).color })),
     error: document.getElementById('error').hidden ? '' : document.getElementById('error').textContent,
     recording: document.getElementById('toggleText').textContent === 'Stop',
@@ -345,6 +345,90 @@ app.whenReady().then(async () => {
     s = await state();
     t.check('UI-SPK-09', 'None stops the speaker, hides the volume and sets the meters back to zero',
       !sp.sink && !sp.volumeShown && sp.value === 'none' && moving.some((w) => w > 0) && s.levels.every((l) => l.width === 0), `meters ${moving.map((w) => w.toFixed(0)).join('/')} → ${s.levels.map((l) => l.width).join('/')} %`);
+
+    // ---------- mute ----------
+    // The audio the page sends, measured: each chunk's loudest sample per mic, so a muted mic must give exact zeros
+    // (a meter reads 0 % in every pause too). Installed once per page load.
+    const tapSent = () => js(`(() => {
+      window.__sent = [];
+      const send = WebSocket.prototype.send;
+      WebSocket.prototype.send = function (data) {
+        if (data instanceof ArrayBuffer) {
+          const samples = new Float32Array(data, 4);
+          const length = samples.length / new Uint32Array(data, 0, 1)[0];
+          const peaks = [];
+          for (let i = 0; i < samples.length; i++) peaks[Math.floor(i / length)] = Math.max(peaks[Math.floor(i / length)] ?? 0, Math.abs(samples[i]));
+          window.__sent.push({ at: performance.now(), peaks });
+        }
+        return send.call(this, data);
+      };
+    })()`);
+    const sentBetween = (from, to = 1e12) => js(`window.__sent.filter((c) => c.at >= ${from} && c.at < ${to}).map((c) => c.peaks)`);
+    const peak = (sent, mic) => Math.max(0, ...sent.map((p) => p[mic]));
+    const muteMic = (mic) => js(`(() => { document.querySelectorAll('#levels .level')[${mic}].querySelector('.mute').click(); return performance.now(); })()`);
+    s = await open();
+    await pick(1, 'mic-b');
+    await tapSent();
+    await muteMic(1);
+    s = await state();
+    const inSettings = await js(`[...document.querySelectorAll('#settingsLevels .level')].map((l) => l.querySelector('.mute').textContent + '/' + l.querySelector('.speaking').textContent)`);
+    t.check('UI-MUTE-01', 'a Mute button on each mic\'s meter; Mute on Mic 2 before Start: "muted" and "Unmute", in Settings too',
+      s.levels.map((l) => l.mute).join() === 'Mute,Unmute' && s.levels[1].state === 'muted' && inSettings.join() === 'Mute/listening,Unmute/muted',
+      `${s.levels.map((l) => `${l.who} ${l.mute}/${l.state}`).join(', ')}; Settings ${inSettings.join(', ')}`);
+    await click('toggle');
+    let started = await js('performance.now()');
+    s = await waitFor((x) => finals(x).some((l) => l.mic === '1') && !x.lines.some((l) => l.partial), 20000);
+    let sent = await sentBetween(started);
+    await shot('mic-muted');
+    t.check('UI-MUTE-02', 'Mic 2 muted from Start: it sends exact zeros, Mic 1 is transcribed, nothing under Mic 2, no "no sound" warning after 5 s',
+      sent.length > 50 && peak(sent, 1) === 0 && peak(sent, 0) > 0.01 && finals(s).length >= 1 && s.lines.every((l) => l.mic === '1') && s.levels[1].state === 'muted' && !s.error,
+      `${sent.length} chunks, peak Mic 1 ${peak(sent, 0).toFixed(3)}, Mic 2 ${peak(sent, 1)}; lines ${s.lines.map((l) => l.who).join(' ')}; error "${s.error}"`);
+    await click('toggle');
+    await sleep(800);
+    await click('toggle'); // the fake mics' clips start again: B talks for 8.7 s
+    await waitFor((x) => x.recording);
+    await sleep(1500);
+    const stillMuted = (await state()).levels[1].state === 'muted';
+    const opens = await js('window.__mics.length');
+    const unmutedAt = await muteMic(1);
+    await sleep(2500);
+    const mutedAt = await muteMic(1);
+    const reopened = (await js('window.__mics.length')) !== opens;
+    await sleep(1500);
+    const unmuted = await sentBetween(unmutedAt + 300, mutedAt);
+    const remuted = await sentBetween(mutedAt + 300);
+    s = await waitFor((x) => finals(x).some((l) => l.mic === '2') && !x.lines.some((l) => l.partial), 20000);
+    t.check('UI-MUTE-03', 'Mute stays through Stop and Start; Unmute while recording: Mic 2\'s sound is back at once, without reopening the mic',
+      stillMuted && !reopened && unmuted.length >= 15 && peak(unmuted, 1) > 0.01, `muted after Start: ${stillMuted}; reopened: ${reopened}; ${unmuted.length} chunks unmuted, peak Mic 2 ${peak(unmuted, 1).toFixed(3)}`);
+    t.check('UI-MUTE-04', 'Mute while recording: exact zeros from Mic 2 from then on; what it heard before is still transcribed under Mic 2; Mic 1 records on',
+      remuted.length >= 10 && peak(remuted, 1) === 0 && peak(remuted, 0) > 0.01 && s.levels[1].state === 'muted' && finals(s).some((l) => l.mic === '2') && s.recording,
+      `${remuted.length} chunks, peak Mic 1 ${peak(remuted, 0).toFixed(3)}, Mic 2 ${peak(remuted, 1)}; Mic 2 lines: ${finals(s).filter((l) => l.mic === '2').map((l) => l.text.slice(0, 30)).join(' | ')}`);
+    await click('toggle');
+    // The speaker: a muted mic is not played. Mic 1 alone; its clip (6.8 s) starts when the speaker opens.
+    s = await open();
+    await muteMic(0);
+    await pickSpeaker('out-bt');
+    await sleep(500);
+    const whileMuted = await loudest(1000);
+    await muteMic(0);
+    const afterUnmute = await loudest(1000);
+    await muteMic(0);
+    await sleep(300);
+    const mutedAgain = await loudest(1000);
+    t.check('UI-MUTE-05', 'a muted mic is not played on the speaker, opened muted or muted while playing; unmuted, it plays',
+      whileMuted < -90 && afterUnmute > -50 && mutedAgain < -90, `${whileMuted.toFixed(1)} → ${afterUnmute.toFixed(1)} → ${mutedAgain.toFixed(1)} dBFS`);
+    await pickSpeaker('none');
+    // Not remembered: a mic picked in its menu starts unmuted, and after a reload every mic is on.
+    await pick(1, 'mic-b');
+    await muteMic(1);
+    await pick(1, 'mic-c');
+    const newMic = (await state()).levels[1].mute;
+    await muteMic(1);
+    await win.loadURL(`http://127.0.0.1:${server.port}/`);
+    s = await waitFor((x) => x.fields[1]?.value === 'mic-c', 5000);
+    t.check('UI-MUTE-06', 'a mic picked in its menu starts unmuted; after a reload the mics are remembered and none is muted',
+      newMic === 'Mute' && s.fields[1].value === 'mic-c' && s.levels.length === 2 && s.levels.every((l) => l.mute === 'Mute' && l.state !== 'muted'),
+      `new Mic 2: ${newMic}; after reload ${s.levels.map((l) => `${l.who} ${l.mute}/${l.state}`).join(', ')}`);
 
     // ---------- server restart mid-recording ----------
     s = await open();
