@@ -120,6 +120,11 @@ transcript. Lines spoken at the same time are marked ⇄.
 - **Talking at the same time** works: each mic is transcribed separately, and both lines appear.
 - **A mic that disconnects** (Bluetooth out of range, battery, cable) shows *not connected*. The other keeps
   recording, and it joins again on its own once it is back.
+- **Two Bluetooth headsets on a Mac don't work together**: macOS takes sound from only one Bluetooth headset mic at a
+  time, so the other sends silence (usually the one connected first). The page shows *no sound* on its meter and a
+  warning. Connect one of them another way: many headsets come with a USB receiver (Logitech G435: the LIGHTSPEED
+  receiver; Jabra Evolve 65: the Jabra Link 360 dongle), or use a USB or jack mic. A Bluetooth mic plus any
+  non-Bluetooth mic works.
 - With *Save audio* on, each mic gets its own WAV (`<stamp>-mic1.wav`, `<stamp>-mic2.wav`).
 - `MAX_MICS` changes the limit of 2.
 

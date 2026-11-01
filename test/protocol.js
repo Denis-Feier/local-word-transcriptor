@@ -176,6 +176,40 @@ if (process.platform === 'win32') {
   }
 }
 
+// The disk fills up while Save audio is on (#1): no file may grow past 300 blocks (300 KB on macOS, 150 KB on Linux),
+// so the WAV is full after 9.6 s of 40 s (4.8 s on Linux). The server must keep transcribing and saving the
+// transcript, tell the page once, and keep the WAV playable.
+if (process.platform === 'win32') {
+  t.skip('PROT-ERR-03', 'a disk that fills up while saving audio: the server keeps transcribing', 'needs ulimit (macOS, Linux)');
+} else {
+  const s5 = await startServer({ maxFileBlocks: 300 });
+  try {
+    const c = await connect(s5);
+    c.ws.on('error', () => {}); // without the fix the server dies mid-test
+    c.json({ type: 'options', saveAudio: true });
+    for (let i = 0; i < 5; i++) await c.audio([A], 8); // A's sentence every 8 s, 40 s in all
+    c.json({ type: 'flush' });
+    const settled = () => c.msgs.filter((m) => m.type === 'vad' && m.speaking).every((v) => c.msgs.some((m) => m.type === 'final' && m.id === v.id));
+    await waitFor(() => c.ws.readyState !== WebSocket.OPEN || settled(), 30000);
+    const up = c.ws.readyState === WebSocket.OPEN && (await fetch(s5.url).then((r) => r.ok, () => false));
+    const wav = c.msgs.find((m) => m.type === 'file' && m.kind === 'audio');
+    const bytes = wav ? fs.readFileSync(path.join(s5.transcripts, path.basename(wav.path))) : Buffer.alloc(44);
+    const data = bytes.length - 44;
+    const header = bytes.readUInt32LE(40);
+    const filled = header / (2 * SR); // seconds of audio the WAV kept
+    const after = c.finals().filter((m) => m.start > filled).length;
+    const errors = c.msgs.filter((m) => m.type === 'error').map((m) => m.message);
+    const txt = fs.existsSync(s5.transcripts) ? fs.readdirSync(s5.transcripts).filter((f) => f.endsWith('.txt')) : [];
+    const lines = txt.length ? fs.readFileSync(path.join(s5.transcripts, txt[0]), 'utf8').trim().split('\n').length : 0;
+    t.check('PROT-ERR-03', 'a disk that fills up while saving audio: the server keeps transcribing and saving the transcript, the page is told once, the WAV stays playable',
+      up && after >= 2 && lines === c.finals().length && errors.length === 1 && errors[0].startsWith('Could not save audio') && filled >= 4 && header === data - (data % 2),
+      `alive ${up}; WAV ${filled.toFixed(1)} s of 40 s, header ${header === data ? 'matches the file' : `${header} bytes, file ${data}`}; ${after} sentences after it filled, ${c.finals().length} in all, ${lines} in the .txt; errors: ${errors.join(' | ') || 'none'}`);
+    await c.close();
+  } finally {
+    await s5.stop();
+  }
+}
+
 // The model choice is remembered: a server restarted without MODEL loads the saved one.
 const s3 = await startServer();
 let savedSettings = null;
