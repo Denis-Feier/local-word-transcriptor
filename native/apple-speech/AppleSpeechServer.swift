@@ -61,16 +61,17 @@ final class Recognizer: @unchecked Sendable {
     let verbose = verbose
     return Task {
       var text = ""
+      var lastVolatile = "" // the short-dictation preset only ever reports volatile results
       func take(_ t: AttributedString, _ final: Bool) {
         if verbose { log("  \(final ? "final" : "volatile"): \(String(t.characters))") }
-        if final { text += String(t.characters) }
+        if final { text += String(t.characters) } else { lastVolatile = String(t.characters) }
       }
       if let st = m as? SpeechTranscriber {
         for try await r in st.results { take(r.text, r.isFinal) }
       } else if let dt = m as? DictationTranscriber {
         for try await r in dt.results { take(r.text, r.isFinal) }
       }
-      return text.trimmingCharacters(in: .whitespacesAndNewlines)
+      return (text.isEmpty ? lastVolatile : text).trimmingCharacters(in: .whitespacesAndNewlines)
     }
   }
 
@@ -99,7 +100,8 @@ final class Recognizer: @unchecked Sendable {
     }
     locale = match
     let m = makeModule()
-    if let request = try await AssetInventory.assetInstallationRequest(supporting: [m]) {
+    if await AssetInventory.status(forModules: [m]) != .installed,
+       let request = try await AssetInventory.assetInstallationRequest(supporting: [m]) {
       log("Downloading the on-device model for \(locale.identifier)…")
       try await request.downloadAndInstall()
     }
