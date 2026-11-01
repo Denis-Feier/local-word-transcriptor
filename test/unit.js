@@ -91,6 +91,41 @@ r = segment(concat(quiet(1), loud(1.5), quiet(1.5)), { startFrame: 500, newId: (
 t.check('UNIT-SEG-05', 'a segmenter added mid-session uses the session clock and shared ids',
   r.segments[0]?.id === 100 && r.segments[0].start > 500 * 0.032, `id ${r.segments[0]?.id}, start ${r.segments[0]?.start.toFixed(2)} s`);
 
+// ---------- changing the mics mid-session (loudness detector: deterministic) ----------
+// The page sends 1600-sample chunks, so a segmenter usually holds part of a frame when the mics change
+// (every 23 chunks: 448 samples, 28 ms). Mic 1 speaks at 32 s, mic 2 at 36 s; before that the session goes
+// 1 ↔ 2 mics `changes` times, ending on two (none: two mics from the start).
+async function layouts(changes) {
+  const PHASE = 23;
+  const sent = [];
+  const out = scratch('layout');
+  const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
+  const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null, transcribe: async () => ({ text: 'o propoziție', model: 'stub', ms: 1 }) };
+  const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
+  const mics = [concat(quiet(32), loud(1.5), quiet(5.5)), concat(quiet(36), loud(1.5), quiet(1.5))];
+  let drift = 0; // largest gap, in samples, between the audio sent and a mic's frame clock
+  for (let c = 0; c * 1600 < mics[0].length; c++) {
+    const count = c >= PHASE * changes || Math.floor(c / PHASE) % 2 ? 2 : 1;
+    const frame = new Float32Array(count * 1600);
+    for (let mic = 0; mic < count; mic++) frame.set(mics[mic].subarray(c * 1600, (c + 1) * 1600), mic * 1600);
+    session.audio(frame, count);
+    for (const { segmenter } of session.mics) drift = Math.max(drift, Math.abs((c + 1) * 1600 - (segmenter.frameIndex * 512 + segmenter.leftover.length)));
+  }
+  session.flush();
+  await sleep(50);
+  session.close();
+  fs.rmSync(out, { recursive: true, force: true });
+  const finals = sent.filter((m) => m.type === 'final' && m.text);
+  return { drift, starts: [0, 1].map((mic) => finals.find((f) => f.mic === mic)?.start) };
+}
+const steady = await layouts(0);
+const moved = await layouts(11);
+t.check('UNIT-SESS-06', 'changing the mics (1 ↔ 2, 11 times) keeps every mic\'s clock on the audio sent',
+  steady.drift === 0 && moved.drift === 0, `${moved.drift} samples (${((moved.drift / SR) * 1000).toFixed(0)} ms) behind`);
+t.check('UNIT-SESS-07', 'after 11 mic changes each mic\'s sentence starts when it does without them',
+  moved.starts.every((s, mic) => Math.abs(s - steady.starts[mic]) < 0.016),
+  moved.starts.map((s, mic) => `mic ${mic + 1}: ${s?.toFixed(3)} s (${steady.starts[mic]?.toFixed(3)} s without)`).join(', '));
+
 // ---------- crosstalk gate and two-mic session (need Silero) ----------
 const silero = fs.existsSync(config.vad.sileroModel);
 const { A, B } = speakers();
