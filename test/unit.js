@@ -11,7 +11,7 @@ import { encodeWav, decodeWav, WavWriter } from '../lib/wav.js';
 import { Segmenter } from '../lib/segmenter.js';
 import { EnergyDetector, createDetector } from '../lib/vad.js';
 import { CrosstalkGate } from '../lib/crosstalk.js';
-import { Session } from '../lib/session.js';
+import { Session, fileStamp } from '../lib/session.js';
 import { config } from '../lib/config.js';
 import { SR, scratch, speakers, silence, concat, twoMics, sleep, suite } from './helpers.js';
 
@@ -56,6 +56,16 @@ const half = decodeWav(fs.readFileSync(wavFile)).samples.length;
 writer.append(tone.subarray(8000));
 writer.close();
 t.check('UNIT-WAV-02', 'a WAV being written is playable after every chunk', half === 8000 && decodeWav(fs.readFileSync(wavFile)).samples.length === SR);
+const keptFile = path.join(dir, 'kept.wav');
+fs.writeFileSync(keptFile, encodeWav(tone));
+let refused = 'opened it';
+try {
+  new WavWriter(keptFile).close();
+} catch (err) {
+  refused = err.code;
+}
+t.check('UNIT-WAV-03', 'a WAV writer never overwrites a file: it refuses one that exists and leaves it as it was',
+  refused === 'EEXIST' && fs.readFileSync(keptFile).equals(encodeWav(tone)), `${refused}; the file has ${fs.statSync(keptFile).size} of ${encodeWav(tone).length} bytes`);
 
 // ---------- segmenter (loudness detector: deterministic) ----------
 const timing = { silenceMs: 700, preRollMs: 300, minSpeechMs: 250, maxSegmentSec: 20 };
@@ -125,6 +135,103 @@ t.check('UNIT-SESS-06', 'changing the mics (1 ↔ 2, 11 times) keeps every mic\'
 t.check('UNIT-SESS-07', 'after 11 mic changes each mic\'s sentence starts when it does without them',
   moved.starts.every((s, mic) => Math.abs(s - steady.starts[mic]) < 0.016),
   moved.starts.map((s, mic) => `mic ${mic + 1}: ${s?.toFixed(3)} s (${steady.starts[mic]?.toFixed(3)} s without)`).join(', '));
+
+// ---------- recordings that start in the same second (#2; loudness detector: deterministic) ----------
+// File names have whole seconds. Two tabs, or the desktop app and `npm start` (they share transcripts/), can start
+// in the same second; so can a Clear, and the clock going back an hour when summer time ends.
+/**
+ * A recording with Save audio on in the transcripts folder `out`: mic 1 says one sentence, transcribed as `said`;
+ * mic 2 hears only its noise. `sign` -1 inverts the audio, so two recordings never send the same samples.
+ */
+function recording(out, said, { sign = 1, mics = 2 } = {}) {
+  const sent = [];
+  const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
+  const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null, transcribe: async () => ({ text: said, model: 'stub', ms: 1 }) };
+  const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
+  session.setOptions({ saveAudio: true });
+  const audio = [concat(quiet(1.5), loud(1.5), quiet(1.5)), quiet(4.5)].slice(0, mics).map((a) => a.map((s) => sign * s));
+  return {
+    session,
+    said,
+    chunks: audio[0].length / 1600,
+    /** Send 100 ms of every mic, as the page does. */
+    send(c) {
+      const frame = new Float32Array(mics * 1600);
+      audio.forEach((a, mic) => frame.set(a.subarray(c * 1600, (c + 1) * 1600), mic * 1600));
+      session.audio(frame, mics);
+    },
+    /** What `mic` sent in chunks from..to, as the WAV it must be. */
+    wav: (mic, from = 0, to = Infinity) => encodeWav(audio[mic].subarray(from * 1600, to * 1600)),
+    files: (kind) => sent.filter((m) => m.type === 'file' && m.kind === kind).map((m) => path.resolve(m.path)),
+    errors: () => sent.filter((m) => m.type === 'error').map((m) => m.message),
+    async stop() {
+      session.flush();
+      await sleep(50);
+      session.close();
+    },
+  };
+}
+const read = (file) => (fs.existsSync(file) ? fs.readFileSync(file) : Buffer.alloc(0));
+const names = (files) => files.map((f) => path.basename(f)).join(', ');
+/** What is wrong with a recording's files: errors, WAVs not holding `wavs` (in the order opened), a .txt not holding its one line. */
+function wrongFiles(r, wavs) {
+  const audio = r.files('audio');
+  const text = r.files('text');
+  const lines = text.flatMap((f) => read(f).toString().split('\n').filter(Boolean));
+  return [
+    ...r.errors(),
+    ...(audio.length === wavs.length ? audio.filter((f, i) => !read(f).equals(wavs[i])).map((f) => `${path.basename(f)} does not hold its audio`) : [`${audio.length} WAVs, not ${wavs.length}`]),
+    ...(text.length === 1 && lines.length === 1 && lines[0].includes(r.said) ? [] : [`${text.length} .txt with ${JSON.stringify(lines)}`]),
+  ];
+}
+/** Wait, if needed, until a new second has started, so the steps that follow happen within one second. */
+const sameSecond = async () => Date.now() % 1000 > 800 && sleep(1005 - (Date.now() % 1000));
+
+// Two recordings start in the same second, then stream at once.
+let out = scratch('same-second');
+await sameSecond();
+const first = recording(out, 'prima înregistrare aici');
+const second = recording(out, 'a doua înregistrare acolo', { sign: -1 });
+for (let c = 0; c < first.chunks; c++) [first, second].forEach((r) => r.send(c));
+await Promise.all([first.stop(), second.stop()]);
+const filesOf = (r) => [...r.files('text'), ...r.files('audio')];
+const sharedFiles = filesOf(first).filter((f) => filesOf(second).includes(f));
+let wrong = [first, second].flatMap((r) => wrongFiles(r, [r.wav(0), r.wav(1)]));
+const base = (r) => path.basename(r.files('text')[0] ?? '', '.txt');
+t.check('UNIT-SESS-08', 'two recordings started in the same second get their own .txt and WAVs (<stamp>, <stamp>-2), each with only its own lines and audio',
+  !sharedFiles.length && !wrong.length && base(second) === `${base(first)}-2`,
+  sharedFiles.length ? `both write to ${names(sharedFiles)}` : [`${names(filesOf(first))} | ${names(filesOf(second))}`, ...wrong].join('; '));
+fs.rmSync(out, { recursive: true, force: true });
+
+// Clear in the same second the recording started: the new transcript must not reopen the first one's files.
+out = scratch('clear-same-second');
+await sameSecond();
+const cleared = recording(out, 'după ce am golit');
+cleared.send(0);
+cleared.session.reset(); // Clear
+for (let c = 1; c < cleared.chunks; c++) cleared.send(c);
+await cleared.stop();
+wrong = wrongFiles(cleared, [cleared.wav(0, 0, 1), cleared.wav(1, 0, 1), cleared.wav(0, 1), cleared.wav(1, 1)]); // mic 1, mic 2 before Clear, then after
+t.check('UNIT-SESS-09', 'Clear in the same second the recording started: new files, the first transcript\'s WAVs keep their audio',
+  !wrong.length, [names(filesOf(cleared)), ...wrong].join('; '));
+fs.rmSync(out, { recursive: true, force: true });
+
+// Audio of an earlier recording with the same name and no .txt (Save audio on, nothing said; the clock put back an
+// hour since, at the end of summer time): it must not be overwritten.
+out = scratch('earlier');
+await sameSecond();
+const stamp = fileStamp(new Date());
+const earlier = encodeWav(loud(1));
+fs.writeFileSync(path.join(out, `${stamp}.wav`), earlier);
+const later = recording(out, 'o înregistrare nouă', { mics: 1 });
+for (let c = 0; c < later.chunks; c++) later.send(c);
+await later.stop();
+wrong = wrongFiles(later, [later.wav(0)]);
+const untouched = read(path.join(out, `${stamp}.wav`)).equals(earlier) && !fs.existsSync(path.join(out, `${stamp}.txt`));
+t.check('UNIT-SESS-10', 'an earlier recording\'s audio with the same name is left as it was; the new one gets <stamp>-2',
+  untouched && !wrong.length && base(later) === `${stamp}-2`,
+  [`${stamp}.wav ${untouched ? 'untouched' : 'changed, or given a .txt'}; new: ${names(filesOf(later))}`, ...wrong].join('; '));
+fs.rmSync(out, { recursive: true, force: true });
 
 // ---------- crosstalk gate and two-mic session (need Silero) ----------
 const silero = fs.existsSync(config.vad.sileroModel);

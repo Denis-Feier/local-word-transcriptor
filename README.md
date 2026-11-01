@@ -70,7 +70,9 @@ Open **http://localhost:3000**, press **Start**, and allow the microphone.
 
 - Grey text with a cursor is the live guess while someone speaks.
 - After a short pause (~0.7 s) the sentence is transcribed again in full and turns final.
-- Final lines are saved as you go to `transcripts/<date-time>.txt`. **Clear** starts a new file.
+- Final lines are saved as you go to `transcripts/<date-time>.txt`. **Clear** starts a new file. A recording that
+  starts in the same second as another (a second tab, or the desktop app beside `npm start`) gets `<date-time>-2`,
+  so two recordings never share a file.
 
 ## Projector captions and live settings
 
