@@ -57,6 +57,67 @@ writer.append(tone.subarray(8000));
 writer.close();
 t.check('UNIT-WAV-02', 'a WAV being written is playable after every chunk', half === 8000 && decodeWav(fs.readFileSync(wavFile)).samples.length === SR);
 
+/**
+ * Pretends the disk has `free` bytes left for the WAV files opened while it is in place, as a real disk behaves: a write
+ * that does not fit is cut short without an error, and the next one fails with ENOSPC; rewriting bytes a file already
+ * has needs no room. open() counts those files still open; restore() puts the real fs back.
+ */
+function smallDisk(free) {
+  const real = { openSync: fs.openSync, writeSync: fs.writeSync, closeSync: fs.closeSync };
+  const sizes = new Map(); // fd -> bytes in the file (the WAV writer opens with 'w': empty)
+  fs.openSync = (file, ...rest) => {
+    const fd = real.openSync(file, ...rest);
+    if (String(file).endsWith('.wav')) sizes.set(fd, 0);
+    return fd;
+  };
+  fs.writeSync = (fd, buf, offset, length, position) => {
+    if (!sizes.has(fd)) return real.writeSync(fd, buf, offset, length, position);
+    const size = sizes.get(fd);
+    const fits = Math.min(length, size + free - position);
+    if (fits <= 0) throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC', syscall: 'write' });
+    const n = real.writeSync(fd, buf, offset, fits, position);
+    const grown = Math.max(0, position + n - size);
+    free -= grown;
+    sizes.set(fd, size + grown);
+    return n;
+  };
+  fs.closeSync = (fd) => {
+    sizes.delete(fd);
+    real.closeSync(fd);
+  };
+  return { open: () => sizes.size, restore: () => Object.assign(fs, real) };
+}
+
+// The disk fills up (#1): room for the header and 12,345½ samples, so chunk 8 is cut short and then fails.
+let disk = smallDisk(44 + 2 * 12345 + 1);
+const fullWav = path.join(dir, 'full.wav');
+const filling = new WavWriter(fullWav);
+let full = null;
+let chunk = 0;
+try {
+  for (; chunk < 10; chunk++) filling.append(tone.subarray(0, 1600));
+} catch (err) {
+  full = err;
+}
+disk.restore();
+const kept = fs.readFileSync(fullWav).readUInt32LE(40) / 2;
+filling.append(tone.subarray(0, 1600)); // room again (Save audio ticked again): the file carries on
+filling.close();
+const grown = fs.readFileSync(fullWav);
+t.check('UNIT-WAV-03', 'a disk that fills up: the chunk that does not fit throws ENOSPC; the WAV keeps every whole sample written, header included, and carries on once there is room',
+  full?.code === 'ENOSPC' && chunk === 7 && kept === 12345 && grown.readUInt32LE(40) === 2 * (12345 + 1600) && grown.length === 44 + 2 * (12345 + 1600) && decodeWav(grown).samples.length === 12345 + 1600,
+  `${full?.code ?? 'no error'} on chunk ${chunk + 1}; the header kept ${kept} of the 12,345 samples that fit; then ${grown.readUInt32LE(40) / 2} samples in the header, ${(grown.length - 44) / 2} in the file`);
+disk = smallDisk(0);
+let refused = null;
+try {
+  new WavWriter(path.join(dir, 'none.wav')).close();
+} catch (err) {
+  refused = err;
+}
+const leftOpen = disk.open();
+disk.restore();
+t.check('UNIT-WAV-04', 'a WAV started on a full disk: ENOSPC, and the file is not left open', refused?.code === 'ENOSPC' && leftOpen === 0, `${refused?.code ?? 'no error'}; ${leftOpen} file(s) left open`);
+
 // ---------- segmenter (loudness detector: deterministic) ----------
 const timing = { silenceMs: 700, preRollMs: 300, minSpeechMs: 250, maxSegmentSec: 20 };
 const quiet = (sec) => Float32Array.from({ length: Math.round(sec * SR) }, (_, i) => 0.0004 * Math.sin(i * 1.7));
@@ -125,6 +186,52 @@ t.check('UNIT-SESS-06', 'changing the mics (1 ↔ 2, 11 times) keeps every mic\'
 t.check('UNIT-SESS-07', 'after 11 mic changes each mic\'s sentence starts when it does without them',
   moved.starts.every((s, mic) => Math.abs(s - steady.starts[mic]) < 0.016),
   moved.starts.map((s, mic) => `mic ${mic + 1}: ${s?.toFixed(3)} s (${steady.starts[mic]?.toFixed(3)} s without)`).join(', '));
+
+// ---------- the disk fills up while saving audio (#1; loudness detector, stand-in model) ----------
+// Two mics: a sentence on mic 1 every 4 s for 24 s, room noise on mic 2. The WAVs have room for 8 s of both mics and
+// 1,000 bytes, so mic 1's write at 8.0 s is cut short and then fails.
+async function diskFills() {
+  const sent = [];
+  const out = scratch('full');
+  const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
+  const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null, transcribe: async () => ({ text: 'o propoziție', model: 'stub', ms: 1 }) };
+  const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
+  session.setOptions({ saveAudio: true });
+  const talk = concat(...Array.from({ length: 6 }, () => concat(quiet(1), loud(1.5), quiet(1.5))));
+  const noise = quiet(0.1);
+  const small = smallDisk(2 * 44 + 8 * 2 * 2 * SR + 1000);
+  let thrown = null;
+  try {
+    for (let i = 0; i < talk.length; i += 1600) {
+      const frame = new Float32Array(3200);
+      frame.set(talk.subarray(i, i + 1600));
+      frame.set(noise, 1600);
+      session.audio(frame, 2);
+    }
+  } catch (err) {
+    thrown = err;
+  }
+  small.restore();
+  session.flush();
+  await sleep(50);
+  session.close();
+  const wavs = fs.readdirSync(out).filter((f) => f.endsWith('.wav')).sort().map((f) => fs.readFileSync(path.join(out, f)));
+  fs.rmSync(out, { recursive: true, force: true });
+  const whole = (b) => b.length - 44 - ((b.length - 44) % 2);
+  return {
+    thrown,
+    errors: sent.filter((m) => m.type === 'error').map((m) => m.message),
+    finals: sent.filter((m) => m.type === 'final' && m.text),
+    secs: wavs.map((b) => b.readUInt32LE(40) / (2 * SR)),
+    playable: wavs.length === 2 && wavs.every((b) => b.readUInt32LE(40) === whole(b)),
+  };
+}
+const filled = await diskFills();
+const after = filled.finals.filter((f) => f.start > Math.max(...filled.secs)).length;
+t.check('UNIT-SESS-08', 'the disk fills up while saving two mics: audio() never throws, one "Could not save audio", sentences keep coming, both WAVs playable up to there',
+  !filled.thrown && filled.errors.length === 1 && filled.errors[0].startsWith('Could not save audio: ENOSPC') && filled.finals.length === 6 && after === 4
+    && filled.playable && filled.secs.every((s) => Math.abs(s - 8) < 0.1),
+  `${filled.thrown ? `audio() threw ${filled.thrown.code}; ` : ''}errors: ${filled.errors.join(' | ') || 'none'}; ${filled.finals.length} sentences, ${after} after the disk filled; WAVs ${filled.secs.map((s) => `${s.toFixed(2)} s`).join(', ')}${filled.playable ? '' : ', a header and its file differ'}`);
 
 // ---------- crosstalk gate and two-mic session (need Silero) ----------
 const silero = fs.existsSync(config.vad.sileroModel);
