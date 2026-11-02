@@ -1,6 +1,6 @@
 // Loaded into the page by test/ui/run.mjs: fake microphones that play the test speakers instead of a real mic, and
 // fake audio outputs. The test changes window.__fake to plug devices in and out, re-pair one under a new id, or make
-// a mic record at 8 kHz. Clipboard writes and downloads are captured instead of performed. Nothing is played out
+// a mic record at 8 kHz or send only digital silence. Clipboard writes and downloads are captured instead of performed. Nothing is played out
 // loud: an output the page picks is silent, and window.__speakerLevel() measures what it would have played.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -49,8 +49,10 @@ md.getUserMedia = async ({ audio }) => {
   if (!dev || kind(dev) !== 'audioinput' || !f.present.includes(id)) throw Object.assign(new Error('Requested device not found'), { name: 'NotFoundError' });
   window.__mics.push({ id, autoGainControl: audio.autoGainControl });
   const ctx = new AudioContext({ sampleRate: 16000 });
-  const buffer = ctx.createBuffer(1, AUDIO[dev.audio].length, 16000);
-  buffer.copyToChannel(AUDIO[dev.audio], 0);
+  // A mic in f.silent sends digital silence: muted, or a Bluetooth headset whose mic macOS has stopped.
+  const pcm = f.silent?.includes(id) ? new Float32Array(10 * 16000) : AUDIO[dev.audio];
+  const buffer = ctx.createBuffer(1, pcm.length, 16000);
+  buffer.copyToChannel(pcm, 0);
   const src = ctx.createBufferSource();
   src.buffer = buffer;
   src.loop = LOOP;

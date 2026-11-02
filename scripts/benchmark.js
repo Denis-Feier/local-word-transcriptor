@@ -28,7 +28,8 @@ const option = (name) => {
 const limit = Number(option('--limit')) || Infinity;
 const name = option('--name') ?? 'fleurs-ro';
 const RESULTS = path.join(ROOT, 'benchmarks', 'results', name);
-const ids = option('--models')?.split(',') ?? MODELS.filter(isInstalled).map((m) => m.id);
+// The cloud model only when named: ElevenLabs bills every second of the ~2.5 h test set.
+const ids = option('--models')?.split(',') ?? MODELS.filter((m) => isInstalled(m) && !m.cloud).map((m) => m.id);
 const models = ids.map((id) => findModel(id) ?? (console.error(`Unknown model "${id}"`), process.exit(1)));
 
 async function ensureDataset() {

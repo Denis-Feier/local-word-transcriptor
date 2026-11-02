@@ -1,4 +1,4 @@
-# Live Transcriber in one image: Node app + whisper.cpp + Python/NeMo (for Jackrabbit).
+# Live Transcriber in one image: Node app + whisper.cpp + Python/NeMo (for the NeMo models).
 # Docker on macOS runs a Linux VM without access to the Apple GPU, so every model runs on the CPU here.
 #
 #   docker compose up --build        then open http://localhost:3000

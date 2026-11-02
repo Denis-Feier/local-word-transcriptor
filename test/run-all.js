@@ -40,8 +40,10 @@ function run(name, cmd, cmdArgs, { minutes, env = {}, tag = false } = {}) {
   return new Promise((resolve) => {
     const resultFile = path.join(OUT, `${name}.json`);
     const log = fs.createWriteStream(path.join(OUT, `${name}.log`));
-    const childEnv = { ...process.env, TEST_RESULT: resultFile, ...env };
+    // ENV_FILE: the suites never read the user's .env.local, which holds their real API keys (TESTING.md §2).
+    const childEnv = { ...process.env, TEST_RESULT: resultFile, ENV_FILE: os.devNull, ...env };
     delete childEnv.ELECTRON_RUN_AS_NODE; // set inside VS Code's terminal; it would turn Electron into plain Node
+    delete childEnv.ELEVENLABS_API_KEY;
     const t0 = Date.now();
     const child = spawn(cmd, cmdArgs, { cwd: ROOT, env: childEnv });
     child.stdout.pipe(log);

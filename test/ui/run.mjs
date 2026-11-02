@@ -6,7 +6,7 @@
 import { app, BrowserWindow, session, nativeTheme } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT, SR, FIXTURE, startServer, speakers, loadWav, saveWav, scratch, sleep, suite } from '../helpers.js';
+import { ROOT, SR, FIXTURE, startServer, speakers, loadWav, saveWav, scratch, sleep, suite, fakeElevenLabs } from '../helpers.js';
 
 const OUT = process.env.UI_OUT ?? scratch('ui');
 fs.mkdirSync(OUT, { recursive: true });
@@ -29,6 +29,7 @@ app.whenReady().then(async () => {
   };
   let server = await serve();
   const scratchDirs = [];
+  const fakes = [];
   const pageErrors = [];
   const newWindow = (width = 1100, height = 900) => {
     const w = new BrowserWindow({
@@ -44,10 +45,22 @@ app.whenReady().then(async () => {
   };
   const win = newWindow();
   const js = (code, w = win) => w.webContents.executeJavaScript(code);
-  const shot = async (name, w = win) => fs.writeFileSync(path.join(OUT, `${name}.png`), (await w.webContents.capturePage()).toPNG());
+  // capturePage now and then fails with UnknownVizError (Chromium's compositor, not the page; 2 of 6 runs on
+  // 2026-11-01, each time at another screenshot). Retry; a screenshot that still fails is left out of the visual
+  // review (§8.1) instead of ending the run before the remaining checks.
+  const shot = async (name, w = win) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return fs.writeFileSync(path.join(OUT, `${name}.png`), (await w.webContents.capturePage()).toPNG());
+      } catch (err) {
+        if (attempt === 3) return console.log(`screenshot ${name}.png not taken: ${err.message}`);
+        await sleep(500);
+      }
+    }
+  };
   const state = (w = win) => js(`(() => ({
     fields: [...document.querySelectorAll('#mics .field')].map((f) => ({ name: f.querySelector('span').textContent, value: f.querySelector('select').value, text: f.querySelector('select').selectedOptions[0]?.text, options: [...f.querySelector('select').options].map((o) => o.value + (o.disabled ? ':off' : '')), dot: f.dataset.mic ?? null })),
-    levels: [...document.querySelectorAll('#levels .level')].map((l) => ({ who: l.querySelector('.who').textContent, state: l.querySelector('.speaking').textContent, width: parseFloat(l.querySelector('.meter-fill').style.width) || 0 })),
+    levels: [...document.querySelectorAll('#levels .level')].map((l) => ({ who: l.querySelector('.who').textContent, state: l.querySelector('.speaking').textContent, width: parseFloat(l.querySelector('.meter-fill').style.width) || 0, mute: l.querySelector('.mute').textContent })),
     lines: [...document.querySelectorAll('#transcript .line')].map((l) => ({ mic: l.dataset.mic ?? null, who: l.querySelector('.who').textContent, text: l.querySelector('.text').textContent, partial: l.classList.contains('partial'), overlap: l.classList.contains('overlap'), color: getComputedStyle(l.querySelector('.text')).color })),
     error: document.getElementById('error').hidden ? '' : document.getElementById('error').textContent,
     recording: document.getElementById('toggleText').textContent === 'Stop',
@@ -143,9 +156,9 @@ app.whenReady().then(async () => {
     await sleep(600);
     const cap = await js(`[...document.querySelectorAll('.stage-line')].map((l) => (l.dataset.mic ?? '-') + ':' + l.textContent.slice(0, 12))`, captions);
     t.check('UI-PROJ-01', 'the caption window shows the lines in their mic colours', cap.some((c) => c.startsWith('1:')) && cap.some((c) => c.startsWith('2:')), cap.join(' | '));
-    const sent = await js('window.__captions');
+    const watched = await js('window.__captions');
     t.check('UI-PROJ-04', 'no captions are sent while no caption window or projector view is open; a caption window that opens gets them at once',
-      unwatched === 0 && sent > 0, `${unwatched} caption updates during the recording, ${sent} once a caption window opened`);
+      unwatched === 0 && watched > 0, `${unwatched} caption updates during the recording, ${watched} once a caption window opened`);
     await shot('caption-window', captions);
     captions.destroy();
     await click('projector');
@@ -170,11 +183,11 @@ app.whenReady().then(async () => {
     await win.loadURL(`http://127.0.0.1:${server.port}/`); // the old page says goodbye; the new one asks who is listening
     await waitFor((x) => x.status === 'ready', 10000);
     const fed = await until(async () => (await captionHint(displays[0])) === 'Microphone is off' && (await captionHint(displays[1])) === 'Microphone is off', 5000);
-    const reloaded = await Promise.all(displays.map(captionHint));
+    const afterReload = await Promise.all(displays.map(captionHint));
     await click('toggle');
     const listening = await until(async () => (await captionHint(displays[0])) === 'Listening…', 5000);
     t.check('UI-PROJ-05', 'caption windows open while the main window is reloaded are fed again by the new page', fed && listening,
-      `after the reload: ${JSON.stringify(reloaded)}; after Start: ${JSON.stringify(await captionHint(displays[0]))}`);
+      `after the reload: ${JSON.stringify(afterReload)}; after Start: ${JSON.stringify(await captionHint(displays[0]))}`);
     await closeWindow(displays[0]);
     await js(tapCaptions);
     await until(async () => (await js('window.__captions')) > 0, 5000); // live text and speech changes go on meanwhile
@@ -256,6 +269,24 @@ app.whenReady().then(async () => {
     await click('toggle');
     s = await waitFor((x) => x.error);
     t.check('UI-DEV-09', 'a mic recording at 8 kHz gets a "less accurate" warning', s.error.includes('8 kHz'), s.error);
+    await click('toggle');
+
+    // A second Bluetooth headset on a Mac: open, but macOS sends only digital silence from its mic.
+    s = await open();
+    await js(`(() => { window.__fake.devices.find((d) => d.deviceId === 'mic-a').label = 'Jabra Evolve 65 TE (Bluetooth)'; window.__fake.silent = ['mic-b']; navigator.mediaDevices.dispatchEvent(new Event('devicechange')); })()`);
+    await sleep(300);
+    await pick(0, 'mic-a');
+    await pick(1, 'mic-b');
+    await click('toggle');
+    s = await waitFor((x) => x.error.includes('sends no sound'), 12000);
+    t.check('UI-DEV-12', 'a mic that sends only digital silence: "no sound", a warning naming it, the one-Bluetooth-mic hint, Mic 1 keeps recording',
+      s.recording && s.levels[1].state === 'no sound' && s.levels[0].state !== 'no sound' && s.error.includes('Mic 2 (AirPods) sends no sound') && s.error.includes('one Bluetooth headset'), s.error);
+    await js(`window.__fake.silent = []`);
+    await unplug('mic-b');
+    await waitFor((x) => x.levels[1].state === 'not connected');
+    await plug('mic-b');
+    s = await waitFor((x) => x.levels[1].state !== 'not connected' && x.levels[1].state !== 'no sound' && !x.error, 8000);
+    t.check('UI-DEV-13', 'the same mic back with sound: the warning goes', s.levels[1].state !== 'no sound' && !s.error, s.error);
     await click('toggle');
 
     // ---------- remembered choices ----------
@@ -354,6 +385,90 @@ app.whenReady().then(async () => {
     t.check('UI-SPK-09', 'None stops the speaker, hides the volume and sets the meters back to zero',
       !sp.sink && !sp.volumeShown && sp.value === 'none' && moving.some((w) => w > 0) && s.levels.every((l) => l.width === 0), `meters ${moving.map((w) => w.toFixed(0)).join('/')} → ${s.levels.map((l) => l.width).join('/')} %`);
 
+    // ---------- mute ----------
+    // The audio the page sends, measured: each chunk's loudest sample per mic, so a muted mic must give exact zeros
+    // (a meter reads 0 % in every pause too). Installed once per page load.
+    const tapSent = () => js(`(() => {
+      window.__sent = [];
+      const send = WebSocket.prototype.send;
+      WebSocket.prototype.send = function (data) {
+        if (data instanceof ArrayBuffer) {
+          const samples = new Float32Array(data, 4);
+          const length = samples.length / new Uint32Array(data, 0, 1)[0];
+          const peaks = [];
+          for (let i = 0; i < samples.length; i++) peaks[Math.floor(i / length)] = Math.max(peaks[Math.floor(i / length)] ?? 0, Math.abs(samples[i]));
+          window.__sent.push({ at: performance.now(), peaks });
+        }
+        return send.call(this, data);
+      };
+    })()`);
+    const sentBetween = (from, to = 1e12) => js(`window.__sent.filter((c) => c.at >= ${from} && c.at < ${to}).map((c) => c.peaks)`);
+    const peak = (sent, mic) => Math.max(0, ...sent.map((p) => p[mic]));
+    const muteMic = (mic) => js(`(() => { document.querySelectorAll('#levels .level')[${mic}].querySelector('.mute').click(); return performance.now(); })()`);
+    s = await open();
+    await pick(1, 'mic-b');
+    await tapSent();
+    await muteMic(1);
+    s = await state();
+    const inSettings = await js(`[...document.querySelectorAll('#settingsLevels .level')].map((l) => l.querySelector('.mute').textContent + '/' + l.querySelector('.speaking').textContent)`);
+    t.check('UI-MUTE-01', 'a Mute button on each mic\'s meter; Mute on Mic 2 before Start: "muted" and "Unmute", in Settings too',
+      s.levels.map((l) => l.mute).join() === 'Mute,Unmute' && s.levels[1].state === 'muted' && inSettings.join() === 'Mute/listening,Unmute/muted',
+      `${s.levels.map((l) => `${l.who} ${l.mute}/${l.state}`).join(', ')}; Settings ${inSettings.join(', ')}`);
+    await click('toggle');
+    let started = await js('performance.now()');
+    s = await waitFor((x) => finals(x).some((l) => l.mic === '1') && !x.lines.some((l) => l.partial), 20000);
+    let sent = await sentBetween(started);
+    await shot('mic-muted');
+    t.check('UI-MUTE-02', 'Mic 2 muted from Start: it sends exact zeros, Mic 1 is transcribed, nothing under Mic 2, no "no sound" warning after 5 s',
+      sent.length > 50 && peak(sent, 1) === 0 && peak(sent, 0) > 0.01 && finals(s).length >= 1 && s.lines.every((l) => l.mic === '1') && s.levels[1].state === 'muted' && !s.error,
+      `${sent.length} chunks, peak Mic 1 ${peak(sent, 0).toFixed(3)}, Mic 2 ${peak(sent, 1)}; lines ${s.lines.map((l) => l.who).join(' ')}; error "${s.error}"`);
+    await click('toggle');
+    await sleep(800);
+    await click('toggle'); // the fake mics' clips start again: B talks for 8.7 s
+    await waitFor((x) => x.recording);
+    await sleep(1500);
+    const stillMuted = (await state()).levels[1].state === 'muted';
+    const opens = await js('window.__mics.length');
+    const unmutedAt = await muteMic(1);
+    await sleep(2500);
+    const mutedAt = await muteMic(1);
+    const reopened = (await js('window.__mics.length')) !== opens;
+    await sleep(1500);
+    const unmuted = await sentBetween(unmutedAt + 300, mutedAt);
+    const remuted = await sentBetween(mutedAt + 300);
+    s = await waitFor((x) => finals(x).some((l) => l.mic === '2') && !x.lines.some((l) => l.partial), 20000);
+    t.check('UI-MUTE-03', 'Mute stays through Stop and Start; Unmute while recording: Mic 2\'s sound is back at once, without reopening the mic',
+      stillMuted && !reopened && unmuted.length >= 15 && peak(unmuted, 1) > 0.01, `muted after Start: ${stillMuted}; reopened: ${reopened}; ${unmuted.length} chunks unmuted, peak Mic 2 ${peak(unmuted, 1).toFixed(3)}`);
+    t.check('UI-MUTE-04', 'Mute while recording: exact zeros from Mic 2 from then on; what it heard before is still transcribed under Mic 2; Mic 1 records on',
+      remuted.length >= 10 && peak(remuted, 1) === 0 && peak(remuted, 0) > 0.01 && s.levels[1].state === 'muted' && finals(s).some((l) => l.mic === '2') && s.recording,
+      `${remuted.length} chunks, peak Mic 1 ${peak(remuted, 0).toFixed(3)}, Mic 2 ${peak(remuted, 1)}; Mic 2 lines: ${finals(s).filter((l) => l.mic === '2').map((l) => l.text.slice(0, 30)).join(' | ')}`);
+    await click('toggle');
+    // The speaker: a muted mic is not played. Mic 1 alone; its clip (6.8 s) starts when the speaker opens.
+    s = await open();
+    await muteMic(0);
+    await pickSpeaker('out-bt');
+    await sleep(500);
+    const whileMuted = await loudest(1000);
+    await muteMic(0);
+    const afterUnmute = await loudest(1000);
+    await muteMic(0);
+    await sleep(300);
+    const mutedAgain = await loudest(1000);
+    t.check('UI-MUTE-05', 'a muted mic is not played on the speaker, opened muted or muted while playing; unmuted, it plays',
+      whileMuted < -90 && afterUnmute > -50 && mutedAgain < -90, `${whileMuted.toFixed(1)} → ${afterUnmute.toFixed(1)} → ${mutedAgain.toFixed(1)} dBFS`);
+    await pickSpeaker('none');
+    // Not remembered: a mic picked in its menu starts unmuted, and after a reload every mic is on.
+    await pick(1, 'mic-b');
+    await muteMic(1);
+    await pick(1, 'mic-c');
+    const newMic = (await state()).levels[1].mute;
+    await muteMic(1);
+    await win.loadURL(`http://127.0.0.1:${server.port}/`);
+    s = await waitFor((x) => x.fields[1]?.value === 'mic-c', 5000);
+    t.check('UI-MUTE-06', 'a mic picked in its menu starts unmuted; after a reload the mics are remembered and none is muted',
+      newMic === 'Mute' && s.fields[1].value === 'mic-c' && s.levels.length === 2 && s.levels.every((l) => l.mute === 'Mute' && l.state !== 'muted'),
+      `new Mic 2: ${newMic}; after reload ${s.levels.map((l) => `${l.who} ${l.mute}/${l.state}`).join(', ')}`);
+
     // ---------- server restart mid-recording ----------
     s = await open();
     await pick(1, 'mic-b');
@@ -396,6 +511,25 @@ app.whenReady().then(async () => {
     const energy = await serve({ env: { VAD: 'energy' } });
     s = await open(energy);
     t.check('UI-CFG-03', 'with the loudness detector the Silero threshold slider is greyed out', await js(`document.getElementById('tune-vadThreshold').disabled`));
+    // Save audio on a disk that fills up (#19): no file may grow past 20 blocks (20 KB on macOS, 10 KB on Linux), so the
+    // WAV is full within a second of Start.
+    if (process.platform === 'win32') t.skip('UI-DISK-01', 'Save audio on a disk that fills up: the box unticks', 'needs ulimit (macOS, Linux)');
+    else {
+      const small = await serve({ maxFileBlocks: 20 });
+      s = await open(small);
+      await click('saveAudio');
+      const ticked = await js(`document.getElementById('saveAudio').checked`);
+      await click('toggle');
+      s = await waitFor((x) => x.error.startsWith('Could not save audio'), 15000);
+      const box = await js(`({ checked: document.getElementById('saveAudio').checked, saved: localStorage.getItem('saveAudio') })`);
+      await click('toggle');
+      await win.loadURL(`http://127.0.0.1:${small.port}/`);
+      await waitFor((x) => x.status === 'ready', 5000);
+      const reloaded = await js(`document.getElementById('saveAudio').checked`);
+      t.check('UI-DISK-01', 'Save audio on a disk that fills up: "Could not save audio" and the box unticks; the saved choice stays, so a reload ticks it again',
+        ticked && s.error.startsWith('Could not save audio') && !box.checked && box.saved === 'true' && reloaded,
+        `error "${s.error}"; the box ${box.checked ? 'still ticked' : 'unticked'}, saved choice ${box.saved}; after a reload ${reloaded ? 'ticked' : 'unticked'}`);
+    }
     // A models folder with only Parakeet 110M: the other models show their download size and ask first.
     const few = scratch('few-models');
     scratchDirs.push(few);
@@ -409,12 +543,35 @@ app.whenReady().then(async () => {
     s = await state();
     t.check('UI-MODEL-01', 'a model not downloaded shows its size and asks before downloading; No changes nothing',
       s.models.some((m) => /\(download .+\)/.test(m)) && asked.length === 1 && /Download Orukeet/.test(asked[0]) && s.status === 'ready', asked[0]);
+    // The ElevenLabs cloud model, against the stand-in (never the real service): the page says the audio leaves.
+    const fake = await fakeElevenLabs();
+    fakes.push(fake);
+    const cloudServer = await serve({ model: 'elevenlabs-scribe-v2', env: { ELEVENLABS_API_KEY: 'test-key', ELEVENLABS_BASE_URL: fake.url } });
+    s = await open(cloudServer);
+    const privacy = () => js(`(() => { const p = document.getElementById('privacy'); return { text: p.textContent, color: getComputedStyle(p).color, cloud: p.classList.contains('cloud') }; })()`);
+    const onCloud = await privacy();
+    await click('toggle');
+    s = await waitFor((x) => x.lines.some((l) => l.partial && /^ascult \d+$/.test(l.text)), 15000);
+    const live = s.lines.filter((l) => l.partial).map((l) => l.text);
+    s = await waitFor((x) => finals(x).length >= 1, 20000);
+    await shot('cloud');
+    await click('toggle');
+    const cloudFinals = finals(s).map((l) => l.text);
+    await js(`(() => { const m = document.getElementById('model'); m.value = 'parakeet-ro-110m'; m.dispatchEvent(new Event('change')); })()`);
+    for (let n = 0; n < 75 && (await privacy()).cloud; n++) await sleep(200); // the server confirms the switch
+    s = await waitFor((x) => x.status === 'ready', 15000);
+    const onLocal = await privacy();
+    t.check('UI-MODEL-02', 'the ElevenLabs model (with a key): in the menu; the footer says the speech goes to the internet, in the warning colour; live and final lines are its texts; a local model brings the local note back',
+      s.models.some((m) => /ElevenLabs/.test(m)) && onCloud.cloud && /internet/.test(onCloud.text) && onCloud.color !== onLocal.color
+        && live.length > 0 && cloudFinals.length > 0 && cloudFinals.every((x) => /^propoziția \d+$/.test(x)) && !onLocal.cloud && /No audio leaves/.test(onLocal.text),
+      `footer: "${onCloud.text}"; live ${live.join(' | ')}; finals ${cloudFinals.join(' | ')}; after switching: "${onLocal.text}"`);
 
     t.check('UI-LOAD-02', 'no errors in the page console', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
   } catch (err) {
     t.check('UI-RUN', 'the UI run finished', false, err.stack);
   } finally {
     for (const s of servers) await s.stop().catch(() => {});
+    for (const fake of fakes) await fake.close();
     for (const dir of [SPEAKERS, ...scratchDirs]) fs.rmSync(dir, { recursive: true, force: true });
     console.log(`\nscreenshots: ${OUT}`);
     t.finish();
