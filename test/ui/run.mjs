@@ -472,6 +472,25 @@ app.whenReady().then(async () => {
     const energy = await serve({ env: { VAD: 'energy' } });
     s = await open(energy);
     t.check('UI-CFG-03', 'with the loudness detector the Silero threshold slider is greyed out', await js(`document.getElementById('tune-vadThreshold').disabled`));
+    // Save audio on a disk that fills up (#19): no file may grow past 20 blocks (20 KB on macOS, 10 KB on Linux), so the
+    // WAV is full within a second of Start.
+    if (process.platform === 'win32') t.skip('UI-DISK-01', 'Save audio on a disk that fills up: the box unticks', 'needs ulimit (macOS, Linux)');
+    else {
+      const small = await serve({ maxFileBlocks: 20 });
+      s = await open(small);
+      await click('saveAudio');
+      const ticked = await js(`document.getElementById('saveAudio').checked`);
+      await click('toggle');
+      s = await waitFor((x) => x.error.startsWith('Could not save audio'), 15000);
+      const box = await js(`({ checked: document.getElementById('saveAudio').checked, saved: localStorage.getItem('saveAudio') })`);
+      await click('toggle');
+      await win.loadURL(`http://127.0.0.1:${small.port}/`);
+      await waitFor((x) => x.status === 'ready', 5000);
+      const reloaded = await js(`document.getElementById('saveAudio').checked`);
+      t.check('UI-DISK-01', 'Save audio on a disk that fills up: "Could not save audio" and the box unticks; the saved choice stays, so a reload ticks it again',
+        ticked && s.error.startsWith('Could not save audio') && !box.checked && box.saved === 'true' && reloaded,
+        `error "${s.error}"; the box ${box.checked ? 'still ticked' : 'unticked'}, saved choice ${box.saved}; after a reload ${reloaded ? 'ticked' : 'unticked'}`);
+    }
     // A models folder with only Parakeet 110M: the other models show their download size and ask first.
     const few = scratch('few-models');
     scratchDirs.push(few);

@@ -12,7 +12,7 @@ import { encodeWav, decodeWav, WavWriter } from '../lib/wav.js';
 import { Segmenter } from '../lib/segmenter.js';
 import { EnergyDetector, SileroDetector, VadPool, createDetector } from '../lib/vad.js';
 import { CrosstalkGate } from '../lib/crosstalk.js';
-import { Session, fileStamp } from '../lib/session.js';
+import { Session, fileStamp, fmtTime } from '../lib/session.js';
 import { Transcriber } from '../lib/transcriber.js';
 import { config, ROOT } from '../lib/config.js';
 import { MODELS } from '../lib/models.js';
@@ -71,32 +71,56 @@ writer.close();
 t.check('UNIT-WAV-02', 'a WAV being written is playable after every chunk', half === 8000 && decodeWav(fs.readFileSync(wavFile)).samples.length === SR);
 
 /**
- * Pretends the disk has `free` bytes left for the WAV files opened while it is in place, as a real disk behaves: a write
- * that does not fit is cut short without an error, and the next one fails with ENOSPC; rewriting bytes a file already
- * has needs no room. open() counts those files still open; restore() puts the real fs back.
+ * Pretends the disk has `free` bytes left for the files opened while it is in place whose names end in one of `kinds`
+ * (WAVs unless given), as a real disk behaves: a write that does not fit is cut short without an error, and the next
+ * one fails with ENOSPC; rewriting bytes a file already has needs no room, and cutting a file shorter gives room back.
+ * A write without a position goes to the end of the file. appendFileSync goes the same way: Node writes a string
+ * straight from C++, past these functions, so the stand-in does here what Node does for a Buffer.
+ * open() counts those files still open; restore() puts the real fs back.
  */
-function smallDisk(free) {
-  const real = { openSync: fs.openSync, writeSync: fs.writeSync, closeSync: fs.closeSync };
-  const sizes = new Map(); // fd -> bytes in the file (the WAV writer creates a new, empty file)
+function smallDisk(free, kinds = ['.wav']) {
+  const real = { openSync: fs.openSync, writeSync: fs.writeSync, ftruncateSync: fs.ftruncateSync, closeSync: fs.closeSync, appendFileSync: fs.appendFileSync };
+  const sizes = new Map(); // fd -> bytes in the file
+  const onDisk = (file) => kinds.some((kind) => String(file).endsWith(kind));
+  const full = () => Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC', syscall: 'write' });
   fs.openSync = (file, ...rest) => {
     const fd = real.openSync(file, ...rest);
-    if (String(file).endsWith('.wav')) sizes.set(fd, 0);
+    if (onDisk(file)) sizes.set(fd, fs.fstatSync(fd).size);
     return fd;
   };
   fs.writeSync = (fd, buf, offset, length, position) => {
     if (!sizes.has(fd)) return real.writeSync(fd, buf, offset, length, position);
     const size = sizes.get(fd);
-    const fits = Math.min(length, size + free - position);
-    if (fits <= 0) throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC', syscall: 'write' });
-    const n = real.writeSync(fd, buf, offset, fits, position);
-    const grown = Math.max(0, position + n - size);
+    const at = position ?? size;
+    const fits = Math.min(length, size + free - at);
+    if (fits <= 0) throw full();
+    const n = real.writeSync(fd, buf, offset, fits, at);
+    const grown = Math.max(0, at + n - size);
     free -= grown;
     sizes.set(fd, size + grown);
     return n;
   };
+  fs.ftruncateSync = (fd, length = 0) => {
+    if (sizes.has(fd)) {
+      if (length - sizes.get(fd) > free) throw full();
+      free -= length - sizes.get(fd);
+      sizes.set(fd, length);
+    }
+    real.ftruncateSync(fd, length);
+  };
   fs.closeSync = (fd) => {
     sizes.delete(fd);
     real.closeSync(fd);
+  };
+  fs.appendFileSync = (file, data, ...rest) => {
+    if (!onDisk(file)) return real.appendFileSync(file, data, ...rest);
+    const buf = Buffer.from(data);
+    const fd = fs.openSync(file, 'a');
+    try {
+      for (let at = 0; at < buf.length;) at += fs.writeSync(fd, buf, at, buf.length - at);
+    } finally {
+      fs.closeSync(fd);
+    }
   };
   return { open: () => sizes.size, restore: () => Object.assign(fs, real) };
 }
@@ -254,6 +278,7 @@ async function diskFills() {
     finals: sent.filter((m) => m.type === 'final' && m.text),
     secs: wavs.map((b) => b.readUInt32LE(40) / (2 * SR)),
     playable: wavs.length === 2 && wavs.every((b) => b.readUInt32LE(40) === whole(b)),
+    options: sent.filter((m) => m.type === 'options').map((m) => m.saveAudio),
   };
 }
 const filled = await diskFills();
@@ -262,6 +287,75 @@ t.check('UNIT-SESS-08', 'the disk fills up while saving two mics: audio() never 
   !filled.thrown && filled.errors.length === 1 && filled.errors[0].startsWith('Could not save audio: ENOSPC') && filled.finals.length === 6 && after === 4
     && filled.playable && filled.secs.every((s) => Math.abs(s - 8) < 0.1),
   `${filled.thrown ? `audio() threw ${filled.thrown.code}; ` : ''}errors: ${filled.errors.join(' | ') || 'none'}; ${filled.finals.length} sentences, ${after} after the disk filled; WAVs ${filled.secs.map((s) => `${s.toFixed(2)} s`).join(', ')}${filled.playable ? '' : ', a header and its file differ'}`);
+t.check('UNIT-SESS-12', 'when a full disk stops Save audio, the page is told once to untick its box',
+  filled.options.length === 1 && filled.options[0] === false, `"options" messages: ${JSON.stringify(filled.options)}`);
+
+// ---------- the disk fills up while saving the transcript (#19; loudness detector, stand-in model) ----------
+// One mic, a sentence every 4 s, each transcribed as its own text. The disk has room for two lines and 10 bytes, so
+// line 3 is cut short and then fails, as on a real disk. Then there is room again (someone deleted files), the disk
+// fills again, Stop and Start are pressed, then Clear, and at last there is room again.
+async function textFills() {
+  const sent = [];
+  const out = scratch('full-text');
+  const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
+  const said = (n) => `propoziția numărul ${n} din ședință`;
+  let calls = 0;
+  const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null, transcribe: async () => ({ text: said(++calls), model: 'stub', ms: 1 }) };
+  const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
+  const sentence = concat(quiet(1), loud(1.5), quiet(1.5));
+  const talk = async (count) => {
+    for (let n = 0; n < count; n++) for (let i = 0; i < sentence.length; i += 1600) session.audio(sentence.subarray(i, i + 1600));
+    await sleep(20); // the stand-in model answers
+  };
+  const finals = () => sent.filter((m) => m.type === 'final' && m.text);
+  const files = () => sent.filter((m) => m.type === 'file' && m.kind === 'text').map((m) => path.resolve(m.path));
+  const text = (file) => (file && fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '');
+  let disk = smallDisk(2 * Buffer.byteLength(`[00:00] ${said(1)}\n`) + 10, ['.txt']);
+  await talk(4); // line 3 is cut short and fails; 3 and 4 wait
+  const whileFull = text(files()[0]);
+  disk.restore();
+  await talk(2); // line 5 takes 3 and 4 along
+  const caughtUp = text(files()[0]);
+  disk = smallDisk(0, ['.txt']);
+  await talk(2); // 7 and 8 wait
+  session.flush(); // Stop
+  await talk(1); // Start: 9 waits
+  session.reset(); // Clear: a new transcript; 7 to 9 had no room in the old one
+  await talk(1); // 10 waits
+  disk.restore();
+  await talk(1); // 11 takes 10 along
+  session.close();
+  /** A .txt against the page's lines from..to: '' when it holds exactly those, whole and in order; else how it differs. */
+  const differs = (txt, from, to) => {
+    const want = finals().slice(from - 1, to).map((f) => `[${fmtTime(f.start)}] ${f.text}\n`);
+    if (txt === want.join('')) return '';
+    const got = txt.split(/(?<=\n)/);
+    const missing = want.map((l, i) => !got.includes(l) && from + i).filter(Boolean);
+    const odd = got.filter((l) => !want.includes(l)).map((l) => JSON.stringify(l.length > 45 ? `${l.slice(0, 45)}…` : l));
+    return [missing.length && `lines ${missing.join(', ')} missing`, odd.length && `not a line: ${odd.join(', ')}`].filter(Boolean).join(', ') || 'out of order';
+  };
+  const told = []; // after which line each "Could not save transcript" came
+  sent.forEach((m, i) => m.type === 'error' && told.push(sent.slice(0, i).filter((x) => x.type === 'final' && x.text).length));
+  const result = {
+    finals: finals().length,
+    whileFull: differs(whileFull, 1, 2),
+    caughtUp: differs(caughtUp, 1, 6),
+    old: differs(text(files()[0]), 1, 6),
+    fresh: files().length === 2 ? differs(text(files()[1]), 10, 11) : `${files().length} transcript files`,
+    told,
+    errors: [...new Set(sent.filter((m) => m.type === 'error').map((m) => m.message))],
+  };
+  fs.rmSync(out, { recursive: true, force: true });
+  return result;
+}
+const tf = await textFills();
+t.check('UNIT-SESS-13', 'a full disk while saving the transcript: the .txt keeps only whole lines; once there is room it catches up, every line in order; after Clear the new transcript does too',
+  tf.finals === 11 && !tf.whileFull && !tf.caughtUp && !tf.old && !tf.fresh,
+  `${tf.finals} sentences. While full: ${tf.whileFull || 'lines 1-2, whole'}. With room again: ${tf.caughtUp || 'lines 1-6'}. `
+    + `After Clear, the old .txt: ${tf.old || 'lines 1-6'}; the new one: ${tf.fresh || 'lines 10-11'}`);
+t.check('UNIT-SESS-14', 'a full disk while saving the transcript: the page is told once, and again only after a save worked, after Start (which hides its errors) and after Clear',
+  tf.told.join() === '3,7,9,10' && tf.errors.length === 1 && tf.errors[0].startsWith('Could not save transcript: ENOSPC'),
+  `told after lines ${tf.told.join(', ') || 'never'} (expected 3, 7, 9, 10); ${tf.errors.join(' | ')}`);
 
 // ---------- recordings that start in the same second (#2; loudness detector: deterministic) ----------
 // File names have whole seconds. Two tabs, or the desktop app and `npm start` (they share transcripts/), can start

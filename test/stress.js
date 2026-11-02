@@ -88,7 +88,7 @@ async function play(server, m, { speed: pace = speed, saveAudio = true, onChunk,
     else if (msg.type === 'file') r.files.push(msg);
     else if (msg.type === 'status') r.statuses.push({ ...msg, wall: now });
     else if (msg.type === 'tuning') r.tuning.push(msg);
-    else if (!['models', 'mics', 'progress'].includes(msg.type)) r.unknown.push(msg);
+    else if (!['models', 'mics', 'progress', 'options'].includes(msg.type)) r.unknown.push(msg);
   });
   ws.on('close', () => (r.closed = true));
   ws.on('error', () => (r.closed = true));
@@ -557,9 +557,15 @@ async function disk() {
       if (!r.closed) await close(r.ws);
       const after = r.finals.filter((f) => f.start > 0.75 * m.length).length;
       const audioErrors = r.errors.filter((e) => /Could not save audio/.test(e.message)).length;
+      const textErrors = r.errors.filter((e) => /Could not save transcript/.test(e.message)).length;
+      await sleep(500);
+      const folder = path.join(mnt, 'transcripts');
+      const texts = fs.existsSync(folder) ? fs.readdirSync(folder).filter((f) => f.endsWith('.txt')).map((f) => fs.readFileSync(path.join(folder, f), 'utf8')) : [];
+      const whole = texts.every((s) => !s || s.endsWith('\n')); // #19: a line that does not fit is cut off again
       const crash = up ? '' : `; the server exited: ${server.log().split('\n').filter((l) => /ENOSPC|Error:|^\s+at /.test(l)).slice(0, 2).join(' / ').slice(0, 200)}`;
-      t.check('STRESS-DISK-01', 'Save audio on a disk that fills up: the server keeps transcribing, one "Could not save audio"', up && after >= 3 && audioErrors === 1,
-        `alive ${up}; ${after} lines after the disk filled; ${audioErrors} "Could not save audio" errors, ${r.errors.length} errors in all${crash}`);
+      t.check('STRESS-DISK-01', 'Save audio on a disk that fills up: the server keeps transcribing; one "Could not save audio", at most one "Could not save transcript"; the .txt ends on a whole line',
+        up && after >= 3 && audioErrors === 1 && textErrors <= 1 && whole,
+        `alive ${up}; ${after} lines after the disk filled; ${audioErrors} "Could not save audio" and ${textErrors} "Could not save transcript" errors, ${r.errors.length} in all; the .txt ${whole ? 'ends on a whole line' : 'ends mid-line'}${crash}`);
     } finally {
       keepLog(server, 'disk');
       await server.stop();
