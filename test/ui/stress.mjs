@@ -444,10 +444,14 @@ async function net() {
     const txt = fs.readdirSync(env.TRANSCRIPTS_DIR).filter((n) => n.endsWith('.txt')).sort().map((n) => fs.readFileSync(path.join(env.TRANSCRIPTS_DIR, n), 'utf8').split('\n').filter(Boolean));
     const saved = txt.flat();
     const lost = outages.flatMap((o) => o.shown.filter((text) => !saved.some((l) => l.endsWith(text))));
+    // A reconnect carries the clock on (D2, #10): a connection's times start where the audio sent before it ended
+    // (0.1 s a chunk). Counted from the connection's own start here, as the meeting's loop is matched per connection.
+    const since = (k) => conns.slice(0, k).reduce((sum, c) => sum + c.sent.length * 0.1, 0);
+    const own = (k) => (conns[k]?.finals ?? []).map((f) => ({ mic: f.mic, start: f.start - since(k), end: f.end - since(k), text: f.text }));
     // The buffered audio: what the page recorded while the server was down is transcribed on the next connection.
     const buffered = (o) => {
       const c = conns[o.conn];
-      const lines = (c?.finals ?? []).map((f) => ({ mic: f.mic, start: f.start, end: f.end, text: f.text }));
+      const lines = own(o.conn);
       const offsets = [0, 1].map((mic) => loopOffset(m, lines, mic, period));
       if (offsets.some((x) => x === null)) return { caught: 0, n: 1, offsets };
       const window = Math.min(o.outage, 300);
@@ -465,15 +469,24 @@ async function net() {
       const said = fs.readFileSync(file).subarray(0, 44).readUInt32LE(40);
       return said <= size && size - said <= 2 * 3200;
     });
-    t.check('STRESS-NET-01', `(D2) the server killed ${regular.length}× while the page records: it reconnects, buffered audio transcribed, nothing shown is lost`,
-      regular.every((o) => o.reconnect <= 30) && !lost.length && (n ? caught / n : 1) >= 0.9 && wavs.every(Boolean),
+    // One transcript for the whole recording, its times never going back on a mic.
+    const times = (txt[0] ?? []).map((l) => l.match(/^\[([\d:]+)\] (?:(Mic \d+): )?/)).filter(Boolean)
+      .map(([, at, mic]) => ({ mic, sec: at.split(':').reduce((sum, x) => sum * 60 + Number(x), 0) }));
+    const latest = {};
+    const backwards = times.filter(({ mic, sec }) => {
+      const earlier = sec + 1 < (latest[mic] ?? -Infinity);
+      latest[mic] = Math.max(latest[mic] ?? -Infinity, sec);
+      return earlier;
+    }).length;
+    t.check('STRESS-NET-01', `(D2) the server killed ${regular.length}× while the page records: it reconnects, buffered audio transcribed, nothing shown is lost, one transcript with the clock going on`,
+      regular.every((o) => o.reconnect <= 30) && !lost.length && (n ? caught / n : 1) >= 0.9 && wavs.every(Boolean) && txt.length === 1 && !backwards,
       `back after ${regular.map((o) => p(o.reconnect, 1)).join(', ')} s; ${lost.length} shown lines missing from the .txt; buffered audio caught ${caught}/${n}; ${wavs.filter(Boolean).length}/${wavs.length} WAVs playable; `
-      + `${txt.length} transcript files, each starting at ${txt.map((f) => f[0]?.slice(0, 7) ?? '—').join(', ')} (D2: a new file and clock per reconnect)`);
+      + `${txt.length} transcript file(s), starting at ${txt.map((f) => f[0]?.slice(0, 7) ?? '—').join(', ')}, last line at ${txt[0]?.at(-1)?.slice(0, 9) ?? '—'}; ${backwards} line(s) earlier than one before it on the same mic`);
     const long = outages.find((o) => o.outage > 300);
     if (long) {
       const x = buffered(long);
       const before = conns[long.conn - 1];
-      const prevLines = (before?.finals ?? []).map((f) => ({ mic: f.mic, start: f.start, end: f.end, text: f.text }));
+      const prevLines = own(long.conn - 1);
       const prevOffset = loopOffset(m, prevLines, 0, period);
       const dropAt = ((before.sent.length * 0.1 + prevOffset) % period + period) % period;
       const keptFrom = x.offsets[0] === null ? NaN : (((x.offsets[0] - dropAt) % period) + period) % period;

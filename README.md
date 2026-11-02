@@ -74,7 +74,8 @@ Open **http://localhost:3000**, press **Start**, and allow the microphone.
 - After a short pause (~0.7 s) the sentence is transcribed again in full and turns final.
 - Final lines are saved as you go to `transcripts/<date-time>.txt`. **Clear** starts a new file. A recording that
   starts in the same second as another (a second tab, or the desktop app beside `npm start`) gets `<date-time>-2`,
-  so two recordings never share a file.
+  so two recordings never share a file. If the server restarts or the network drops mid-recording, the page carries on
+  the same `.txt` (and WAVs) with the clock going on; reloading the page starts a new file, as the page starts empty.
 
 ## Projector captions and live settings
 
@@ -293,7 +294,7 @@ The report (speed, WER, and every model's full transcript) is written to `transc
 - **Put the laptop in the middle** of the group, screen up. The built-in mics face the keyboard area.
 - **An external USB conference or boundary mic** helps the most for people at the far end of the table. Pick it under **Microphone**.
 - **Noise suppression** is off by default because the browser's filter can swallow quiet, distant voices. Turn it on if there is steady background noise (air conditioning, traffic).
-- The page keeps the screen awake while recording or playing on a speaker. If the server restarts mid-meeting, the page keeps recording and sends the buffered audio once it reconnects. It keeps the newest 5 minutes: after a longer outage the oldest audio is dropped, and the page says how much was lost.
+- The page keeps the screen awake while recording or playing on a speaker. If the server restarts mid-meeting, the page keeps recording and sends the buffered audio once it reconnects, into the same transcript file. It keeps the newest 5 minutes: after a longer outage the oldest audio is dropped, and the page says how much was lost.
 - Overlapping speech (two people at once) is transcribed as one mixed sentence. Turn-taking works best, or give
   each speaker their own mic (see *Two microphones*).
 

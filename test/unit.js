@@ -190,6 +190,24 @@ try {
 t.check('UNIT-WAV-05', 'a WAV writer never overwrites a file: it refuses one that exists and leaves it as it was',
   overwrote === 'EEXIST' && fs.readFileSync(keptFile).equals(encodeWav(tone)), `${overwrote}; the file has ${fs.statSync(keptFile).size} of ${encodeWav(tone).length} bytes`);
 
+// A reconnect carries the WAV on (#10): the server was killed after a chunk's samples and before its header.
+const goneOn = path.join(dir, 'resumed.wav');
+const before = new WavWriter(goneOn);
+before.append(tone.subarray(0, 8000));
+before.close();
+fs.appendFileSync(goneOn, Buffer.alloc(2 * 100 + 1)); // 100 samples and half of one, not in the header
+const carried = new WavWriter(goneOn, { resume: true });
+carried.append(tone.subarray(8000));
+carried.close();
+const resumedWav = decodeWav(fs.readFileSync(goneOn));
+const fresh = new WavWriter(path.join(dir, 'resumed-new.wav'), { resume: true }); // nothing to carry on: a new file
+fresh.append(tone.subarray(0, 1600));
+fresh.close();
+t.check('UNIT-WAV-06', 'a resumed WAV writer carries on an existing file after its last whole sample, header fixed; with no file it starts one',
+  resumedWav.samples.length === 8000 + 100 + 8000 && Math.abs(resumedWav.samples.at(-1) - tone.at(-1)) < 1e-4
+    && decodeWav(fs.readFileSync(path.join(dir, 'resumed-new.wav'))).samples.length === 1600,
+  `${resumedWav.samples.length} samples (want 16,100)`);
+
 // ---------- segmenter (loudness detector: deterministic) ----------
 const timing = { silenceMs: 700, preRollMs: 300, minSpeechMs: 250, maxSegmentSec: 20 };
 const quiet = (sec) => Float32Array.from({ length: Math.round(sec * SR) }, (_, i) => 0.0004 * Math.sin(i * 1.7));
@@ -258,6 +276,53 @@ t.check('UNIT-SESS-06', 'changing the mics (1 ↔ 2, 11 times) keeps every mic\'
 t.check('UNIT-SESS-07', 'after 11 mic changes each mic\'s sentence starts when it does without them',
   moved.starts.every((s, mic) => Math.abs(s - steady.starts[mic]) < 0.016),
   moved.starts.map((s, mic) => `mic ${mic + 1}: ${s?.toFixed(3)} s (${steady.starts[mic]?.toFixed(3)} s without)`).join(', '));
+
+// ---------- a reconnect carries the transcript on (#10; loudness detector, stand-in model) ----------
+// One mic, Save audio on, a sentence at 1 s. The connection drops; the page reconnects and tells the new connection the
+// transcript's name and the 4 s of audio it had sent, then the same again: the second sentence is 4 s after the first (the line's time is where its speech starts, with
+// a little lead-in, so 0:00 and 0:04).
+async function reconnects(resumeWith) {
+  const out = scratch('resume');
+  const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
+  const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null, transcribe: async () => ({ text: 'o propoziție', model: 'stub', ms: 1 }) };
+  const talk = concat(quiet(1), loud(1.5), quiet(1.5));
+  const connect = async (resume, others = []) => {
+    const sent = [];
+    const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
+    session.setOptions({ saveAudio: true });
+    if (resume) session.resume(resume, others);
+    for (let i = 0; i < talk.length; i += 1600) session.audio(talk.slice(i, i + 1600));
+    session.flush();
+    await sleep(50);
+    return { session, sent, name: sent.find((m) => m.type === 'file')?.name };
+  };
+  const one = await connect();
+  one.session.close();
+  const two = await connect(resumeWith(one.name, talk.length));
+  two.session.close();
+  const files = fs.readdirSync(out).sort();
+  const txt = files.filter((f) => f.endsWith('.txt')).map((f) => fs.readFileSync(path.join(out, f), 'utf8'));
+  const wavs = files.filter((f) => f.endsWith('.wav')).map((f) => decodeWav(fs.readFileSync(path.join(out, f))).samples.length / SR);
+  // Another connection still writing the transcript: a second one cannot take it over.
+  const busy = await connect();
+  const thief = await connect({ name: busy.name, samples: 0 }, [busy.session]);
+  busy.session.close();
+  thief.session.close();
+  fs.rmSync(out, { recursive: true, force: true });
+  return { files, txt, wavs, starts: two.sent.filter((m) => m.type === 'final' && m.text).map((m) => m.start), names: [one.name, two.name], taken: thief.name !== busy.name };
+}
+const resumed = await reconnects((name, samples) => ({ name, samples }));
+t.check('UNIT-SESS-19', 'a reconnect that tells the server its transcript and audio carries on the same .txt and WAV, the clock going on',
+  resumed.names[0] === resumed.names[1] && resumed.txt.length === 1 && resumed.txt[0] === '[00:00] o propoziție\n[00:04] o propoziție\n'
+    && resumed.wavs.length === 1 && Math.abs(resumed.wavs[0] - 8) < 0.01 && Math.abs(resumed.starts[0] - 4.7) < 0.5,
+  `${resumed.files.join(', ')}; ${JSON.stringify(resumed.txt)}; WAV ${resumed.wavs.map((w) => `${w.toFixed(2)} s`).join(', ')}`);
+const refusedNames = await Promise.all([
+  reconnects(() => ({ name: '../../escape', samples: 64000 })),
+  reconnects(() => ({ name: '2020-01-01_00-00-00', samples: 64000 })), // no such transcript
+]);
+t.check('UNIT-SESS-20', 'a reconnect naming a transcript that is not there (or not a name), or that another connection is writing, starts a new file; the clock still goes on',
+  refusedNames.every((r) => r.names[0] !== r.names[1] && r.txt.length === 2 && r.txt.includes('[00:04] o propoziție\n')) && resumed.taken,
+  refusedNames.map((r) => r.files.join(', ')).join(' | ') + (resumed.taken ? '' : '; a second connection took over an open transcript'));
 
 // ---------- the disk fills up while saving audio (#1; loudness detector, stand-in model) ----------
 // Two mics: a sentence on mic 1 every 4 s for 24 s, room noise on mic 2. The WAVs have room for 8 s of both mics and

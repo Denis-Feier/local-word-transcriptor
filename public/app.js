@@ -50,6 +50,11 @@ let recording = false;
 let capture = null; // the open mics while recording (mics.js)
 const backlog = createBacklog(MAX_BACKLOG);
 let lost = ''; // what an outage longer than the backlog cost, shown until the next Start
+// Where the transcript is, so a reconnect (server restarted, network dropped) carries it on (#10): the server's name for
+// it, and the audio sent per mic since the page opened (audio an outage dropped is not counted, as in the WAVs). A reload
+// starts again, as the page does.
+let resumeName = null;
+let sentSamples = 0;
 let wakeLock = null;
 let modelSignature = '';
 let maxMics = 1; // how many mics may be used at once; the server says (MAX_MICS)
@@ -101,8 +106,9 @@ function connect() {
   ws.onopen = () => {
     generation++;
     send({ type: 'options', saveAudio: els.saveAudio.checked });
+    if (resumeName || sentSamples) send({ type: 'resume', name: resumeName, samples: sentSamples });
     const kept = backlog.take();
-    for (const chunk of kept.chunks) ws.send(chunk);
+    for (const chunk of kept.chunks) sendAudio(chunk);
     lost = lostNote(kept) || lost;
     if (lost) showError(lost);
   };
@@ -113,6 +119,13 @@ function connect() {
     render();
     setTimeout(connect, 1500);
   };
+}
+
+/** One chunk: Uint32 number of mics, then each mic's samples. */
+function sendAudio(buffer) {
+  ws.send(buffer);
+  const count = new Uint32Array(buffer, 0, 1)[0];
+  sentSamples += (buffer.byteLength - 4) / 4 / count;
 }
 
 function send(msg) {
@@ -159,6 +172,7 @@ function handle(msg) {
       break;
     case 'file':
       files[`${msg.kind}${msg.mic ?? ''}`] = msg.path;
+      if (msg.name) resumeName = msg.name;
       els.file.textContent = `Saving to ${Object.values(files).join(' + ')}`;
       break;
     case 'error':
@@ -369,7 +383,7 @@ async function openMics() {
     muted: mutedMics(),
     onChunk: (buffer) => {
       showLevels(buffer);
-      if (ws?.readyState === WebSocket.OPEN) ws.send(buffer);
+      if (ws?.readyState === WebSocket.OPEN) sendAudio(buffer);
       else {
         backlog.push(buffer);
         if (backlog.dropped === 1) {
@@ -626,7 +640,7 @@ function startsAfter(list, time) {
 function markOverlap(key) {
   const line = lines.get(key);
   if (!line.labeled || !Number.isFinite(line.start) || !Number.isFinite(line.end)) return;
-  const connection = Math.floor(key / 1e6); // times restart per connection
+  const connection = Math.floor(key / 1e6); // ids restart per connection (and times, when it could not carry on)
   if (spoken.connection !== connection) spoken = { connection, lines: [], longest: 0 };
   // A line that overlaps this one starts at most `longest` seconds before it: look at those lines alone.
   const list = spoken.lines;
@@ -690,6 +704,7 @@ function clearTranscript() {
   els.empty.hidden = false;
   els.file.textContent = '';
   for (const kind of Object.keys(files)) delete files[kind];
+  resumeName = null; // the server starts a new file; the clock goes on, as it does there
   send({ type: 'reset' });
   render();
 }
