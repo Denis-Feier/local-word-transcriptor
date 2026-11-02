@@ -414,7 +414,7 @@ export const quantile = (xs, p) => (xs.length ? [...xs].sort((a, b) => a - b)[Ma
 /**
  * Compare a server's final lines ({ mic (0-based), start, end, text, ms?, sentSec? }) with the truth (truth()):
  * each line is ok, phantom (nobody spoke) or wrong (another person's speech); pairs of lines are "both" when two mics
- * kept the same words; each utterance is caught or not (§14.3). groups: [{ name, start, end }] in session seconds
+ * kept the same words; each utterance is caught or not (§14.3). An ok line is solo when nobody else spoke during it. groups: [{ name, start, end }] in session seconds
  * (blocks, windows); each gets its own numbers. partials: [{ sentSec }].
  */
 export function judge(items, lines, { groups = [], partials = [] } = {}) {
@@ -439,18 +439,21 @@ export function judge(items, lines, { groups = [], partials = [] } = {}) {
     let other = 0;
     let bestOwn = 0;
     let bestOther = 0;
+    let solo = true;
     for (const u of cands) {
       const [s, e] = u.at[line.mic];
       const o = overlap(line.start, line.end, s, e);
       if (mine(u)) own += o;
       else other += o;
+      if (mine(u) && o > 0 && !u.solo) solo = false;
       if (o <= 0 && !(s < line.end + 1 && e > line.start - 1)) continue;
       const { count } = sharedWords(line.text, u.text ?? '');
       if (mine(u)) bestOwn = Math.max(bestOwn, count);
       else bestOther = Math.max(bestOther, count);
     }
     const kind = own + other < 0.2 ? 'phantom' : own < 0.2 || (bestOther >= 3 && bestOther > bestOwn) ? 'wrong' : 'ok';
-    return { ...line, kind };
+    // solo: nobody else spoke while this line's own words were said, so it never waited for another mic (#6)
+    return { ...line, kind, solo: kind === 'ok' && solo };
   });
   const both = [];
   const sorted = [...judged].sort((a, b) => a.start - b.start);
