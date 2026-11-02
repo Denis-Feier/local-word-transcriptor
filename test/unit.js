@@ -585,6 +585,66 @@ await keyFake.close();
 t.check('UNIT-CLOUD-01', 'a wrong key: the model is in error, saying ElevenLabs refused the key and where it goes',
   wrongKey.state === 'error' && /Invalid API key/.test(wrongKey.message) && /\.env\.local/.test(wrongKey.message), wrongKey.message);
 
+// ---------- a model that keeps crashing ----------
+// A stand-in engine behind the real Transcriber (retryMs shortened from 30 s): crashed 4 times in quick succession,
+// then its reloads fail once and work after that.
+{
+  const keepKey = config.elevenlabs.apiKey;
+  config.elevenlabs.apiKey = 'stand-in'; // makes the cloud model count as installed; the engine is the stand-in below
+  let crash = null;
+  let loads = 0;
+  let failLoads = 0;
+  class Flaky extends Transcriber {
+    createEngine(model, onCrash) {
+      return {
+        load: async () => {
+          loads++;
+          if (failLoads > 0 && failLoads--) throw new Error('stand-in load failed');
+          crash = () => onCrash('stand-in crashed.');
+        },
+        unload: async () => {},
+        kill: () => {},
+        transcribe: async () => ({ text: 'merge' }),
+      };
+    }
+  }
+  const tr = new Flaky(structuredClone(config));
+  tr.retryMs = 300;
+  const states = [];
+  tr.on('state', (s) => states.push(s.state));
+  const logError = console.error;
+  console.error = () => {};
+  try {
+    await tr.select('elevenlabs-scribe-v2');
+    for (let k = 0; k < 3; k++) { crash(); await tr.queue; }
+    const restarted = tr.state === 'ready' && loads === 4;
+    failLoads = 1;
+    crash();
+    const gaveUp = { state: tr.state, message: tr.message, loads };
+    states.length = 0;
+    await sleep(450); // first retry: its load fails
+    const afterFailed = { state: tr.state, loads, states: [...states] };
+    await sleep(300); // second retry: it loads
+    await tr.queue;
+    const text = tr.state === 'ready' ? (await tr.transcribe(new Float32Array(SR))).text : null;
+    t.check('UNIT-ENG-01', 'a model that crashes 4 times in quick succession: 3 quick restarts, then an error saying it retries every 30 s',
+      restarted && gaveUp.state === 'error' && /stand-in crashed\. Retrying every 0 s/.test(gaveUp.message),
+      `${gaveUp.loads} loads; ${gaveUp.state}: ${gaveUp.message}`);
+    t.check('UNIT-ENG-01', 'after giving up it is tried again on its own; a failed retry keeps the error shown (no "loading"), the next one brings it back',
+      afterFailed.state === 'error' && afterFailed.loads === 5 && afterFailed.states.every((s) => s === 'error') && loads === 6 && tr.state === 'ready' && text === 'merge',
+      `after the 1st retry ${afterFailed.state} (${afterFailed.states.join(', ') || 'no state change'}); after the 2nd ${tr.state}, ${loads} loads, text ${text}`);
+    crash(); // within a minute of the last crashes: gives up straight away
+    const before = loads;
+    tr.kill();
+    await sleep(450);
+    t.check('UNIT-ENG-01', 'closing the app stops the retries', tr.state === 'error' && loads === before, `${loads - before} loads after kill()`);
+  } finally {
+    console.error = logError;
+    tr.kill();
+    config.elevenlabs.apiKey = keepKey;
+  }
+}
+
 // Speech at 1–3.5 s and 5–7 s: each connection gets its lead-in, the speech and ≤ 0.2 s after it, not the pause.
 const sentence = (p, from, to) => p && p[0] <= from * SR && p[1] >= to * SR && p[1] <= (to + 0.25) * SR;
 t.check('UNIT-CLOUD-02', 'two sentences: one connection each, committed once, each sent its own audio only (not the pause after it), no frame twice',

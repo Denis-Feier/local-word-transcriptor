@@ -323,7 +323,7 @@ mics → AudioWorklet ─WS─▶  Silero VAD + Segmenter per mic        ──�
 | `lib/segmenter.js` | Turns detector frames into utterances: pre-roll, pause timeout, splits monologues longer than 20 s at the quietest point |
 | `lib/session.js` | One browser tab: a segmenter per mic, schedules live guesses and finals (or streams each sentence to a streaming model), drops a sentence another mic heard more clearly, writes transcript/audio files |
 | `lib/crosstalk.js` | With several mics: decides which mic each moment of speech belongs to, by clarity above each mic's own noise |
-| `lib/transcriber.js` | Owns the active model, serialises requests, switches models, restarts a crashed model |
+| `lib/transcriber.js` | Owns the active model, serialises requests, switches models, restarts a crashed model (after 4 quick crashes, retries it every 30 s) |
 | `lib/engines/*.js` | One adapter per runtime: whisper.cpp, transcribe.cpp, sherpa-onnx, Python/NeMo, Apple speech, ElevenLabs (`elevenlabs.js`: a realtime connection per sentence). `sidecar.js` is the shared logic for models served by a separate process |
 | `python/nemo_server.py` | Small local HTTP server that runs NeMo models (Jackrabbit, the UPB FastConformer) for the Node app; its environment lives in `python/.venv` |
 | `lib/models.js` | Model catalogue, download, unpack, and conversion of Whisper fine-tunes (`lib/convert-whisper.js`) |
