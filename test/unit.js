@@ -13,6 +13,7 @@ import { Segmenter } from '../lib/segmenter.js';
 import { EnergyDetector, SileroDetector, VadPool, createDetector } from '../lib/vad.js';
 import { CrosstalkGate } from '../lib/crosstalk.js';
 import { Session, fileStamp, fmtTime } from '../lib/session.js';
+import { SteadyText } from '../lib/steady.js';
 import { Transcriber } from '../lib/transcriber.js';
 import { TranscribeCppEngine, describeDevice } from '../lib/engines/transcribe-cpp.js';
 import { SidecarEngine } from '../lib/engines/sidecar.js';
@@ -370,6 +371,60 @@ t.check('UNIT-SESS-22', 'when the model catches up, the warning is cleared, and 
 const quick = await lagging(false);
 t.check('UNIT-SESS-23', 'a model that keeps up: the page is never told it is behind', quick.behind.length === 0 && quick.finals === 15,
   `${quick.behind.length} messages; ${quick.finals} of 15 lines`);
+
+// ---------- steady live text (#26; loudness detector, stand-in model) ----------
+// Live guesses of one sentence the way Canary revises them: a comma and a capital come and go, the first word is
+// rewritten once, a word is cut short and then finished.
+const GUESSES = ['Astăzi', 'Astăzi vorbim', 'Astăzi, vorbim despre', 'Azi vorbim despre model', 'Astăzi vorbim despre modelele noi',
+  'Astăzi vorbim despre modelele noi.'];
+const steadyRun = (guesses) => {
+  const steady = new SteadyText();
+  return guesses.map((g) => steady.update(g));
+};
+const shownSeq = steadyRun(GUESSES);
+t.check('UNIT-STEADY-01', 'a word is shown only once two guesses in a row agree on it; the first guess shows nothing',
+  JSON.stringify(shownSeq) === JSON.stringify([null, 'Astăzi', 'Astăzi vorbim', 'Astăzi vorbim despre', null, 'Astăzi vorbim despre modelele noi']),
+  JSON.stringify(shownSeq));
+const growing = (texts) => texts.every((x, i) => !i || x.startsWith(`${texts[i - 1]} `));
+t.check('UNIT-STEADY-02', 'a word once shown is never taken back: each text shown is the one before plus words, even when a guess rewrites an earlier word',
+  growing(shownSeq.filter(Boolean)) && !shownSeq.some((x) => x?.includes('Azi')), shownSeq.filter(Boolean).join(' → '));
+const forms = steadyRun(['bună ziua', 'Bună ziua, dragi', 'Bună, ziua dragi colegi', 'bună ziua dragi colegi.']);
+t.check('UNIT-STEADY-03', 'words are compared ignoring case and punctuation, and keep the form already on screen',
+  JSON.stringify(forms) === JSON.stringify([null, 'Bună ziua', 'Bună ziua dragi', 'Bună ziua dragi colegi']), JSON.stringify(forms));
+
+// The same guesses through a session: one 5 s sentence, the stand-in answers each live guess with the next of GUESSES.
+async function liveGuesses(steadyLive) {
+  const sent = [];
+  const out = scratch('steady');
+  const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
+  let n = 0;
+  const stub = { supportsPrompt: false, avgMs: 10,
+    tryTranscribe: () => Promise.resolve({ text: GUESSES[Math.min(n++, GUESSES.length - 1)] }),
+    transcribe: async () => ({ text: 'Astăzi vorbim despre modelele noi de azi.', model: 'stub', ms: 1 }) };
+  const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
+  session.setOptions({ steadyLive });
+  const talk = concat(quiet(1), loud(5), quiet(1.5));
+  for (let i = 0; i < talk.length; i += 1600) {
+    session.audio(talk.subarray(i, i + 1600));
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  await sleep(20);
+  session.close();
+  fs.rmSync(out, { recursive: true, force: true });
+  const texts = sent.filter((m) => m.type === 'partial' || m.type === 'final');
+  return { guesses: n, partials: texts.filter((m) => m.type === 'partial'), finals: texts.filter((m) => m.type === 'final'), lastType: texts.at(-1)?.type };
+}
+const steadyOn = await liveGuesses(true);
+const steadyOff = await liveGuesses(false);
+const liveTexts = (r) => r.partials.map((m) => m.text);
+const finalOn = steadyOn.finals[0];
+t.check('UNIT-STEADY-04', 'Steady live text on (the default): the page gets only growing live text, and the final line replaces it under the same sentence id',
+  steadyOn.guesses >= GUESSES.length && growing(liveTexts(steadyOn)) && liveTexts(steadyOn).at(-1) === 'Astăzi vorbim despre modelele noi'
+    && steadyOn.finals.length === 1 && steadyOn.lastType === 'final' && steadyOn.partials.every((m) => m.id === finalOn.id) && finalOn.text === 'Astăzi vorbim despre modelele noi de azi.',
+  `${steadyOn.guesses} guesses; live ${liveTexts(steadyOn).join(' → ')}; final #${finalOn?.id} "${finalOn?.text}"`);
+t.check('UNIT-STEADY-05', 'Steady live text off: every guess is shown as the model wrote it, rewrites included',
+  steadyOff.partials.length === steadyOff.guesses && liveTexts(steadyOff).includes('Azi vorbim despre model') && !growing(liveTexts(steadyOff)),
+  `${steadyOff.guesses} guesses, ${steadyOff.partials.length} live texts`);
 
 // ---------- the disk fills up while saving audio (#1; loudness detector, stand-in model) ----------
 // Two mics: a sentence on mic 1 every 4 s for 24 s, room noise on mic 2. The WAVs have room for 8 s of both mics and
