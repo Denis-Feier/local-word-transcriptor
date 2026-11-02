@@ -114,6 +114,9 @@ counts "sa" for "să" as an error; "diacritics ignored" doesn't, which is how pu
 Numbers count as errors when a model writes words for digits ("o sută" vs "100"), the same for every model.
 Per-clip transcripts: \`benchmarks/results/${name}/<model>.json\`.
 `;
-fs.writeFileSync(`${RESULTS}.md`, report);
+// Sections added by hand after the table (from "## " on, e.g. the one-hour suite's 12-model table) are kept.
+const previous = fs.existsSync(`${RESULTS}.md`) ? fs.readFileSync(`${RESULTS}.md`, 'utf8') : '';
+const extra = previous.indexOf('\n## ');
+fs.writeFileSync(`${RESULTS}.md`, extra >= 0 ? `${report}${previous.slice(extra)}` : report);
 console.log(`\n${table}\n\nReport: benchmarks/results/${name}.md\n`);
 process.exit(0);
