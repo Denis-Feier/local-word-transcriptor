@@ -480,7 +480,7 @@ async function net() {
       const newest = Math.abs(keptFrom - (long.outage - 300)) < 20;
       const shownLoss = /lost|missing|pierd/i.test(long.told);
       t.check('STRESS-NET-02', `(D3) a ${long.outage / 60}-minute outage: the newest 5 minutes kept and the loss shown`, newest && shownLoss,
-        `the page sent ${p((x.burst ?? 0) / 600, 1)} min of buffered audio, from ${p(keptFrom / 60, 1)} min after the drop (${newest ? 'the newest' : 'not the newest'} part); loss shown: ${shownLoss} (${JSON.stringify(long.told.trim().slice(0, 80))})`, { known: true });
+        `the page sent ${p((x.burst ?? 0) / 600, 1)} min of buffered audio, from ${p(keptFrom / 60, 1)} min after the drop (${newest ? 'the newest' : 'not the newest'} part); loss shown: ${shownLoss} (${JSON.stringify(long.told.trim().slice(0, 80))})`);
     } else t.skip('STRESS-NET-02', 'an outage longer than the page buffer', 'not in --short');
   } finally {
     win.destroy();
