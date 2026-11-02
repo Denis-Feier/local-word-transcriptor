@@ -25,6 +25,7 @@ const els = {
   noise: $('noise'),
   saveAudio: $('saveAudio'),
   error: $('error'),
+  behind: $('behind'),
   transcript: $('transcript'),
   empty: $('empty'),
   file: $('file'),
@@ -116,6 +117,7 @@ function connect() {
   ws.onclose = () => {
     engine = { ...engine, state: 'error', message: recording ? 'Server unreachable; still recording, will catch up…' : 'Disconnected, retrying…' };
     for (const key of [...live]) removeLine(key);
+    showBehind(0); // a new connection is a new session, which reports its own delay
     render();
     setTimeout(connect, 1500);
   };
@@ -177,6 +179,9 @@ function handle(msg) {
       break;
     case 'error':
       showError(msg.message);
+      break;
+    case 'behind':
+      showBehind(msg.seconds);
       break;
     case 'options':
       // The server stopped saving audio (a full disk): untick the box. The saved choice stays, so the next session
@@ -804,6 +809,13 @@ function render() {
 function showError(message) {
   els.error.textContent = message;
   els.error.hidden = false;
+}
+
+/** The model is slower than the talk: lines still come, in order, but late. 0 clears the warning. */
+function showBehind(seconds) {
+  const delay = seconds < 120 ? `${seconds} s` : `${Math.round(seconds / 60)} min`;
+  els.behind.textContent = `Transcription is ${delay} behind; a faster model would keep up`;
+  els.behind.hidden = !seconds;
 }
 
 function hideError() {
