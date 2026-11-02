@@ -14,6 +14,10 @@ import { EnergyDetector, SileroDetector, VadPool, createDetector } from '../lib/
 import { CrosstalkGate } from '../lib/crosstalk.js';
 import { Session, fileStamp, fmtTime } from '../lib/session.js';
 import { Transcriber } from '../lib/transcriber.js';
+import { TranscribeCppEngine, describeDevice } from '../lib/engines/transcribe-cpp.js';
+import { SidecarEngine } from '../lib/engines/sidecar.js';
+import { WhisperCppEngine } from '../lib/engines/whisper-cpp.js';
+import { PythonNemoEngine } from '../lib/engines/python-nemo.js';
 import { config, ROOT } from '../lib/config.js';
 import { MODELS } from '../lib/models.js';
 import { createBacklog, lostNote } from '../public/backlog.js';
@@ -751,6 +755,82 @@ t.check('UNIT-CLOUD-01', 'a wrong key: the model is in error, saying ElevenLabs 
     tr.kill();
     config.elevenlabs.apiKey = keepKey;
   }
+}
+
+// ---------- GPU first, CPU only as the fallback ----------
+// Every local model that can use the GPU is on an engine that tries the GPU first (stand-ins for the GPU: none in tests).
+{
+  const GPU_ENGINES = ['transcribe.cpp', 'whisper.cpp', 'python-nemo', 'apple-speech'];
+  const local = MODELS.filter((m) => !m.cloud);
+  const cpuOnly = local.filter((m) => !GPU_ENGINES.includes(m.engine));
+  const parakeet = MODELS.find((m) => m.id === 'parakeet-tdt-0.6b-v3');
+  t.check('UNIT-GPU-01', 'every local model runs on an engine that uses the GPU; Parakeet TDT v3 keeps its id and is on transcribe.cpp',
+    !cpuOnly.length && parakeet?.engine === 'transcribe.cpp' && /\.gguf$/.test(parakeet.file) && parakeet.url.endsWith(parakeet.file),
+    `${local.length} local models; CPU-only: ${cpuOnly.map((m) => `${m.id} (${m.engine})`).join(', ') || 'none'}; Parakeet TDT v3 on ${parakeet?.engine}`);
+
+  // transcribe.cpp: "auto" (the GPU) first; the CPU only when that load throws.
+  const fakeModel = (backend, deviceType) => ({ backend, device: { deviceType, name: backend }, capabilities: { languages: ['ro'] }, supports: () => false, dispose() {}, transcribe: async () => ({ text: backend }) });
+  const tries = [];
+  const onGpu = new TranscribeCppEngine({ modelPath: 'x.gguf', language: 'ro', load: async (file, opts) => (tries.push(opts.backend), fakeModel('Metal', 'gpu')) });
+  await onGpu.load();
+  const failing = [];
+  const onCpu = new TranscribeCppEngine({
+    modelPath: 'x.gguf',
+    language: 'ro',
+    load: async (file, opts) => {
+      failing.push(opts.backend);
+      if (opts.backend !== 'cpu') throw new Error('stand-in: Metal could not allocate the model');
+      return fakeModel('CPU', 'cpu');
+    },
+  });
+  await onCpu.load();
+  const text = (await onCpu.transcribe(new Float32Array(SR))).text;
+  t.check('UNIT-GPU-02', 'transcribe.cpp: loaded on the GPU first; when the GPU load fails, loaded on the CPU and still transcribes, saying why',
+    tries.join() === 'auto' && onGpu.device === 'GPU (Metal)' && !onGpu.fallback
+      && failing.join() === 'auto,cpu' && onCpu.device === 'CPU' && /Metal could not allocate/.test(onCpu.fallback) && text === 'CPU',
+    `GPU: tried ${tries.join()} -> ${onGpu.device}; failing GPU: tried ${failing.join()} -> ${onCpu.device} (${onCpu.fallback})`);
+  t.check('UNIT-GPU-03', 'transcribe.cpp device names: Metal/MTL0/CUDA0/Vulkan0 are the GPU, CPU and a CPU-accelerated backend are the CPU',
+    [['Metal', 'gpu', 'GPU (Metal)'], ['MTL0', 'gpu', 'GPU (Metal)'], ['CUDA0', 'gpu', 'GPU (CUDA)'], ['Vulkan0', 'gpu', 'GPU (Vulkan)'], ['CPU', 'cpu', 'CPU'], ['cpu_accel', 'accel', 'CPU']]
+      .every(([backend, type, want]) => describeDevice(fakeModel(backend, type)) === want));
+
+  // A sidecar (whisper-server, the NeMo server) that dies on the GPU is started again on the CPU; a missing program is not.
+  const script = path.join(dir, 'fake-sidecar.mjs');
+  fs.writeFileSync(script, `import http from 'node:http';
+const [port, mode] = process.argv.slice(2);
+if (mode !== 'cpu') { console.error('stand-in: GPU init failed'); process.exit(3); }
+http.createServer((req, res) => res.end(JSON.stringify({ status: 'ok' }))).listen(Number(port), '127.0.0.1');
+`);
+  class FakeSidecar extends SidecarEngine {
+    cpuFallback = true;
+    commands = [];
+    command(port, { cpu }) {
+      this.commands.push(cpu ? 'cpu' : 'gpu');
+      return { name: 'fake', bin: this.bin ?? process.execPath, args: [script, String(port), cpu ? 'cpu' : 'gpu'], missing: 'fake program missing' };
+    }
+  }
+  const sidecar = new FakeSidecar();
+  await sidecar.load();
+  await sidecar.unload();
+  const missing = new FakeSidecar();
+  missing.bin = path.join(dir, 'no-such-program');
+  const missingError = await missing.load().then(() => null, (err) => err.message);
+  t.check('UNIT-GPU-04', 'a model process that fails to start on the GPU is started again on the CPU; a missing program is reported, not retried',
+    sidecar.commands.join() === 'gpu,cpu' && sidecar.device === 'CPU' && /GPU init failed/.test(sidecar.fallback)
+      && missingError === 'fake program missing' && missing.commands.join() === 'gpu',
+    `started ${sidecar.commands.join(' then ')} -> ${sidecar.device}; missing program: ${missingError} after ${missing.commands.join()}`);
+
+  // The real engines ask for the GPU first and the CPU on the retry.
+  const whisper = new WhisperCppEngine({ bin: 'whisper-server', modelPath: 'm.bin', port: 1, language: 'ro', threads: 4 });
+  const nemo = new PythonNemoEngine({ id: 'jackrabbit-110m-ro', modelDir: 'd', nemo: { model: 'a.nemo', decoder: 'ctc' }, threads: 4 });
+  const nemoDevices = fs.readFileSync(path.join(ROOT, 'python', 'nemo_server.py'), 'utf8').match(/"--device", choices=\[([^\]]*)\]/)?.[1].match(/[\w-]+/g) ?? [];
+  const arg = (cmd, flag) => cmd.args[cmd.args.indexOf(flag) + 1];
+  const [wGpu, wCpu, nGpu, nCpu] = [whisper.command(1, { cpu: false }), whisper.command(1, { cpu: true }), nemo.command(1, { cpu: false }), nemo.command(1, { cpu: true })];
+  t.check('UNIT-GPU-05', 'whisper-server gets --no-gpu only on the CPU retry; the NeMo server gets --device auto, then cpu (choices it accepts), with MPS fallback on',
+    whisper.cpuFallback && nemo.cpuFallback && !wGpu.args.includes('--no-gpu') && wCpu.args.includes('--no-gpu')
+      && arg(nGpu, '--device') === 'auto' && arg(nCpu, '--device') === 'cpu' && ['auto', 'cpu'].every((d) => nemoDevices.includes(d))
+      && nGpu.env.PYTORCH_ENABLE_MPS_FALLBACK === '1'
+      && whisper.deviceFromLog('whisper_backend_init_gpu: using Metal backend') === 'GPU (Metal)' && whisper.deviceFromLog('whisper_backend_init_gpu: no GPU found') === 'CPU',
+    `whisper ${wCpu.args.slice(-1)}; nemo --device ${arg(nGpu, '--device')} / ${arg(nCpu, '--device')}; server accepts ${nemoDevices.join('/')}`);
 }
 
 // Speech at 1–3.5 s and 5–7 s: each connection gets its lead-in, the speech and ≤ 0.2 s after it, not the pause.

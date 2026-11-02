@@ -166,7 +166,7 @@ runs on the CPU. Measured per sentence on this M5:
 | Model | Native | Docker | Live use in Docker |
 |---|---|---|---|
 | NVIDIA Canary 1B v2 | ~0.15 s (GPU) | 0.2–0.6 s | yes |
-| Jackrabbit 110M Romanian | 0.3–0.45 s (CPU) | 0.2–0.45 s | yes, same speed |
+| Jackrabbit 110M Romanian | 0.3–0.45 s (measured on the CPU, before it moved to the GPU) | 0.2–0.45 s | yes, same speed |
 | Parakeet models | ~0.1–0.15 s | 0.2–0.6 s | yes |
 | Whisper large-v3 / turbo / BuzzASR | 0.5–1.5 s (GPU) | ~6.5 s | no: marked "slow in Docker" in the menu |
 
@@ -195,9 +195,9 @@ Pick a model from the **Model** menu. Models that aren't downloaded yet show the
 | Orukeet 0.6B | 9.3 % | 3.6–5.4 % | 93–111× | 740 MB | GPU, transcribe.cpp |
 | Parakeet Ultra 0.6B | 9–10 % | 3.6–8.1 % | 96–111× | 740 MB | GPU, transcribe.cpp |
 | Parakeet Romanian 110M (Politehnica)⁴ | 10.6 % | 0–5.4 % | 236–279× | 135 MB | GPU, transcribe.cpp |
-| FastConformer Romanian 114M (UPB NLP)⁶ | none (11.6 % on FLEURS here) | not measured | 53× on FLEURS | 454 MB | CPU, Python/NeMo |
+| FastConformer Romanian 114M (UPB NLP)⁶ | none (11.6 % on FLEURS here) | not measured | 53× on FLEURS (CPU) | 454 MB | GPU (MPS), Python/NeMo |
 | Whisper small Romanian (readerbench)³ | 10.9 % | 4.8–10.8 % | 30–39× | 260 MB | GPU, whisper.cpp |
-| NVIDIA Parakeet TDT 0.6B v3 | 12.4 % | 3.6–18.9 % | 40–53× | 487 MB | CPU, sherpa-onnx |
+| NVIDIA Parakeet TDT 0.6B v3 | 12.4 % | 3.6–18.9 % (sherpa-onnx, CPU) | 40–53× (CPU) | 740 MB | GPU, transcribe.cpp |
 | Apple on-device dictation (macOS 26)⁵ | none (17.6 % on FLEURS here) | not measured | 59× on FLEURS | kept by macOS | Mac only, Apple's Speech framework |
 | ElevenLabs Scribe v2 Realtime (cloud)⁷ | ≤ 5 % (ElevenLabs' group for Romanian) | not measured | ~150 ms per sentence (ElevenLabs) | nothing | ElevenLabs' servers, over the internet |
 
@@ -257,7 +257,7 @@ Everything is stored in the project's `models/` folder (ignored by git; about 7 
 | Parakeet Ultra | Hugging Face `handy-computer/parakeet-ultra-gguf` | `models/parakeet-ultra-Q8_0.gguf` |
 | Parakeet Romanian 110M | Hugging Face `jonah1024/Sped_ParakeetRomanian_110M_TDT-CTC_gguf` | `models/Sped_ParakeetRomanian_110M_TDT-CTC-Q8_0.gguf` |
 | FastConformer Romanian 114M | Hugging Face `upb-nlp/ro-fast-conformer` | `models/ro-fast-conformer/` |
-| Parakeet TDT v3 | GitHub release of `k2-fsa/sherpa-onnx` | `models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/` |
+| Parakeet TDT v3 | Hugging Face `handy-computer/parakeet-tdt-0.6b-v3-gguf` | `models/parakeet-tdt-0.6b-v3-Q8_0.gguf` (the older CPU build in `models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/` is no longer used and can be deleted) |
 | Apple on-device dictation | built on this Mac from `native/apple-speech/` (nothing downloaded); macOS keeps the language model | `models/apple-speech-server` |
 | ElevenLabs Scribe v2 Realtime | ElevenLabs' servers, with your API key (nothing downloaded) | nothing; the key in `.env.local` |
 | Silero voice detector | GitHub release of `k2-fsa/sherpa-onnx` | `models/silero_vad.onnx` |
@@ -305,10 +305,20 @@ Browser                       Node (server.js)                            Speech
 mics → AudioWorklet ─WS─▶  Silero VAD + Segmenter per mic        ──▶   whisper-server (whisper.cpp, GPU)
       16 kHz Float32        (crosstalk gate between mics)              transcribe.cpp (GPU, in-process)
                             ├─ while speaking: live guess
-                            └─ on pause: final + save                  sherpa-onnx (CPU, in-process)
-      transcript UI ◀──WS── text cleanup (diacritics,                  python/nemo_server.py (NeMo, CPU)
+                            └─ on pause: final + save                  python/nemo_server.py (NeMo, GPU via MPS)
+      transcript UI ◀──WS── text cleanup (diacritics,                  Apple speech helper (macOS picks the chip)
                             hallucination filter)
 ```
+
+**GPU first, CPU as the fallback.** Every model that can use the GPU does: transcribe.cpp picks the GPU itself
+(Metal on a Mac), whisper-server uses it by default, and `python/nemo_server.py` puts the NeMo models on it through
+PyTorch's MPS (`--device auto`; operations MPS lacks run on the CPU, `PYTORCH_ENABLE_MPS_FALLBACK=1`). Jackrabbit's
+4-gram language-model search runs on the CPU in any case: only its acoustic model moves. If a model cannot load or
+run on the GPU, it is loaded again on the CPU (whisper-server with `--no-gpu`, the NeMo server with `--device cpu`)
+and keeps working, slower; the status line says where each model runs ("Canary 1B v2 ready on GPU (Metal)") and the
+terminal says why the GPU was not used. Two small exceptions stay on the CPU on purpose: the Silero voice detector
+(a 2 MB model run every 32 ms, where handing work to the GPU would cost more than it saves) and Apple's dictation,
+where macOS decides. In Docker there is no GPU, so everything runs on the CPU there.
 
 | File | Role |
 |---|---|
@@ -325,7 +335,7 @@ mics → AudioWorklet ─WS─▶  Silero VAD + Segmenter per mic        ──�
 | `lib/session.js` | One browser tab: a segmenter per mic, schedules live guesses and finals (or streams each sentence to a streaming model), drops a sentence another mic heard more clearly, writes transcript/audio files |
 | `lib/crosstalk.js` | With several mics: decides which mic each moment of speech belongs to, by clarity above each mic's own noise |
 | `lib/transcriber.js` | Owns the active model, serialises requests, switches models, restarts a crashed model (after 4 quick crashes, retries it every 30 s) |
-| `lib/engines/*.js` | One adapter per runtime: whisper.cpp, transcribe.cpp, sherpa-onnx, Python/NeMo, Apple speech, ElevenLabs (`elevenlabs.js`: a realtime connection per sentence). `sidecar.js` is the shared logic for models served by a separate process |
+| `lib/engines/*.js` | One adapter per runtime: whisper.cpp, transcribe.cpp, Python/NeMo, Apple speech, ElevenLabs (`elevenlabs.js`: a realtime connection per sentence). `sidecar.js` is the shared logic for models served by a separate process |
 | `python/nemo_server.py` | Small local HTTP server that runs NeMo models (Jackrabbit, the UPB FastConformer) for the Node app; its environment lives in `python/.venv` |
 | `lib/models.js` | Model catalogue, download, unpack, and conversion of Whisper fine-tunes (`lib/convert-whisper.js`) |
 | `lib/text.js` | Fixes ş/ţ → ș/ț, removes `[Muzică]` tags, drops Whisper's known silence hallucinations ("Mulțumim pentru vizionare!") |
@@ -361,6 +371,7 @@ Any of these can also go in `.env.local` (git ignores it; see `.env.example`), o
 | `CROSSTALK_DB` | `8` | With several mics: a mic ignores speech it hears this many dB less clearly than another mic (Settings → *Mic separation*) |
 | `INITIAL_PROMPT` | empty | Whisper only: names or jargon to prime the first sentence, e.g. `INITIAL_PROMPT="Ședința cu Andrei și Mihaela despre Kubernetes."` Later sentences use the previous text as context automatically |
 | `THREADS` | `4` | CPU threads for the models |
+| `NEMO_DEVICE` | `auto` | Where the NeMo models run: `auto` (the GPU, MPS on a Mac, else the CPU), `mps` or `cpu`. Only to compare speeds; the CPU is used anyway when the GPU fails |
 | `DEBUG` | unset | `DEBUG=1` prints model logs and per-sentence timings |
 | `ELEVENLABS_API_KEY` | unset | Your ElevenLabs key: offers the cloud model, which sends the speech to ElevenLabs (*ElevenLabs, in the cloud*) |
 | `ELEVENLABS_BASE_URL` | ElevenLabs' main API | Another ElevenLabs region, e.g. `https://api.eu.residency.elevenlabs.io` |

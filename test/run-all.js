@@ -34,7 +34,7 @@ fs.mkdirSync(OUT, { recursive: true });
 const results = []; // { suite, cases: [{ id, title, status, detail }] , seconds, code }
 
 // One engine per runtime, for the full tier.
-const ENGINES = ['canary-1b-v2', 'whisper-large-v3-turbo', 'parakeet-tdt-0.6b-v3', 'jackrabbit-110m-ro'];
+const ENGINES = ['canary-1b-v2', 'whisper-large-v3-turbo', 'jackrabbit-110m-ro'];
 
 function run(name, cmd, cmdArgs, { minutes, env = {}, tag = false } = {}) {
   return new Promise((resolve) => {
