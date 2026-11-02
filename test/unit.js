@@ -357,6 +357,41 @@ t.check('UNIT-SESS-14', 'a full disk while saving the transcript: the page is to
   tf.told.join() === '3,7,9,10' && tf.errors.length === 1 && tf.errors[0].startsWith('Could not save transcript: ENOSPC'),
   `told after lines ${tf.told.join(', ') || 'never'} (expected 3, 7, 9, 10); ${tf.errors.join(' | ')}`);
 
+// ---------- the .txt is in speaking order (#7; loudness detector, stand-in model) ----------
+// Mic 1 says a long sentence, then mic 2 a short one, taking turns. The stand-in model takes longer for longer audio,
+// so the short line is transcribed first. The page shows it at once (it sorts by start); the .txt waits for mic 1's.
+async function speakingOrder() {
+  const sent = [];
+  const out = scratch('order');
+  const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
+  const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null,
+    transcribe: async (samples) => {
+      const sec = samples.length / SR;
+      await sleep(sec * 30);
+      return { text: sec > 2 ? 'o propoziție lungă de la primul' : 'una scurtă la al doilea', model: 'stub', ms: 1 };
+    } };
+  const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
+  const mics = [concat(quiet(1), loud(3), quiet(4)), concat(quiet(5), loud(0.7), quiet(2.3))];
+  for (let i = 0; i < mics[0].length; i += 1600) {
+    const frame = new Float32Array(3200);
+    mics.forEach((m, mic) => frame.set(m.subarray(i, i + 1600), mic * 1600));
+    session.audio(frame, 2);
+  }
+  session.flush();
+  await sleep(300);
+  session.close();
+  const finals = sent.filter((m) => m.type === 'final' && m.text);
+  const file = sent.find((m) => m.type === 'file' && m.kind === 'text');
+  const txt = file ? fs.readFileSync(path.resolve(file.path), 'utf8') : '';
+  fs.rmSync(out, { recursive: true, force: true });
+  const spoken = [...finals].sort((a, b) => a.start - b.start).map((f) => `[${fmtTime(f.start)}] Mic ${f.mic + 1}: ${f.text}\n`).join('');
+  return { finals: finals.map((f) => `mic${f.mic + 1}`).join(', '), txt, spoken };
+}
+const so = await speakingOrder();
+t.check('UNIT-SESS-15', 'mic 2\'s short line is transcribed before mic 1\'s longer one that started earlier: the .txt still has them in speaking order (as the page\'s Download), and the page gets the short line at once',
+  so.finals === 'mic2, mic1' && so.txt === so.spoken,
+  `page got ${so.finals || 'nothing'}; .txt ${so.txt === so.spoken ? 'in speaking order' : JSON.stringify(so.txt)}`);
+
 // ---------- recordings that start in the same second (#2; loudness detector: deterministic) ----------
 // File names have whole seconds. Two tabs, or the desktop app and `npm start` (they share transcripts/), can start
 // in the same second; so can a Clear, and the clock going back an hour when summer time ends.
