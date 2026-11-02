@@ -829,8 +829,63 @@ http.createServer((req, res) => res.end(JSON.stringify({ status: 'ok' }))).liste
     whisper.cpuFallback && nemo.cpuFallback && !wGpu.args.includes('--no-gpu') && wCpu.args.includes('--no-gpu')
       && arg(nGpu, '--device') === 'auto' && arg(nCpu, '--device') === 'cpu' && ['auto', 'cpu'].every((d) => nemoDevices.includes(d))
       && nGpu.env.PYTORCH_ENABLE_MPS_FALLBACK === '1'
-      && whisper.deviceFromLog('whisper_backend_init_gpu: using Metal backend') === 'GPU (Metal)' && whisper.deviceFromLog('whisper_backend_init_gpu: no GPU found') === 'CPU',
+      && [['whisper_backend_init_gpu: using MTL0 backend', 'GPU (Metal)'], ['whisper_backend_init_gpu: using Metal backend', 'GPU (Metal)'],
+        ['whisper_backend_init_gpu: using CUDA0 backend', 'GPU (CUDA)'], ['whisper_backend_init_gpu: using Vulkan0 backend', 'GPU (Vulkan)'],
+        ['whisper_backend_init_gpu: no GPU found', 'CPU'], ['whisper_backend_init_gpu: failed to initialize MTL0 backend', 'CPU'],
+        ['whisper_backend_init: using BLAS backend', null], ['whisper_init_with_params_no_state: use gpu    = 1', null]]
+        .every(([line, want]) => (whisper.deviceFromLog(line) ?? null) === want),
     `whisper ${wCpu.args.slice(-1)}; nemo --device ${arg(nGpu, '--device')} / ${arg(nCpu, '--device')}; server accepts ${nemoDevices.join('/')}`);
+
+  // transcribe.cpp mid-meeting: the GPU fails on a sentence. The CPU is tried on the same audio: if it works the GPU was
+  // at fault and the model stays on the CPU; if it fails too, the audio was, and the model stays on the GPU.
+  const midMeeting = async (cpuWorks) => {
+    const disposed = [];
+    const model = (backend, type, fails) => ({ ...fakeModel(backend, type), dispose: () => disposed.push(backend), transcribe: async () => { if (fails) throw new Error(`stand-in: ${backend} failed`); return { text: backend }; } });
+    const engine = new TranscribeCppEngine({ modelPath: 'x.gguf', language: 'ro', load: async (file, opts) => (opts.backend === 'cpu' ? model('CPU', 'cpu', !cpuWorks) : model('Metal', 'gpu', true)) });
+    await engine.load();
+    const text = await engine.transcribe(new Float32Array(SR)).then((r) => r.text, (err) => `threw ${err.message}`);
+    return { text, device: engine.device, fallback: engine.fallback, disposed: disposed.join() };
+  };
+  const moved = await midMeeting(true);
+  const stayed = await midMeeting(false);
+  t.check('UNIT-GPU-06', 'transcribe.cpp: the GPU fails on a sentence the CPU can do: the sentence is kept and the model stays on the CPU; when the CPU fails too, the error is the audio\'s and the model stays on the GPU',
+    moved.text === 'CPU' && moved.device === 'CPU' && /Metal failed/.test(moved.fallback) && moved.disposed === 'Metal'
+      && stayed.text === 'threw stand-in: Metal failed' && stayed.device === 'GPU (Metal)' && !stayed.fallback && stayed.disposed === 'CPU',
+    `CPU works: "${moved.text}" on ${moved.device}, disposed ${moved.disposed}; CPU fails too: ${stayed.text}, on ${stayed.device}, disposed ${stayed.disposed}`);
+
+  // The page is told where the model runs, and when it moves to the CPU mid-meeting (a stand-in engine).
+  const keepKey = config.elevenlabs.apiKey;
+  config.elevenlabs.apiKey = 'stand-in'; // makes the cloud model count as installed; the engine is the stand-in below
+  const engine = { device: 'GPU (Metal)', fallback: null, load: async () => {}, unload: async () => {}, kill: () => {}, transcribe: async () => ({ text: 'merge' }) };
+  class OnGpu extends Transcriber {
+    createEngine() {
+      return engine;
+    }
+  }
+  const tr = new OnGpu(structuredClone(config));
+  const told = [];
+  tr.on('state', (s) => told.push(s));
+  const logError = console.error;
+  const logged = [];
+  console.error = (...a) => logged.push(a.join(' '));
+  try {
+    await tr.select('elevenlabs-scribe-v2');
+    const ready = tr.status();
+    await tr.transcribe(new Float32Array(SR));
+    const quiet = told.length;
+    Object.assign(engine, { device: 'CPU', fallback: 'stand-in: out of video memory' });
+    await tr.transcribe(new Float32Array(SR));
+    const moved = told.at(-1);
+    t.check('UNIT-GPU-07', 'the status names the device; a model that moves to the CPU mid-meeting tells the page (device, reason) and the terminal, once',
+      ready.state === 'ready' && ready.device === 'GPU (Metal)' && !ready.fallback && / on GPU \(Metal\)/.test(ready.message)
+        && told.length === quiet + 1 && moved.state === 'ready' && moved.device === 'CPU' && moved.fallback === 'stand-in: out of video memory'
+        && logged.some((l) => /moved to the CPU, the GPU failed: stand-in: out of video memory/.test(l)),
+      `ready: ${ready.message} (${ready.device}); after the move: ${moved.device}, ${moved.fallback}; ${told.length - quiet} status message(s) for the move`);
+  } finally {
+    console.error = logError;
+    tr.kill();
+    config.elevenlabs.apiKey = keepKey;
+  }
 }
 
 // Speech at 1–3.5 s and 5–7 s: each connection gets its lead-in, the speech and ≤ 0.2 s after it, not the pause.

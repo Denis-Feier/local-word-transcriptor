@@ -315,8 +315,11 @@ mics → AudioWorklet ─WS─▶  Silero VAD + Segmenter per mic        ──�
 PyTorch's MPS (`--device auto`; operations MPS lacks run on the CPU, `PYTORCH_ENABLE_MPS_FALLBACK=1`). Jackrabbit's
 4-gram language-model search runs on the CPU in any case: only its acoustic model moves. If a model cannot load or
 run on the GPU, it is loaded again on the CPU (whisper-server with `--no-gpu`, the NeMo server with `--device cpu`)
-and keeps working, slower; the status line says where each model runs ("Canary 1B v2 ready on GPU (Metal)") and the
-terminal says why the GPU was not used. Two small exceptions stay on the CPU on purpose: the Silero voice detector
+and keeps working, slower. A model that fails on the GPU in the middle of a meeting moves to the CPU too: the NeMo
+server on any GPU error, a transcribe.cpp model when the CPU can transcribe the sentence the GPU could not. The page's
+status says where the model runs ("Canary 1B v2 · ready on GPU"; hover it for the device, e.g. Metal, and for why the
+GPU was not used), and the terminal says why too. On Windows the transcribe.cpp models reach the GPU through Vulkan,
+so any graphics card whose driver supports Vulkan is used, NVIDIA ones back to the GTX 600 series included. Two small exceptions stay on the CPU on purpose: the Silero voice detector
 (a 2 MB model run every 32 ms, where handing work to the GPU would cost more than it saves) and Apple's dictation,
 where macOS decides. In Docker there is no GPU, so everything runs on the CPU there.
 
