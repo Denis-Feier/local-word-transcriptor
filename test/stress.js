@@ -69,7 +69,7 @@ function engineProcess(serverPid, skip = new Set()) {
  * cutAt (meeting seconds) drops the connection there without Stop; startAt (epoch ms) delays the first frame.
  */
 async function play(server, m, { speed: pace = speed, saveAudio = true, onChunk, cutAt = Infinity, startAt = 0, probe = true, waitMs = 300000, room = new Room(m) } = {}) {
-  const r = { finals: [], allFinals: [], partials: [], starts: new Set(), errors: [], files: [], statuses: [], tuning: [], unknown: [], sentSec: 0, sentPerMic: [0, 0, 0], probes: [], memory: [], backlog: [], closed: false };
+  const r = { finals: [], allFinals: [], partials: [], starts: new Set(), errors: [], files: [], statuses: [], tuning: [], behind: [], unknown: [], sentSec: 0, sentPerMic: [0, 0, 0], probes: [], memory: [], backlog: [], closed: false };
   const ws = new WebSocket(server.ws('?mics'));
   r.ws = ws;
   const finalIds = new Set();
@@ -88,6 +88,7 @@ async function play(server, m, { speed: pace = speed, saveAudio = true, onChunk,
     else if (msg.type === 'file') r.files.push(msg);
     else if (msg.type === 'status') r.statuses.push({ ...msg, wall: now });
     else if (msg.type === 'tuning') r.tuning.push(msg);
+    else if (msg.type === 'behind') r.behind.push({ seconds: msg.seconds, sentSec: r.sentSec });
     else if (!['models', 'mics', 'progress', 'options'].includes(msg.type)) r.unknown.push(msg);
   });
   ws.on('close', () => (r.closed = true));
@@ -370,7 +371,8 @@ async function overload(model, minutes, label) {
     const txt = fs.readdirSync(server.transcripts).filter((n) => n.endsWith('.txt')).flatMap((n) => fs.readFileSync(path.join(server.transcripts, n), 'utf8').split('\n').filter(Boolean));
     const expected = r.finals.length + again.finals.length;
     const worst = r.backlog.reduce((w, b) => (b.behind > w.behind ? b : w), { behind: 0, waiting: 0 });
-    const told = r.unknown.length || r.errors.some((e) => /behind/i.test(e.message)) || r.statuses.some((s) => /behind/i.test(s.message ?? ''));
+    // Told once more than 30 s behind (#9), and the warning cleared once the queue is done.
+    const told = worst.behind <= 30 || (r.behind.some((b) => b.seconds >= 30) && r.behind.at(-1)?.seconds === 0);
     console.log(`${label}: ${minutes} min of meeting sent in ${p(r.wallSec, 0)} s; the last line came ${p(worst.behind, 0)} s of audio behind with ${worst.waiting} sentences waiting`);
     t.check('STRESS-LOAD-01', `overload (${label}): the server stays up and answers within 1 s`, up && httpMax <= 1000, `alive ${up}; slowest page request ${httpMax} ms; ${minutes} min sent in ${p(r.wallSec, 0)} s`);
     t.check('STRESS-LOAD-02', `overload (${label}): every sentence gets exactly one final, in order, all in the .txt`, once && r.missingFinals === 0 && ordered && txt.length === expected,
@@ -378,7 +380,7 @@ async function overload(model, minutes, label) {
     t.check('STRESS-LOAD-03', `overload (${label}): a second overload needs at most 50 MB more than the first`, afterAgain - after <= 50,
       `${before} MB before, peak ${peak} MB, ${after} MB after the first, ${afterAgain} MB after the second`);
     t.check('STRESS-LOAD-04', `(D1) overload (${label}): the page is told that transcription is behind`, told,
-      `at worst ${p(worst.behind, 0)} s of audio behind with ${worst.waiting} sentences waiting; ${told ? 'told' : 'nothing told the page'}`, { known: true });
+      `at worst ${p(worst.behind, 0)} s of audio behind with ${worst.waiting} sentences waiting; told ${r.behind.map((b) => `${b.seconds} s`).join(', ') || 'nothing'}`);
   } finally {
     await server.stop();
   }

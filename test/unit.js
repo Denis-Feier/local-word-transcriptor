@@ -324,6 +324,49 @@ t.check('UNIT-SESS-20', 'a reconnect naming a transcript that is not there (or n
   refusedNames.every((r) => r.names[0] !== r.names[1] && r.txt.length === 2 && r.txt.includes('[00:04] o propoziție\n')) && resumed.taken,
   refusedNames.map((r) => r.files.join(', ')).join(' | ') + (resumed.taken ? '' : '; a second connection took over an open transcript'));
 
+// ---------- a model slower than the talk (#9; loudness detector, stand-in model) ----------
+// One mic, a sentence every 4 s for 60 s. `slow`: the model answers nothing until the audio is all sent, then
+// finishes the queue one sentence at a time; otherwise it answers at once.
+async function lagging(slow) {
+  const sent = [];
+  const out = scratch('behind');
+  const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
+  const queue = [];
+  const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null,
+    transcribe: () => (slow ? new Promise((resolve) => queue.push(resolve)) : Promise.resolve({ text: 'o propoziție', model: 'stub', ms: 1 })) };
+  const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
+  const talk = concat(...Array.from({ length: 15 }, () => concat(quiet(1), loud(1.5), quiet(1.5))));
+  const told = []; // { at: seconds of audio sent, seconds }
+  for (let i = 0; i < talk.length; i += 1600) {
+    const from = sent.length;
+    session.audio(talk.subarray(i, i + 1600));
+    await new Promise((resolve) => setImmediate(resolve)); // the page sends a chunk every 100 ms: the model gets its turn
+    for (const m of sent.slice(from)) if (m.type === 'behind') told.push({ at: (i + 1600) / SR, seconds: m.seconds });
+  }
+  session.flush();
+  const waiting = queue.length;
+  while (queue.length) {
+    queue.shift()({ text: 'o propoziție', model: 'stub', ms: 1 });
+    await sleep(1);
+  }
+  await sleep(20);
+  const behind = sent.filter((m) => m.type === 'behind');
+  session.close();
+  fs.rmSync(out, { recursive: true, force: true });
+  return { told, behind, waiting, finals: sent.filter((m) => m.type === 'final' && m.text).length };
+}
+const late = await lagging(true);
+const firstTold = late.told[0];
+t.check('UNIT-SESS-21', 'a model slower than the talk: the page is told once the oldest waiting sentence is more than 30 s old, and as it grows',
+  firstTold && firstTold.seconds >= 30 && firstTold.seconds <= 31 && firstTold.at <= 36 && late.told.every((m, i) => !i || m.seconds - late.told[i - 1].seconds >= 5),
+  late.told.map((m) => `${m.seconds} s at ${m.at.toFixed(1)} s`).join(', ') || 'never told');
+t.check('UNIT-SESS-22', 'when the model catches up, the warning is cleared, and nothing was dropped',
+  late.behind.at(-1)?.seconds === 0 && late.behind.filter((m) => m.seconds === 0).length === 1 && late.finals === 15 && late.waiting === 15,
+  `last ${late.behind.at(-1)?.seconds} s; ${late.finals} of 15 lines (${late.waiting} were waiting)`);
+const quick = await lagging(false);
+t.check('UNIT-SESS-23', 'a model that keeps up: the page is never told it is behind', quick.behind.length === 0 && quick.finals === 15,
+  `${quick.behind.length} messages; ${quick.finals} of 15 lines`);
+
 // ---------- the disk fills up while saving audio (#1; loudness detector, stand-in model) ----------
 // Two mics: a sentence on mic 1 every 4 s for 24 s, room noise on mic 2. The WAVs have room for 8 s of both mics and
 // 1,000 bytes, so mic 1's write at 8.0 s is cut short and then fails.
