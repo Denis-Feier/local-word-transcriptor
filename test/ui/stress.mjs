@@ -355,12 +355,19 @@ async function soak() {
     // The delay people see: from when the audio at a line's end was sent, to when the line arrived.
     const seen = lines.map((l) => ({ ...l, sentSec: undefined, delay: (l.arrival - conn.sent[Math.min(conn.sent.length - 1, Math.max(0, Math.ceil(l.end * 10) - 1))]) / 1000 }));
     const j = judge(truthItems, seen, { groups: windows(length) });
-    for (const g of j.groups) g.delays = seen.filter((l) => (l.start + l.end) / 2 >= g.start && (l.start + l.end) / 2 < g.end).map((l) => l.delay);
+    // A line said over someone else's speech waits for the other mic's sentence (decision #6), so it is held to a
+    // looser limit; solo lines, most of a meeting where people take turns, must come within 2 s.
+    const inWindow = (g) => (l) => (l.start + l.end) / 2 >= g.start && (l.start + l.end) / 2 < g.end;
+    for (const g of j.groups) {
+      g.delays = j.lines.filter(inWindow(g)).filter((l) => l.solo).map((l) => l.delay);
+      g.overlapDelays = j.lines.filter(inWindow(g)).filter((l) => !l.solo).map((l) => l.delay);
+    }
     const full = j.groups.filter((g) => Math.min(g.end, length) - g.start >= 120); // at least 2 minutes of meeting
     const windowsOk = full.every((g) => (g.solo.n + g.overlapped.n ? (g.solo.caught + g.overlapped.caught) / (g.solo.n + g.overlapped.n) : 1) >= 0.95 && g.wrong === 0);
     const p95 = full.map((g) => quantile(g.delays, 0.95));
+    const overlapP95 = full.map((g) => quantile(g.overlapDelays, 0.95)).filter(Number.isFinite);
     fs.writeFileSync(path.join(OUT, 'soak.md'), [`# Soak: ${minutes} min in real time through the page (${model})`, '', `Mic offsets in the loop: ${offsets.map((o) => p(o, 2)).join(', ')} s.`, '',
-      table(j.groups, (g) => ({ 'Seen delay p95 (s)': p(quantile(g.delays, 0.95)), 'Page MB': samples.filter((s) => s.sec <= g.end).at(-1)?.page ?? '—', 'Server MB': samples.filter((s) => s.sec <= g.end).at(-1)?.server ?? '—' })), ''].join('\n'));
+      table(j.groups, (g) => ({ 'Seen delay p95, solo (s)': p(quantile(g.delays, 0.95)), 'Overlapping (s)': p(quantile(g.overlapDelays, 0.95)), 'Page MB': samples.filter((s) => s.sec <= g.end).at(-1)?.page ?? '—', 'Server MB': samples.filter((s) => s.sec <= g.end).at(-1)?.server ?? '—' })), ''].join('\n'));
 
     const wavs = fs.readdirSync(server.transcripts).filter((n) => n.endsWith('.wav')).map((n) => ({ n, sec: (fs.statSync(path.join(server.transcripts, n)).size - 44) / 2 / SR }));
     const recorded = (stop - start) / 1000;
@@ -368,8 +375,9 @@ async function soak() {
       `recorded ${p(recorded, 1)} s; ${wavs.map((w) => `${w.n.slice(-8)} ${p(w.sec, 1)} s`).join(', ')}`);
     t.check('STRESS-SOAK-02', 'lines keep coming: every 10 minutes ≥ 95 % of utterances caught, none on the wrong mic', windowsOk && offsets.every((o) => o !== null),
       full.map((g) => `${g.name}: ${g.solo.caught + g.overlapped.caught}/${g.solo.n + g.overlapped.n}, wrong ${g.wrong}`).join('; '));
-    t.check('STRESS-SOAK-03', 'the delay people see: p95 ≤ 2 s in every 10 minutes, the last no more than 0.5 s above the first', p95.every((x) => x <= 2) && p95.at(-1) <= p95[0] + 0.5,
-      `p95 per 10 min: ${p95.map((x) => p(x, 1)).join(', ')} s`);
+    t.check('STRESS-SOAK-03', 'the delay people see: solo lines p95 ≤ 2 s in every 10 minutes, the last no more than 0.5 s above the first; lines over other speech p95 ≤ 10 s',
+      p95.every((x) => x <= 2) && p95.at(-1) <= p95[0] + 0.5 && overlapP95.every((x) => x <= 10),
+      `solo p95 per 10 min: ${p95.map((x) => p(x, 1)).join(', ')} s; overlapping: ${overlapP95.map((x) => p(x, 1)).join(', ') || '—'} s`);
     const warm = Math.min(1800, (minutes * 60) / 4);
     const page = trend(samples.map((s) => ({ sec: s.sec, mb: s.page })), warm);
     t.check('STRESS-SOAK-04', 'page memory: ≤ 30 MB more per hour after warm-up', minutes < 90 ? page.growth <= 30 : page.perHour <= 30,
