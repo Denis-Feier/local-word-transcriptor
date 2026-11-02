@@ -1,8 +1,16 @@
 """Serves an NVIDIA NeMo speech model over local HTTP for the Node app (see lib/engines/python-nemo.js).
 
-GET  /health      -> 200 once the model is loaded
+GET  /health      -> 200 once the model is loaded: {"status": "ok", "device": "GPU (MPS)" | "CPU", "fallback": ...}
 POST /inference   body: float32 little-endian PCM, 16 kHz mono  -> {"text": "..."}
+
+--device auto (the default) puts the acoustic model on the GPU when PyTorch has one (MPS on Apple silicon, CUDA
+elsewhere) and on the CPU otherwise. If the GPU fails to load or warm up the model, or fails on a request later, the
+model moves to the CPU and stays there. A language-model beam search (Jackrabbit's 4-gram) always runs on the CPU.
 """
+import os
+
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")  # operations MPS lacks run on the CPU; set before torch loads
+
 import argparse
 import json
 import logging
@@ -14,15 +22,35 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import numpy as np
 
 
-def load_model(args):
+DEVICE_NAMES = {"mps": "GPU (MPS)", "cuda": "GPU (CUDA)", "cpu": "CPU"}
+
+
+def pick_device(wanted):
+    """'auto' -> the GPU PyTorch can use here, else 'cpu'."""
+    import torch
+
+    if wanted != "auto":
+        return wanted
+    if torch.cuda.is_available():
+        return "cuda"
+    mps = getattr(torch.backends, "mps", None)
+    if mps is not None and mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def load_model(args, device):
     import torch
     from nemo.collections.asr.models import ASRModel
     from omegaconf import OmegaConf
 
     torch.set_num_threads(args.threads)
     logging.getLogger("nemo_logger").setLevel(logging.ERROR)
+    # Loaded on the CPU, then moved: restore_from straight onto MPS is not supported by every NeMo release.
     model = ASRModel.restore_from(args.model, map_location="cpu")
     model.eval()
+    if device != "cpu":
+        model = model.to(device)
     if args.decoder == "ctc-lm":
         # CTC beam search with the 4-gram language model: the model card's most accurate setting.
         model.change_decoding_strategy(OmegaConf.create({
@@ -37,15 +65,76 @@ def load_model(args):
     return model
 
 
-def transcribe(model, samples):
-    import torch
-
-    with torch.inference_mode():
-        out = model.transcribe([samples], batch_size=1, verbose=False)
+def first_text(out):
     if isinstance(out, tuple):  # some decoders return (best, all)
         out = out[0]
     hyp = out[0]
+    if isinstance(hyp, list):  # (n-best lists)
+        hyp = hyp[0]
     return hyp if isinstance(hyp, str) else getattr(hyp, "text", str(hyp))
+
+
+def transcribe_lm_split(model, samples, device):
+    """The acoustic model on the GPU, the language-model beam search on the CPU (it is not written for MPS)."""
+    import torch
+
+    audio = torch.from_numpy(samples).unsqueeze(0).to(device)
+    length = torch.tensor([audio.shape[1]], device=device)
+    if hasattr(model, "ctc_decoder"):  # hybrid RNNT/CTC model: the CTC head sits on the encoder output
+        encoded, encoded_len = model.forward(input_signal=audio, input_signal_length=length)
+        log_probs = model.ctc_decoder(encoder_output=encoded)
+        decoding = model.ctc_decoding
+    else:  # pure CTC model
+        log_probs, encoded_len, _ = model.forward(input_signal=audio, input_signal_length=length)
+        decoding = model.decoding
+    out = decoding.ctc_decoder_predictions_tensor(log_probs.float().cpu(), decoder_lengths=encoded_len.cpu(),
+                                                  return_hypotheses=False)
+    return first_text(out)
+
+
+def transcribe(model, samples, device="cpu", decoder="tdt"):
+    import torch
+
+    with torch.inference_mode():
+        if decoder == "ctc-lm" and device != "cpu":
+            return transcribe_lm_split(model, samples, device)
+        return first_text(model.transcribe([samples], batch_size=1, verbose=False))
+
+
+class Runner:
+    """The model and the device it runs on. A GPU failure moves it to the CPU for good, so the meeting goes on."""
+
+    def __init__(self, args):
+        self.args = args
+        self.fallback = None
+        self.device = pick_device(args.device)
+        warmup = np.zeros(16000, dtype=np.float32)
+        try:
+            self.model = load_model(args, self.device)
+            transcribe(self.model, warmup, self.device, args.decoder)
+        except Exception as err:
+            if self.device == "cpu":
+                raise
+            self.to_cpu(err, reload=True)
+            transcribe(self.model, warmup, self.device, args.decoder)
+
+    def to_cpu(self, err, reload=False):
+        self.fallback = f"{DEVICE_NAMES.get(self.device, self.device)} failed: {type(err).__name__}: {err}"
+        print(f"{self.fallback}; using the CPU", file=sys.stderr, flush=True)
+        self.device = "cpu"
+        self.model = load_model(self.args, "cpu") if reload else self.model.to("cpu")
+
+    def transcribe(self, samples):
+        try:
+            return transcribe(self.model, samples, self.device, self.args.decoder)
+        except Exception as err:
+            if self.device == "cpu":
+                raise
+            self.to_cpu(err)
+            return transcribe(self.model, samples, self.device, self.args.decoder)
+
+    def describe(self):
+        return DEVICE_NAMES.get(self.device, self.device)
 
 
 def main():
@@ -57,14 +146,14 @@ def main():
     p.add_argument("--decoder", choices=["ctc-lm", "ctc", "rnnt", "tdt"], default="tdt")
     p.add_argument("--beam", type=int, default=32)
     p.add_argument("--threads", type=int, default=4)
+    p.add_argument("--device", choices=["auto", "mps", "cuda", "cpu"], default="auto")
     args = p.parse_args()
     if args.decoder == "ctc-lm" and not args.lm:
         sys.exit("--decoder ctc-lm needs --lm")
 
     t0 = time.time()
-    model = load_model(args)
-    transcribe(model, np.zeros(16000, dtype=np.float32))  # warm-up
-    print(f"model loaded in {time.time() - t0:.1f} s", flush=True)
+    runner = Runner(args)  # loads the model and warms it up
+    print(f"model loaded on {runner.describe()} in {time.time() - t0:.1f} s", flush=True)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -80,7 +169,7 @@ def main():
 
         def do_GET(self):
             if self.path == "/health":
-                self.reply(200, {"status": "ok"})
+                self.reply(200, {"status": "ok", "device": runner.describe(), "fallback": runner.fallback})
             else:
                 self.reply(404, {"error": "not found"})
 
@@ -90,7 +179,7 @@ def main():
             try:
                 raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
                 samples = np.frombuffer(raw, dtype="<f4").copy()
-                self.reply(200, {"text": transcribe(model, samples) if len(samples) else ""})
+                self.reply(200, {"text": runner.transcribe(samples) if len(samples) else ""})
             except Exception as err:  # report to the app instead of dying mid-meeting
                 self.reply(500, {"error": f"{type(err).__name__}: {err}"})
 
