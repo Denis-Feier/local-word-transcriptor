@@ -189,23 +189,27 @@ Docker notes:
 
 Pick a model from the **Model** menu. Models that aren't downloaded yet show their download size; choosing one downloads it with progress and switches to it when ready. The choice is remembered across restarts.
 
-| Model | Romanian WER, published¹ | WER on test clips² | Speed² | On disk | Runs on |
-|---|---|---|---|---|---|
-| **NVIDIA Canary 1B v2** (default) | **6.6 %** | 2.4–2.7 % | 48–59× | 1.1 GB | GPU, transcribe.cpp |
-| Whisper large-v3 | 8.2 % | 0–3.6 % | 6–10× | 1.1 GB | GPU, whisper.cpp |
-| Whisper large-v3 turbo | 8–11 % | 0–2.7 % | 11–24× | 874 MB | GPU, whisper.cpp |
-| Whisper large-v3 Romanian (BuzzASR)³ | 9.8 % | 0–2.7 % | 6–9× | 1.7 GB | GPU, whisper.cpp |
-| Orukeet 0.6B | 9.3 % | 3.6–5.4 % | 93–111× | 740 MB | GPU, transcribe.cpp |
-| Parakeet Ultra 0.6B | 9–10 % | 3.6–8.1 % | 96–111× | 740 MB | GPU, transcribe.cpp |
-| Parakeet Romanian 110M (Politehnica)⁴ | 10.6 % | 0–5.4 % | 236–279× | 135 MB | GPU, transcribe.cpp |
-| FastConformer Romanian 114M (UPB NLP)⁶ | none (11.6 % on FLEURS here) | not measured | 53× on FLEURS (CPU) | 454 MB | GPU (MPS), Python/NeMo |
-| Whisper small Romanian (readerbench)³ | 10.9 % | 4.8–10.8 % | 30–39× | 260 MB | GPU, whisper.cpp |
-| NVIDIA Parakeet TDT 0.6B v3 | 12.4 % | 3.6–18.9 % (sherpa-onnx, CPU) | 40–53× (CPU) | 740 MB | GPU, transcribe.cpp |
-| Apple on-device dictation (macOS 26)⁵ | none (17.6 % on FLEURS here) | not measured | 59× on FLEURS | kept by macOS | Mac only, Apple's Speech framework |
-| ElevenLabs Scribe v2 Realtime (cloud)⁷ | ≤ 5 % (ElevenLabs' group for Romanian) | not measured | ~150 ms per sentence (ElevenLabs) | nothing | ElevenLabs' servers, over the internet |
+The menu has two groups, from the one-hour benchmark run on this M5 (`benchmarks/runs/2026-11-02_20-09_mac-m5/report.md`: every model on
+the same 100 FLEURS Romanian clips, through the app itself; the ranking rules are in [#28](https://github.com/Denis-Feier/local-word-transcriptor/issues/28)):
 
-¹ FLEURS Romanian (read, close-mic speech). Canary, Whisper large-v3 and Parakeet v3: NVIDIA's paper (arXiv 2509.14128, Table 11); the others: their authors or the Handy benchmarks. Lower is better. A room with several speakers will score worse for every model.
-² Measured on this M5 with `npm run compare` on three synthetic Romanian clips (~100 words; differences of one word are noise). Speed = seconds of audio per second of compute; all are fast enough for live use.
+| | Model | WER measured here¹ (with / without diacritics) | Published² | Speed¹ | Live text rewrites¹ | WER in noise¹ | Invents on silence¹ | On disk | Runs on |
+|---|---|---|---|---|---|---|---|---|---|
+| **Recommended** | **NVIDIA Canary 1B v2** (default) | **6.0 % / 5.6 %** | 6.6 % | 55× | 0.28 | 20 % | 0 / 4 | 1.1 GB | GPU, transcribe.cpp |
+| **Recommended** | Parakeet Ultra 0.6B | 10.0 % / 9.7 % | 9–10 % | 72× | 0.39 | 27 % | 0 / 4 | 740 MB | GPU, transcribe.cpp |
+| Other | Jackrabbit 110M Romanian (Surogate): steadiest live text and best in noise, but non-commercial and needs Python | 7.8 % / 7.6 % | 5.7 % | 25× | 0.09 | 12 % | 0 / 4 | 2.5 GB | GPU (MPS), Python/NeMo |
+| Other | Whisper large-v3: too slow for live text (a refresh every ~3 s) | 9.1 % / 8.5 % | 8.2 % | 7× | 0.13 | 24 % | 0 / 4 | 1.1 GB | GPU, whisper.cpp |
+| Other | Orukeet 0.6B: as good as Parakeet Ultra, CC-BY-SA | 10.2 % / 9.9 % | 9.3 % | 76× | 0.28 | 31 % | 0 / 4 | 740 MB | GPU, transcribe.cpp |
+| Other | FastConformer Romanian 114M (UPB NLP)⁶: lowercase, no punctuation, Python, no license | 11.3 % / 11.0 % | none | 93× | 0.30 | 21 % | 0 / 4 | 454 MB | GPU (MPS), Python/NeMo |
+| Other | Whisper large-v3 Romanian (BuzzASR)³: slowest | 11.7 % / 11.4 % | 9.8 % | 4× | 0.05 | 22 % | 1 / 4 | 1.7 GB | GPU, whisper.cpp |
+| Other | Whisper large-v3 turbo: drops diacritics | 11.9 % / 9.2 % | 8–11 % | 17× | 0.29 | 29 % | 1 / 4 | 874 MB | GPU, whisper.cpp |
+| Other | NVIDIA Parakeet TDT 0.6B v3: Parakeet Ultra is its better retrain | 12.1 % / 11.7 % | 12.4 % | 86× | 0.41 | 33 % | 0 / 4 | 740 MB | GPU, transcribe.cpp |
+| Other | Parakeet Romanian 110M (Politehnica)⁴: fastest, lowercase, no punctuation | 12.6 % / 11.9 % | 10.6 % | 216× | 0.31 | 18 % | 0 / 4 | 135 MB | GPU, transcribe.cpp |
+| Other | Apple on-device dictation (macOS 26)⁵: collapses in noise, no punctuation | 16.7 % / 16.4 % | none | 62× | 0.04 | 53 % | 1 / 4 | kept by macOS | Mac only, Apple's Speech framework |
+| Other | Whisper small Romanian (readerbench)³: invents text on silence, fails on long sentences | 19.4 % / 19.1 % | 10.9 % | 26× | 0.31 | 50 % | 4 / 4 | 260 MB | GPU, whisper.cpp |
+| Other | ElevenLabs Scribe v2 Realtime (cloud)⁷: costs money, the audio leaves | not measured | ≤ 5 % (ElevenLabs' group) | ~150 ms per sentence (ElevenLabs) | — | — | — | nothing | ElevenLabs' servers, over the internet |
+
+¹ Measured on this M5 on 2026-11-02 with `npm run benchmark:suite` (one hour, open audio): WER = word error rate on 100 FLEURS Romanian clips (read, close-mic speech; lower is better; the 883-clip numbers in `benchmarks/results/fleurs-ro.md` agree within a point). Speed = seconds of audio per second of compute on the GPU. Live text rewrites = words shown as live text and then taken back, per word of the final line, with Steady live text on (0 = never; raw guesses rewrite 5–10× more). Noise = WER (diacritics ignored) with white noise at 10 dB SNR. Silence = of 4 inputs with no speech, how many got invented text. A room with several speakers will score worse for every model.
+² FLEURS Romanian as published: Canary, Whisper large-v3 and Parakeet v3 from NVIDIA's paper (arXiv 2509.14128, Table 11); the others from their authors or the Handy benchmarks.
 ³ Hugging Face Whisper fine-tunes with no ready-made whisper.cpp version. The app downloads the original weights, converts them to whisper.cpp's format with `lib/convert-whisper.js` (a JavaScript port of whisper.cpp's converter, no Python needed), quantizes them to q8_0 with `whisper-quantize`, and keeps only the result. BuzzASR downloads 3.1 GB, readerbench 967 MB. The readerbench model runs without the previous-text context, which made it invent words.
 ⁴ Outputs lowercase text without punctuation (that is how it was trained), but its words are very accurate and it is by far the fastest.
 ⁵ Apple's own recognizer (the macOS 26 `DictationTranscriber`), fully on the Mac; macOS downloads and keeps the Romanian model itself. Not the default and not recommended for Romanian: on FLEURS Romanian (883 sentences, `npm run benchmark`) it scored 17.6 % WER against 6.6 % for Canary, because it leaves words out and adds no punctuation (Apple's newer `SpeechTranscriber` has no Romanian). The menu offers it on macOS 26 or later, from source with the Xcode command-line tools: choosing it, or `npm run setup -- apple-dictation`, compiles a small Swift helper (`native/apple-speech/`, ~11 s). The desktop app does not ship the helper.

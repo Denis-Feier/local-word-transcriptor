@@ -72,6 +72,11 @@ try {
     `${types.join(',')}; detector ${status.detector}; max mics ${c.last('mics')?.max}`);
   t.check('PROT-WS-02', 'the models message lists installed/available models and the active one',
     c.last('models').models.length > 0 && c.last('models').active === 'parakeet-ro-110m' && c.last('models').models.every((m) => 'installed' in m && 'download' in m));
+  const listed = c.last('models').models;
+  t.check('PROT-WS-06', 'every model in the message carries its tier (recommended/other) and a one-line reason (#28); the recommended ones come first',
+    listed.every((m) => ['recommended', 'other'].includes(m.tier) && typeof m.reason === 'string' && m.reason.length > 0)
+      && listed.findIndex((m) => m.tier === 'other') > listed.filter((m) => m.tier === 'recommended').length - 1 && listed.some((m) => m.tier === 'recommended'),
+    listed.map((m) => `${m.id}: ${m.tier}`).join(', '));
   t.check('PROT-WS-03', 'tuning carries values, defaults and ranges for every slider, including Mic separation',
     ['vadThreshold', 'silenceMs', 'minSpeechMs', 'maxSegmentSec', 'partialEverySec', 'crosstalkDb'].every((k) => k in tuning.values && k in tuning.defaults && k in tuning.ranges));
 
