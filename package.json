@@ -17,6 +17,7 @@
     "test:stress": "node test/run-all.js stress",
     "test:wav": "node test/stream-wav.js",
     "benchmark": "node scripts/benchmark.js",
+    "benchmark:suite": "node scripts/benchmark-suite.js",
     "manual": "node scripts/manual.mjs",
     "app": "electron .",
     "dist:mac": "electron-builder --mac",

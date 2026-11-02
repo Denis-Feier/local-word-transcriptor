@@ -1,5 +1,6 @@
-// Scores the models on the FLEURS Romanian test set: 883 recorded sentences with checked transcripts
-// (Google, CC-BY-4.0). Downloads the set (~500 MB) into benchmarks/data the first time.
+// Scores the models on the whole FLEURS Romanian test set: 883 recorded sentences with checked transcripts
+// (Google, CC-BY-4.0). Downloads the set (~500 MB) into benchmarks/data the first time. The one-hour, shareable
+// benchmark of everything (accuracy, live text, noise, long sentences, silence) is scripts/benchmark-suite.js.
 //
 //   npm run benchmark                                  every downloaded model
 //   npm run benchmark -- --models canary-1b-v2,jackrabbit-110m-ro --limit 200
@@ -9,16 +10,13 @@
 // so an interrupted run resumes where it stopped. The report goes to benchmarks/results/<name>.md.
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { config, ROOT } from '../lib/config.js';
-import { MODELS, findModel, isInstalled, download } from '../lib/models.js';
+import { MODELS, findModel, isInstalled } from '../lib/models.js';
+import { ensureDataset, FLEURS_DIR as DATA } from '../lib/benchmark/dataset.js';
 import { Transcriber } from '../lib/transcriber.js';
 import { decodeWav } from '../lib/wav.js';
 import { resultToText } from '../lib/text.js';
 import { editDistance, words } from '../lib/wer.js';
-
-const DATA = path.join(ROOT, 'benchmarks', 'data', 'fleurs-ro');
-const FLEURS = 'https://huggingface.co/datasets/google/fleurs/resolve/main/data/ro_ro/';
 
 const args = process.argv.slice(2);
 const option = (name) => {
@@ -32,18 +30,7 @@ const RESULTS = path.join(ROOT, 'benchmarks', 'results', name);
 const ids = option('--models')?.split(',') ?? MODELS.filter((m) => isInstalled(m) && !m.cloud).map((m) => m.id);
 const models = ids.map((id) => findModel(id) ?? (console.error(`Unknown model "${id}"`), process.exit(1)));
 
-async function ensureDataset() {
-  if (fs.existsSync(path.join(DATA, 'test.tsv')) && fs.existsSync(path.join(DATA, 'test'))) return;
-  console.log('Downloading FLEURS Romanian test set (~500 MB)…');
-  await download(`${FLEURS}test.tsv`, path.join(DATA, 'test.tsv'));
-  const archive = path.join(DATA, 'test.tar.gz');
-  await download(`${FLEURS}audio/test.tar.gz`, archive);
-  const tar = spawnSync('tar', ['-xzf', archive, '-C', DATA], { stdio: 'inherit' });
-  if (tar.status !== 0) throw new Error('Unpacking FLEURS failed');
-  fs.rmSync(archive);
-}
-
-await ensureDataset();
+await ensureDataset(DATA);
 // TSV columns: id, file, raw transcription, normalized transcription, characters, samples, gender
 const clips = fs.readFileSync(path.join(DATA, 'test.tsv'), 'utf8').trim().split('\n')
   .map((line) => line.split('\t'))

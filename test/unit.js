@@ -3,6 +3,7 @@
 //
 //   node test/unit.js
 import fs from 'node:fs';
+import os from 'node:os';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { normalize, resultToText, contextTail } from '../lib/text.js';
@@ -20,9 +21,16 @@ import { SidecarEngine } from '../lib/engines/sidecar.js';
 import { WhisperCppEngine } from '../lib/engines/whisper-cpp.js';
 import { PythonNemoEngine } from '../lib/engines/python-nemo.js';
 import { config, ROOT } from '../lib/config.js';
-import { MODELS } from '../lib/models.js';
+import { MODELS, findModel } from '../lib/models.js';
+import { liveSteadiness, sumSteadiness } from '../lib/benchmark/metrics.js';
+import { withNoise, withGain, inRoom, silence as benchSilence, joinClips, rms, db } from '../lib/benchmark/audio.js';
+import { machineInfo, describeMachine } from '../lib/benchmark/machine.js';
+import { loadClips, selectClips, clipSamples } from '../lib/benchmark/dataset.js';
+import { runModel, planStages, STAGES, CONDITIONS, SILENCE_INPUTS } from '../lib/benchmark/suite.js';
+import { renderReport } from '../lib/benchmark/report.js';
+import { parseArgs } from '../scripts/benchmark-suite.js';
 import { createBacklog, lostNote } from '../public/backlog.js';
-import { SR, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs } from './helpers.js';
+import { SR, FIXTURE, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs, loadWav, saveWav } from './helpers.js';
 
 const t = suite('unit');
 
@@ -1274,6 +1282,148 @@ if (!silero) {
   t.check('UNIT-VAD-05', 'a closed session gives its detectors back and ignores audio sent after: the WAVs keep the recording',
     given && !thrown && before.length === 2 && before.every((s) => s === 2) && after.join() === before.join(),
     `detectors ${given ? 'given back' : 'kept'}; ${thrown ? `audio after close threw ${thrown.message}; ` : ''}WAVs ${before.map((s) => `${s} s`).join(', ')} at close, ${after.map((s) => `${s} s`).join(', ')} after 1 s more audio`);
+}
+
+// ---------- the benchmark suite (scripts/benchmark-suite.js): its scores, audio, plan and a whole run on a stand-in ----------
+{
+  // UNIT-BENCH-01: steadiness of a live line, the way Canary revises it (as UNIT-STEADY-01's guesses).
+  const shown = ['Azi vorbim', 'Astăzi vorbim despre', 'Astăzi vorbim despre model', 'Astăzi vorbim despre modelele noi'];
+  const s = liveSteadiness(shown, 'Astăzi vorbim despre modelele noi de azi.');
+  const sum = sumSteadiness([s]);
+  t.check('UNIT-BENCH-01', 'live-text steadiness: "Azi" and "model" taken back = 3 words erased in 2 of 5 updates; 5 of the final\'s 7 words were on screen',
+    s.erased === 3 && s.rewrites === 2 && s.updates === 5 && s.covered === 5 && s.finalWords === 7 && Math.abs(sum.normalizedErasure - 3 / 7) < 1e-9 && sum.rewriteShare === 0.4 && Math.abs(sum.coverage - 5 / 7) < 1e-9,
+    JSON.stringify(s));
+  const steady = liveSteadiness(['Astăzi', 'Astăzi vorbim despre', 'Astăzi vorbim despre modelele noi'], 'Astăzi vorbim despre modelele noi.');
+  t.check('UNIT-BENCH-01', 'a line that only grows erases nothing, and a final equal to it is fully covered', steady.erased === 0 && steady.rewrites === 0 && steady.covered === steady.finalWords, JSON.stringify(steady));
+  t.check('UNIT-BENCH-01', 'no live text at all: nothing erased, nothing covered', JSON.stringify(liveSteadiness([], 'ana are mere')) === JSON.stringify({ erased: 0, rewrites: 0, updates: 1, covered: 0, finalWords: 3 }));
+
+  // UNIT-BENCH-02: the fixed clip selection.
+  const all = Array.from({ length: 883 }, (_, i) => ({ file: `${String(i).padStart(4, '0')}.wav`, ref: 'x', seconds: 10 }));
+  const hundred = selectClips(all, 100);
+  const again = selectClips([...all].reverse().sort((a, b) => (a.file < b.file ? -1 : 1)), 100);
+  const gaps = hundred.slice(1).map((c, i) => Number(c.file.slice(0, 4)) - Number(hundred[i].file.slice(0, 4)));
+  t.check('UNIT-BENCH-02', '100 of 883 clips: the same clips every time, spread evenly (8 or 9 apart), the first one first; asking for more than there are gives all',
+    hundred.length === 100 && hundred[0] === all[0] && gaps.every((g) => g === 8 || g === 9) && JSON.stringify(hundred) === JSON.stringify(again) && selectClips(all, 2000).length === 883 && selectClips(all, 0).length === 0,
+    `gaps ${Math.min(...gaps)}–${Math.max(...gaps)}`);
+
+  // UNIT-BENCH-03: the plan fits the model's share of the time.
+  const roomy = planStages(all, 0.02, 3600); // 50× real-time, an hour
+  const tight = planStages(all, 0.5, 120); // 2× real-time, two minutes
+  const sized = planStages(all, 0.02, 3600, { accuracy: 30, live: 5 });
+  t.check('UNIT-BENCH-03', 'a fast model in an hour keeps the full stages; a slow one in two minutes shrinks every stage, never below its minimum; asked-for sizes are kept when they fit',
+    roomy.fits && roomy.sizes.accuracy === STAGES.accuracy.full && roomy.sizes.live === STAGES.live.full
+      && !tight.fits && tight.sizes.accuracy < STAGES.accuracy.full && tight.sizes.accuracy >= STAGES.accuracy.min && tight.sizes.live >= STAGES.live.min && tight.sizes.robustness >= STAGES.robustness.min && tight.sizes.silence === STAGES.silence.full
+      && sized.sizes.accuracy === 30 && sized.sizes.live === 5,
+    `roomy ${JSON.stringify(roomy.sizes)} ${roomy.estimatedSec.toFixed(0)} s; tight ${JSON.stringify(tight.sizes)} ${tight.estimatedSec.toFixed(0)} s`);
+
+  // UNIT-BENCH-04: the synthetic conditions.
+  const tone = Float32Array.from({ length: 3 * SR }, (_, i) => 0.3 * Math.sin((2 * Math.PI * 220 * i) / SR));
+  const noisy = withNoise(tone, 20);
+  const added = Float32Array.from(noisy, (v, i) => v - tone[i]);
+  const snr = db(rms(tone) / rms(added));
+  const quiet = withGain(tone, -20);
+  const roomy2 = inRoom(tone);
+  const same = withNoise(tone, 20);
+  t.check('UNIT-BENCH-04', 'noise at 20 dB SNR measures 20 dB (±0.5); −20 dB gain is a tenth of the level; the room keeps the level; the same seed gives the same audio; silence is zeros',
+    Math.abs(snr - 20) < 0.5 && Math.abs(rms(quiet) / rms(tone) - 0.1) < 0.005 && Math.abs(rms(roomy2) / rms(tone) - 1) < 0.05 && roomy2.length > tone.length
+      && noisy.every((v, i) => v === same[i]) && benchSilence(2).length === 2 * SR && benchSilence(2).every((v) => v === 0) && joinClips([tone, tone], 0.5).length === 2 * tone.length + SR / 2,
+    `SNR ${snr.toFixed(2)} dB, quiet ×${(rms(quiet) / rms(tone)).toFixed(3)}, room ×${(rms(roomy2) / rms(tone)).toFixed(3)}`);
+
+  // UNIT-BENCH-05: the computer's description, nothing personal.
+  const info = await machineInfo();
+  const text = JSON.stringify(info);
+  t.check('UNIT-BENCH-05', 'machine info has the OS, CPU, memory, GPU list, compute devices, Node and app version, and no user or host name',
+    info.os.platform === process.platform && info.cpu.cores > 0 && info.ramGb > 0 && Array.isArray(info.gpus) && Array.isArray(info.compute) && info.node === process.version && typeof info.app.version === 'string'
+      && !text.includes(os.hostname()) && !text.includes(os.userInfo().username) && describeMachine(info).includes(`${info.ramGb} GB`),
+    describeMachine(info));
+
+  // UNIT-BENCH-06..08: a whole run on a stand-in model over a three-clip set cut from the fixture.
+  const set = scratch('bench');
+  fs.mkdirSync(path.join(set, 'test'));
+  const fixture = loadWav(FIXTURE);
+  const cuts = [[0, 6.8, 'Bună ziua dragi colegi, astăzi vorbim despre munții noștri.'], [7.3, 11.2, 'Vremea este frumoasă la munte.'], [11.2, 15.9, 'Cabana avea ferestre mari spre vale.']];
+  const rows = cuts.map(([from, to, ref], i) => {
+    const samples = fixture.subarray(Math.round(from * SR), Math.round(to * SR));
+    const file = `clip-${i}.wav`;
+    saveWav(path.join(set, 'test', file), samples);
+    return { file, ref, samples };
+  });
+  fs.writeFileSync(path.join(set, 'test.tsv'), rows.map((r, i) => [i, r.file, r.ref, r.ref.toLowerCase(), '', r.samples.length, 'FEMALE'].join('\t')).join('\n'));
+  const clips = loadClips(set);
+  let current = null;
+  const load = (c) => {
+    current = { samples: clipSamples(c, set), ref: c.ref };
+    return current.samples;
+  };
+  // The stand-in: the reference for a whole clip (under any condition); for the audio so far, that many words, the
+  // unfinished last one guessed wrong (so the raw live line rewrites it each time, as a real model does); nothing for
+  // silence or noise.
+  let loadFails = false;
+  let guessNo = 0;
+  const isPrefix = (samples) => current && samples.length < current.samples.length && samples.subarray(0, 200).every((v, i) => v === current.samples[i]);
+  class Bench extends Transcriber {
+    createEngine() {
+      return {
+        device: 'CPU',
+        load: async () => { if (loadFails) throw new Error('stand-in cannot load'); },
+        unload: async () => {},
+        kill: () => {},
+        transcribe: async (samples) => {
+          await sleep(2); // so the speeds are numbers
+          const whole = rows.find((r) => r.samples.length === samples.length || r.samples.length + 1072 === samples.length); // the room adds 67 ms
+          if (whole) return { text: whole.ref };
+          if (isPrefix(samples)) {
+            const words = current.ref.split(' ');
+            const out = words.slice(0, Math.round((words.length * samples.length) / current.samples.length));
+            if (out.length) out[out.length - 1] = `xx${guessNo++}`; // never the same wrong guess twice
+            return { text: out.join(' ') };
+          }
+          const joined = rows.map((r) => r.ref).join(' ');
+          return { text: samples.length > 12 * SR && rms(samples) > 0.001 ? joined : '' }; // joined clips (16 s), or silence
+        },
+      };
+    }
+  }
+  const keepKey = config.elevenlabs.apiKey;
+  config.elevenlabs.apiKey = 'stand-in'; // makes the cloud model count as installed; the engine is the stand-in above
+  const model = findModel('elevenlabs-scribe-v2');
+  const logError = console.error;
+  console.error = () => {};
+  let full;
+  let late;
+  let broken;
+  try {
+    full = await runModel({ model, transcriber: new Bench(structuredClone(config)), clips, load, budgetSec: 600, deadline: Date.now() + 60000 });
+    late = await runModel({ model, transcriber: new Bench(structuredClone(config)), clips, load, budgetSec: 600, deadline: Date.now() - 1 });
+    loadFails = true;
+    broken = await runModel({ model, transcriber: new Bench(structuredClone(config)), clips, load });
+  } finally {
+    config.elevenlabs.apiKey = keepKey;
+    console.error = logError;
+    fs.rmSync(set, { recursive: true, force: true });
+  }
+  const st = full.stages;
+  t.check('UNIT-BENCH-06', 'a whole run on a stand-in: every stage has its numbers; a model that writes the reference scores 0 % WER, on every condition and on the joined long sentences; silence gets no words',
+    !full.error && !full.truncated && full.load.device === 'CPU' && st.accuracy.done === 3 && st.accuracy.werStrict === 0 && st.accuracy.speed > 0 && Object.keys(st.accuracy.perClip).length === 3
+      && Object.keys(st.robustness.conditions).length === CONDITIONS.length + 1 && Object.values(st.robustness.conditions).every((c) => c.werPlain === 0)
+      && st.length.lengths.length >= 1 && st.length.lengths.every((l) => l.werPlain === 0 && l.msPerSentence >= 0) && st.silence.inputs.length === SILENCE_INPUTS.length && st.silence.hallucinated === 0,
+    `${full.error ?? ''} accuracy ${JSON.stringify({ done: st.accuracy?.done, wer: st.accuracy?.werStrict })}, robustness ${Object.keys(st.robustness?.conditions ?? {}).join('/')}, lengths ${st.length?.lengths.map((l) => l.target).join('/')}, silence ${st.silence?.hallucinated}`);
+  const lv = st.live;
+  t.check('UNIT-BENCH-06', 'live text on the app\'s schedule: several guesses per sentence from 0.6 s on; the raw line rewrites its wrongly guessed last word (erasure > 0), Steady live text never does (0) and still shows most of the sentence before the final',
+    lv.done === 3 && lv.guessesPerSentence >= 3 && lv.sentences.every((x) => x.guesses[0].at === 0.6 && x.guesses.every((g, i) => i === 0 || g.at >= x.guesses[i - 1].at + 0.5))
+      && lv.raw.normalizedErasure > 0 && lv.steady.normalizedErasure === 0 && lv.steady.coverage > 0.5 && lv.raw.coverage > 0.5 && lv.firstLiveSec.raw >= 0.6 && lv.finalMs >= 0,
+    `${lv.guessesPerSentence?.toFixed(1)} guesses; erasure raw ${lv.raw?.normalizedErasure.toFixed(2)} steady ${lv.steady?.normalizedErasure.toFixed(2)}; coverage raw ${lv.raw?.coverage.toFixed(2)} steady ${lv.steady?.coverage.toFixed(2)}; first live ${lv.firstLiveSec?.raw} s`);
+  t.check('UNIT-BENCH-07', 'past the deadline: the model still loads and is warmed up, every stage stops at once and says so, nothing throws; a model that cannot load gives an error, not a crash',
+    late.truncated && late.load && late.stages.accuracy.done === 0 && late.stages.accuracy.truncated && late.stages.live.truncated && late.stages.silence.truncated && !late.error
+      && broken.error && /cannot load/.test(broken.error) && !broken.stages.accuracy,
+    `late: ${late.stages.accuracy?.done} clips, truncated ${late.truncated}; broken: ${broken.error}`);
+  const run = { name: 'unit', startedAt: new Date().toISOString(), minutes: 10, parallel: 2, machine: info, dataset: { clips: 3 }, models: [full, broken], seconds: 1 };
+  const report = renderReport(run);
+  const args = parseArgs(['--minutes', '500', '--models', 'a, b', '--clips', '10', '--label', 'My Laptop/1', '--parallel', '0']);
+  t.check('UNIT-BENCH-08', 'the report lists the model in every section, the machine, the parallel warning and the model that could not run; the command line caps the budget at 120 min and 1 model at a time',
+    ['## Accuracy and speed', '## Live text', '## Noise, a quiet speaker', '## Silence and noise alone', '## Models that could not run', model.label, describeMachine(info), 'side by side', 'cannot load'].every((x) => report.includes(x))
+      && args.minutes === 120 && args.parallel === 1 && JSON.stringify(args.models) === '["a","b"]' && args.sizes.accuracy === 10 && args.sizes.live === STAGES.live.full && args.label === 'My-Laptop-1' && parseArgs([]).minutes === 60,
+    `${report.length} chars; ${JSON.stringify({ minutes: args.minutes, parallel: args.parallel, label: args.label })}`);
 }
 
 fs.rmSync(dir, { recursive: true, force: true });

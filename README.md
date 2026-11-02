@@ -275,6 +275,42 @@ Not included, as of October 2026:
 - **Qwen3-ASR** (20–44 %) and **NVIDIA Nemotron streaming** (26–32 %): much worse on Romanian. **Meta Omnilingual**: its strong variant is a 7B model with no Mac runtime.
 - **Voxtral, Phi-4, Granite Speech, Kyutai, Cohere Transcribe**: no Romanian.
 
+## Benchmarking this app on your computer
+
+`npm run benchmark:suite` measures every downloaded local model on open audio and exports the results with a description
+of the computer, so people with different Macs and PCs can run it and send the numbers back. It takes about an hour
+(the budget is yours to set, up to two hours) and needs nothing private: the audio is the FLEURS Romanian test set
+(Google, CC-BY-4.0, ~500 MB, downloaded once into `benchmarks/data/`), and the noisy, quiet, far-away and silent inputs
+are made from it on the spot, the same on every computer.
+
+```bash
+git clone https://github.com/Denis-Feier/local-word-transcriptor.git && cd local-word-transcriptor
+npm install
+npm run benchmark:suite -- --install --label my-laptop        # downloads every model this computer can run, then measures them (~1 h)
+```
+
+What it measures, per model, through the app's own transcriber (so the numbers are what the app gets):
+
+| Stage | Clips | What comes out |
+|---|---|---|
+| Load | — | time to ready, the device it runs on (GPU or CPU, and why not the GPU), memory taken, the slower first sentence |
+| Accuracy and speed | 100 | word error rate (with diacritics, without, and without the sentences that have digits), times faster than real time, ms per sentence by sentence length |
+| Live text ([#27](https://github.com/Denis-Feier/local-word-transcriptor/issues/27)) | 40 | each sentence replayed on the app's live-guess schedule: how many words shown are later taken back (erasure), how often, how much of the sentence is on screen before the final line, when the first words appear, how long the final takes after the pause; raw and with Steady live text |
+| Noise, a quiet speaker, a mic across the room | 25 | WER with noise at 20 dB and 10 dB SNR, the speaker 20 dB quieter, the mic across the room, against the same clips clean |
+| Long sentences | 3 each | 20 s and 40 s of joined speech: time, speed and WER (the app cuts sentences at 20 s by default) |
+| Silence | 4 | 3 s and 10 s of silence, an empty room, a fan next to the mic: what the model invents |
+
+Options: `--minutes 60` (the budget, at most 120; the stages shrink on a slow computer and stop at the deadline, marked ⏱),
+`--parallel 2` (models side by side; speeds are only comparable at 1), `--models canary-1b-v2,orukeet`,
+`--clips 200 --live 60 --robust 40` (bigger stages), `--label` (a name for the computer in the results), `--name <run>`
+(resume an interrupted run; models already measured are kept), `--fresh` (measure them again). The ElevenLabs cloud model
+is never included: it bills and sends the audio away.
+
+The results go to `benchmarks/runs/<date>_<label>/`: `report.md` (the tables), `run.json` (everything, including every
+clip's text per model, and the computer: OS, CPU, RAM, GPU, Node and app version; no user or host name) and
+`models/<id>.log`. To send them back, open an issue or a pull request with that folder. The whole FLEURS set, for the
+published ranking, is `npm run benchmark` (`benchmarks/results/fleurs-ro.md`, ~2 h for every model).
+
 ## Comparing models on your own audio
 
 Published benchmarks are read speech recorded close to the mic. The only reliable test is your room, your voices, your vocabulary:
@@ -346,7 +382,8 @@ where macOS decides. In Docker there is no GPU, so everything runs on the CPU th
 | `lib/models.js` | Model catalogue, download, unpack, and conversion of Whisper fine-tunes (`lib/convert-whisper.js`) |
 | `lib/text.js` | Fixes ş/ţ → ș/ț, removes `[Muzică]` tags, drops Whisper's known silence hallucinations ("Mulțumim pentru vizionare!") |
 | `scripts/compare.js` | Runs several models over one of your recordings and reports speed and WER |
-| `scripts/benchmark.js` | Scores models on the FLEURS Romanian test set (`npm run benchmark`) |
+| `scripts/benchmark.js` | Scores models on the whole FLEURS Romanian test set (`npm run benchmark`) |
+| `scripts/benchmark-suite.js`, `lib/benchmark/` | The shareable one-hour benchmark (`npm run benchmark:suite`): accuracy, speed, live-text steadiness, noise, long sentences, silence, exported with the computer's description |
 | `Dockerfile`, `docker-compose.yml` | The Docker image and how it is started |
 | `desktop/main.mjs` | The desktop app (Electron): starts the server in the background, opens its page, sends the caption window to the projector, data folders per user |
 | `docs/manual/` | The user manual: `manual.en.html` / `manual.ro.html` (the text), `manual.css`, `img/` (screenshots) and the PDFs built from them |
