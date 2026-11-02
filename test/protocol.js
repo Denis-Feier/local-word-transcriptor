@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import WebSocket from 'ws';
 import { ROOT, SR, startServer, speakers, sleep, suite, fakeElevenLabs } from './helpers.js';
+import { fmtTime } from '../lib/session.js';
 
 const t = suite('protocol');
 const { A, B } = speakers();
@@ -219,6 +220,36 @@ if (process.platform === 'win32') {
     await c.close();
   } finally {
     await s5.stop();
+  }
+}
+
+// The disk fills up while the transcript is saved (#19): no file may grow past 1 block (1,024 bytes on macOS, 512 on
+// Linux) and Save audio is off, so the .txt is full after 8 of A's ~116-byte lines on macOS (4 on Linux); A speaks
+// 12 times. A line that does not fit must leave the .txt as it was, and the page is told once.
+if (process.platform === 'win32') {
+  t.skip('PROT-ERR-04', 'a disk that fills up while saving the transcript: whole lines only, one error', 'needs ulimit (macOS, Linux)');
+} else {
+  const s6 = await startServer({ maxFileBlocks: 1 });
+  try {
+    const c = await connect(s6);
+    for (let i = 0; i < 12; i++) await c.audio([A], 8);
+    c.json({ type: 'flush' });
+    const settled = () => c.msgs.filter((m) => m.type === 'vad' && m.speaking).every((v) => c.msgs.some((m) => m.type === 'final' && m.id === v.id));
+    await waitFor(() => c.ws.readyState !== WebSocket.OPEN || settled(), 30000);
+    const up = c.ws.readyState === WebSocket.OPEN && (await fetch(s6.url).then((r) => r.ok, () => false));
+    const file = c.msgs.find((m) => m.type === 'file' && m.kind === 'text');
+    const text = file ? fs.readFileSync(path.join(s6.transcripts, path.basename(file.path)), 'utf8') : '';
+    const lines = text.split(/(?<=\n)/).filter(Boolean);
+    const page = c.finals().map((m) => `[${fmtTime(m.start)}] ${m.text}\n`);
+    const whole = lines.findIndex((l, i) => l !== page[i]); // -1: every line in the file is the page's, whole
+    const errors = c.msgs.filter((m) => m.type === 'error').map((m) => m.message);
+    t.check('PROT-ERR-04', 'a disk that fills up while saving the transcript: the server keeps transcribing, the .txt keeps only whole lines, the page is told once',
+      up && whole === -1 && lines.length >= 2 && page.length - lines.length >= 2 && errors.length === 1 && errors[0].startsWith('Could not save transcript'),
+      `alive ${up}; ${page.length} sentences, ${lines.length} lines in the .txt (${Buffer.byteLength(text)} bytes)${whole === -1 ? ', all whole' : `, line ${whole + 1} is ${JSON.stringify(lines[whole].slice(-40))}`}; `
+        + `errors: ${errors.length > 2 ? `${errors.length} × ${errors[0]}` : errors.join(' | ') || 'none'}`);
+    await c.close();
+  } finally {
+    await s6.stop();
   }
 }
 

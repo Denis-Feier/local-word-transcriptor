@@ -153,6 +153,11 @@ function handle(msg) {
     case 'error':
       showError(msg.message);
       break;
+    case 'options':
+      // The server stopped saving audio (a full disk): untick the box. The saved choice stays, so the next session
+      // tries again.
+      if (msg.saveAudio !== undefined) els.saveAudio.checked = msg.saveAudio;
+      break;
   }
 }
 
