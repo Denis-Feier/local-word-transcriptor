@@ -645,8 +645,8 @@ async function engines() {
       await close(r.ws);
       const errorAfter = r.statuses.filter((s) => s.wall >= gaveUpAt - 5000).some((s) => s.state === 'error');
       const back = r.statuses.some((s) => s.wall > gaveUpAt && s.state === 'ready');
-      t.check('STRESS-ENG-02', `(D4) ${sidecars[0]} killed ${killed.size} times within a minute: transcription comes back`, back,
-        `${killed.size} kills; error shown ${errorAfter}; ${back ? 'came back' : `still not working ${p((Date.now() - gaveUpAt) / 1000, 0)} s later`}`, { known: true });
+      t.check('STRESS-ENG-02', `(D4) ${sidecars[0]} killed ${killed.size} times within a minute: the error is shown, then transcription comes back on its own`, killed.size === 4 && errorAfter && back,
+        `${killed.size} kills; error shown ${errorAfter}; ${back ? 'came back' : `still not working ${p((Date.now() - gaveUpAt) / 1000, 0)} s later`}`);
     } finally {
       await server.stop();
     }
