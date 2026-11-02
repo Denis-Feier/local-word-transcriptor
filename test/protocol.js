@@ -6,7 +6,8 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import WebSocket from 'ws';
-import { ROOT, SR, startServer, speakers, sleep, suite } from './helpers.js';
+import { ROOT, SR, startServer, speakers, sleep, suite, fakeElevenLabs } from './helpers.js';
+import { fmtTime } from '../lib/session.js';
 
 const t = suite('protocol');
 const { A, B } = speakers();
@@ -92,7 +93,19 @@ try {
   await sleep(300);
   t.check('PROT-WS-04', 'unknown model ids, installing an installed model and unknown messages change nothing',
     c.last('status').state === 'ready' && c.last('status').model === 'parakeet-ro-110m' && !c.msgs.some((m) => m.type === 'error'));
+  t.check('PROT-CLOUD-01', 'without an ElevenLabs key the cloud model is not offered', !c.last('models').models.some((m) => m.cloud || m.engine === 'elevenlabs'),
+    c.last('models').models.map((m) => m.id).join(', '));
   await c.close();
+
+  // ---------- only the app's own page may connect ----------
+  const tryOrigin = (origin) => new Promise((resolve) => {
+    const ws = new WebSocket(server.ws('?mics'), { origin });
+    ws.once('open', () => (ws.close(), resolve('open')));
+    ws.once('error', (err) => resolve(err.message));
+  });
+  const [foreign, own] = await Promise.all([tryOrigin('https://example.com'), tryOrigin(server.url)]);
+  t.check('PROT-WS-05', 'a WebSocket from another website is refused; the page\'s own origin and clients without one connect',
+    /401/.test(foreign) && own === 'open', `example.com: ${foreign}; own page: ${own}`);
 
   // ---------- mic layouts, Stop, files ----------
   c = await connect(server);
@@ -176,6 +189,70 @@ if (process.platform === 'win32') {
   }
 }
 
+// The disk fills up while Save audio is on (#1): no file may grow past 300 blocks (300 KB on macOS, 150 KB on Linux),
+// so the WAV is full after 9.6 s of 40 s (4.8 s on Linux). The server must keep transcribing and saving the
+// transcript, tell the page once, and keep the WAV playable.
+if (process.platform === 'win32') {
+  t.skip('PROT-ERR-03', 'a disk that fills up while saving audio: the server keeps transcribing', 'needs ulimit (macOS, Linux)');
+} else {
+  const s5 = await startServer({ maxFileBlocks: 300 });
+  try {
+    const c = await connect(s5);
+    c.ws.on('error', () => {}); // without the fix the server dies mid-test
+    c.json({ type: 'options', saveAudio: true });
+    for (let i = 0; i < 5; i++) await c.audio([A], 8); // A's sentence every 8 s, 40 s in all
+    c.json({ type: 'flush' });
+    const settled = () => c.msgs.filter((m) => m.type === 'vad' && m.speaking).every((v) => c.msgs.some((m) => m.type === 'final' && m.id === v.id));
+    await waitFor(() => c.ws.readyState !== WebSocket.OPEN || settled(), 30000);
+    const up = c.ws.readyState === WebSocket.OPEN && (await fetch(s5.url).then((r) => r.ok, () => false));
+    const wav = c.msgs.find((m) => m.type === 'file' && m.kind === 'audio');
+    const bytes = wav ? fs.readFileSync(path.join(s5.transcripts, path.basename(wav.path))) : Buffer.alloc(44);
+    const data = bytes.length - 44;
+    const header = bytes.readUInt32LE(40);
+    const filled = header / (2 * SR); // seconds of audio the WAV kept
+    const after = c.finals().filter((m) => m.start > filled).length;
+    const errors = c.msgs.filter((m) => m.type === 'error').map((m) => m.message);
+    const txt = fs.existsSync(s5.transcripts) ? fs.readdirSync(s5.transcripts).filter((f) => f.endsWith('.txt')) : [];
+    const lines = txt.length ? fs.readFileSync(path.join(s5.transcripts, txt[0]), 'utf8').trim().split('\n').length : 0;
+    t.check('PROT-ERR-03', 'a disk that fills up while saving audio: the server keeps transcribing and saving the transcript, the page is told once, the WAV stays playable',
+      up && after >= 2 && lines === c.finals().length && errors.length === 1 && errors[0].startsWith('Could not save audio') && filled >= 4 && header === data - (data % 2),
+      `alive ${up}; WAV ${filled.toFixed(1)} s of 40 s, header ${header === data ? 'matches the file' : `${header} bytes, file ${data}`}; ${after} sentences after it filled, ${c.finals().length} in all, ${lines} in the .txt; errors: ${errors.join(' | ') || 'none'}`);
+    await c.close();
+  } finally {
+    await s5.stop();
+  }
+}
+
+// The disk fills up while the transcript is saved (#19): no file may grow past 1 block (1,024 bytes on macOS, 512 on
+// Linux) and Save audio is off, so the .txt is full after 8 of A's ~116-byte lines on macOS (4 on Linux); A speaks
+// 12 times. A line that does not fit must leave the .txt as it was, and the page is told once.
+if (process.platform === 'win32') {
+  t.skip('PROT-ERR-04', 'a disk that fills up while saving the transcript: whole lines only, one error', 'needs ulimit (macOS, Linux)');
+} else {
+  const s6 = await startServer({ maxFileBlocks: 1 });
+  try {
+    const c = await connect(s6);
+    for (let i = 0; i < 12; i++) await c.audio([A], 8);
+    c.json({ type: 'flush' });
+    const settled = () => c.msgs.filter((m) => m.type === 'vad' && m.speaking).every((v) => c.msgs.some((m) => m.type === 'final' && m.id === v.id));
+    await waitFor(() => c.ws.readyState !== WebSocket.OPEN || settled(), 30000);
+    const up = c.ws.readyState === WebSocket.OPEN && (await fetch(s6.url).then((r) => r.ok, () => false));
+    const file = c.msgs.find((m) => m.type === 'file' && m.kind === 'text');
+    const text = file ? fs.readFileSync(path.join(s6.transcripts, path.basename(file.path)), 'utf8') : '';
+    const lines = text.split(/(?<=\n)/).filter(Boolean);
+    const page = c.finals().map((m) => `[${fmtTime(m.start)}] ${m.text}\n`);
+    const whole = lines.findIndex((l, i) => l !== page[i]); // -1: every line in the file is the page's, whole
+    const errors = c.msgs.filter((m) => m.type === 'error').map((m) => m.message);
+    t.check('PROT-ERR-04', 'a disk that fills up while saving the transcript: the server keeps transcribing, the .txt keeps only whole lines, the page is told once',
+      up && whole === -1 && lines.length >= 2 && page.length - lines.length >= 2 && errors.length === 1 && errors[0].startsWith('Could not save transcript'),
+      `alive ${up}; ${page.length} sentences, ${lines.length} lines in the .txt (${Buffer.byteLength(text)} bytes)${whole === -1 ? ', all whole' : `, line ${whole + 1} is ${JSON.stringify(lines[whole].slice(-40))}`}; `
+        + `errors: ${errors.length > 2 ? `${errors.length} × ${errors[0]}` : errors.join(' | ') || 'none'}`);
+    await c.close();
+  } finally {
+    await s6.stop();
+  }
+}
+
 // The model choice is remembered: a server restarted without MODEL loads the saved one.
 const s3 = await startServer();
 let savedSettings = null;
@@ -199,6 +276,31 @@ try {
 } finally {
   await s4.stop();
   fs.rmSync(savedSettings, { force: true });
+}
+
+// ---------- the ElevenLabs cloud model, against the stand-in (never the real service, TESTING.md §2) ----------
+const fake = await fakeElevenLabs();
+const s5 = await startServer({ model: 'elevenlabs-scribe-v2', env: { ELEVENLABS_API_KEY: 'test-key', ELEVENLABS_BASE_URL: fake.url } });
+try {
+  const c = await connect(s5);
+  await c.audio([A, null], 10);
+  c.json({ type: 'flush' });
+  await waitFor(() => c.finals().length && fake.connections.every((x) => !x.audio.length || x.committed), 10000);
+  await sleep(300);
+  const offered = c.last('models').models.find((m) => m.id === 'elevenlabs-scribe-v2');
+  const sentences = fake.connections.filter((x) => x.audio.length);
+  const partials = c.msgs.filter((m) => m.type === 'partial');
+  const lines = fs.readdirSync(s5.transcripts).filter((f) => f.endsWith('.txt')).flatMap((f) => fs.readFileSync(path.join(s5.transcripts, f), 'utf8').split('\n').filter(Boolean));
+  t.check('PROT-CLOUD-02', 'with a key: the cloud model is offered and marked cloud, every sentence is streamed to ElevenLabs once, its texts are the live and final lines and the transcript',
+    c.last('status').state === 'ready' && offered?.cloud && offered.installed && sentences.length >= 1 && sentences.every((x) => x.commits === 1 && x.key === 'test-key')
+      && c.finals().length === sentences.length && c.finals().every((f) => /^propoziția \d+$/.test(f.text) && f.model === 'elevenlabs-scribe-v2')
+      && partials.length > 0 && partials.every((p) => /^ascult \d+$/.test(p.text)) && lines.length === sentences.length,
+    `${c.last('status').state}; ${sentences.length} sentence connection(s), ${(sentences.reduce((n, x) => n + x.audio.length, 0) / SR).toFixed(1)} s of 10 s sent; finals ${c.finals().map((f) => f.text).join(' | ')}; ${partials.length} live texts; ${lines.length} transcript lines`);
+  t.check('PROT-CLOUD-03', 'the API key never reaches the page', !JSON.stringify(c.msgs).includes('test-key'));
+  await c.close();
+} finally {
+  await s5.stop();
+  await fake.close();
 }
 
 async function waitFor(cond, ms = 15000) {

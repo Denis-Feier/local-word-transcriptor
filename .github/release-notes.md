@@ -1,5 +1,6 @@
 Live Romanian speech-to-text for meetings. Everything runs on your own computer: no account, no internet after
-the first start, and the audio never leaves the machine.
+the first start, and the audio never leaves the machine, except with the optional ElevenLabs cloud model, which
+appears only once you add your own ElevenLabs API key (see the README).
 
 ## Descărcare (Română)
 

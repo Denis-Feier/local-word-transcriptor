@@ -141,6 +141,9 @@ button.primary.recording .rec { border-radius: 2px; }
 .level .who:empty { display: none; }
 .level[data-mic] .meter-fill { background: var(--mic); }
 .level[data-mic] .speaking.on { color: var(--mic); }
+.level .mute { font-size: 12px; padding: 3px 10px; }
+.level.muted .mute { border-color: var(--bad); color: var(--bad); font-weight: 600; }
+.level.muted .meter { opacity: 0.4; }
 
 .settings {
   display: flex;
@@ -207,6 +210,8 @@ select {
 
 .empty { color: var(--muted); font-size: 16px; margin: 0; }
 
+/* Lines come in blocks of 100 (app.js): a new word lays out its own block, not the whole meeting. */
+.transcript > .block { contain: layout; }
 .line { display: flex; gap: 14px; margin: 0 0 10px; }
 .line .meta {
   flex: none;
@@ -245,6 +250,8 @@ select {
   font-size: 13px;
   color: var(--faint);
 }
+
+.foot .cloud { color: var(--warn); }
 
 @keyframes pulse { 50% { opacity: 0.35; } }
 @keyframes blink { 50% { opacity: 0; } }

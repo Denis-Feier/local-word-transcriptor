@@ -29,6 +29,7 @@ const els = {
   file: $('file'),
   projector: $('projector'),
   openSettings: $('openSettings'),
+  privacy: $('privacy'),
 };
 
 const MAX_BACKLOG = 3000; // 100 ms chunks = 5 minutes of audio kept while the server is unreachable
@@ -36,6 +37,9 @@ const CHANNEL = 'transcriber-captions'; // main window -> caption windows (/?dis
 const DISPLAY_ONLY = new URLSearchParams(location.search).has('display');
 const NONE = 'none'; // "no second mic" in the mic menus, "no speaker" in the speaker menu
 const OVERLAP_SEC = 0.5; // lines from two mics overlapping at least this long were spoken at the same time
+const BLOCK = 100; // lines per block of the transcript: a new word lays out one block, not the whole meeting
+const SHOWN = 5; // finished lines the projector gets (its Lines setting goes up to 5)
+const LOCAL_NOTE = els.privacy.textContent;
 
 let ws = null;
 let generation = 0; // bumps on every (re)connect; server segment ids restart per connection
@@ -47,7 +51,7 @@ let backlog = [];
 let wakeLock = null;
 let modelSignature = '';
 let maxMics = 1; // how many mics may be used at once; the server says (MAX_MICS)
-let picks = []; // the chosen mics in order (Mic 1, Mic 2, …): { id, label }; id '' = system default
+let picks = []; // the chosen mics in order (Mic 1, Mic 2, …): { id, label, muted }; id '' = system default
 let inputs = []; // the audio inputs the browser lists
 let defaultId = ''; // the input behind "System default"
 let micWarning = '';
@@ -58,11 +62,17 @@ let speakerTurn = 0; // bumps on every (re)open, so an older open that finishes 
 let speakerOpening = false;
 let speakerMeter = null; // moves the meters from the speaker's mics while not recording
 const speaking = new Set(); // mics on which someone is talking right now
+const hush = []; // per mic: { stream, since, heard, silent } to find a mic that is open but sends no sound
 let stage = null;
 let settings = null;
 let channel = null;
+const captionWindows = new Set(); // the caption windows (/?display) open in this browser, by their id
 const files = {};
+// Every message touches only the newest lines, so its cost stays the same however long the meeting gets.
 const lines = new Map(); // generation * 1e6 + segment id -> { el, text, start, end, mic, labeled, final }
+const order = []; // the keys of `lines` in transcript order (ascending); new lines are almost always last
+const live = new Set(); // keys of the lines not final yet (being spoken or transcribed): a few at a time
+let spoken = { connection: 0, lines: [], longest: 0 }; // this connection's final lines with a mic label, by start, for ⇄
 
 const store = {
   get: (key, fallback) => {
@@ -95,7 +105,7 @@ function connect() {
   ws.onmessage = (e) => handle(JSON.parse(e.data));
   ws.onclose = () => {
     engine = { ...engine, state: 'error', message: recording ? 'Server unreachable; still recording, will catch up…' : 'Disconnected, retrying…' };
-    for (const [key, line] of lines) if (!line.final) removeLine(key);
+    for (const key of [...live]) removeLine(key);
     render();
     setTimeout(connect, 1500);
   };
@@ -150,12 +160,22 @@ function handle(msg) {
     case 'error':
       showError(msg.message);
       break;
+    case 'options':
+      // The server stopped saving audio (a full disk): untick the box. The saved choice stays, so the next session
+      // tries again.
+      if (msg.saveAudio !== undefined) els.saveAudio.checked = msg.saveAudio;
+      break;
   }
 }
 
 // ---------- microphones ----------
 
 const micName = (mic) => `Mic ${mic + 1}`;
+/** "Mic 2", "Mic 2 and Mic 3", "Mic 1, Mic 2 and Mic 4" */
+const listMics = (mics) => {
+  const names = [...mics].sort((a, b) => a - b).map(micName);
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0];
+};
 const used = () => picks.slice(0, maxMics);
 const multiMic = () => used().length > 1;
 
@@ -164,6 +184,9 @@ function loadPicks() {
   if (Array.isArray(saved) && saved.length) return saved;
   return [{ id: store.get('mic', ''), label: '' }]; // the single-mic setting of earlier versions
 }
+
+/** The mics are remembered, not their mute: the app always opens with every mic on, so none is left muted by mistake. */
+const savePicks = () => store.set('mics', picks.map(({ id, label }) => ({ id, label })));
 
 /** The device a pick means right now: by id, else by name (a re-paired Bluetooth device can get a new id). */
 function findDevice(pick, devices) {
@@ -181,8 +204,9 @@ async function refreshDevices() {
   outputs = await listOutputs();
   // Names appear once the mic is allowed; remember them, to find a mic again if its id changes.
   const named = picks.map((p) => ({ ...p, label: inputs.find((d) => d.deviceId === p.id)?.label || p.label }));
-  if (named.some((p, i) => p.label !== picks[i].label)) store.set('mics', named);
+  const renamed = named.some((p, i) => p.label !== picks[i].label);
   picks = named;
+  if (renamed) savePicks();
   renderMicFields();
   // A mic that was switched off or out of range is back: let it join the recording, and the speaker, again.
   for (const open of [capture, speaker]) {
@@ -226,8 +250,8 @@ function renderMicFields() {
 
 function chooseMic(mic, id) {
   if (id === NONE) picks.splice(mic, 1);
-  else picks[mic] = { id, label: inputs.find((d) => d.deviceId === id)?.label ?? '' };
-  store.set('mics', picks);
+  else picks[mic] = { id, label: inputs.find((d) => d.deviceId === id)?.label ?? '' }; // another mic starts unmuted
+  savePicks();
   micsUpdated();
   restartCapture();
   if (speakerPick) restartSpeaker();
@@ -243,7 +267,8 @@ function micsUpdated() {
     used().forEach((_, mic) => {
       const el = document.createElement('div');
       el.className = 'level';
-      el.innerHTML = '<span class="who"></span><div class="meter" title="Microphone level"><div class="meter-fill"></div></div><span class="speaking"></span>';
+      el.innerHTML = '<span class="who"></span><div class="meter" title="Microphone level"><div class="meter-fill"></div></div><span class="speaking"></span><button class="ghost mute" type="button"></button>';
+      el.querySelector('.mute').addEventListener('click', () => toggleMute(mic));
       if (multiMic()) {
         el.dataset.mic = mic + 1;
         el.querySelector('.who').textContent = micName(mic);
@@ -258,19 +283,66 @@ const levelEls = (mic) => [els.levels, els.settingsLevels].map((root) => root.ch
 
 function renderLevels() {
   const open = capture ?? speaker;
-  used().forEach((_, mic) => {
+  used().forEach(({ muted = false }, mic) => {
     const missing = Boolean(open && !open.slots[mic]?.stream);
+    const silent = Boolean(open && silentNow(open.slots[mic], mic));
+    const name = multiMic() ? micName(mic) : 'the microphone';
     for (const el of levelEls(mic)) {
       const label = el.querySelector('.speaking');
-      label.textContent = missing ? 'not connected' : speaking.has(mic) ? 'speech' : 'listening';
-      label.classList.toggle('on', speaking.has(mic));
-      label.classList.toggle('off', missing);
+      label.textContent = missing ? 'not connected' : muted ? 'muted' : silent ? 'no sound' : speaking.has(mic) ? 'speech' : 'listening';
+      label.classList.toggle('on', speaking.has(mic) && !muted);
+      label.classList.toggle('off', missing || muted || silent);
+      el.classList.toggle('muted', muted);
+      const button = el.querySelector('.mute');
+      button.textContent = muted ? 'Unmute' : 'Mute';
+      button.setAttribute('aria-label', `${muted ? 'Unmute' : 'Mute'} ${name}`);
+      button.title = muted ? `Unmute ${name}` : `Mute ${name}: silence instead of its sound in the transcript, the saved audio and the speaker`;
       if (missing || !open) el.querySelector('.meter-fill').style.width = '0';
     }
   });
 }
 
+/** Mute a mic that misbehaves during a meeting, or unmute it. It stays open, so it is back at once. */
+function toggleMute(mic) {
+  picks[mic].muted = !picks[mic].muted;
+  for (const open of [capture, speaker]) open?.mute(mic, picks[mic].muted);
+  hush[mic] = null; // silence while muted is not a fault; unmuted, it gets a fresh wait for sound
+  devicesChanged();
+}
+
+/** Mutes as chosen now, for mics that were still opening when one was muted or unmuted. */
+const syncMutes = (open) => open.slots.forEach((_, mic) => open.mute(mic, Boolean(picks[mic]?.muted)));
+const mutedMics = () => used().map((pick) => Boolean(pick.muted));
+
+const NO_SIGNAL = 1e-5; // -100 dBFS: digital silence, below any real mic's own noise (lib/crosstalk.js)
+const SILENT_MS = 5000;
+
+/**
+ * A mic that is open but has sent only digital silence since it was opened: muted, or on a Mac a second Bluetooth
+ * headset, whose mic macOS stops when another Bluetooth headset's mic is in use. Warned about until sound arrives.
+ */
+function checkSilence(rms, mic) {
+  const stream = (capture ?? speaker)?.slots[mic]?.stream;
+  if (!stream || picks[mic]?.muted) return;
+  let h = hush[mic];
+  if (h?.stream !== stream) h = hush[mic] = { stream, since: performance.now(), heard: false, silent: false };
+  if (h.heard) return;
+  if (rms >= NO_SIGNAL) {
+    h.heard = true;
+    if (h.silent) {
+      h.silent = false;
+      devicesChanged();
+    }
+  } else if (!h.silent && performance.now() - h.since > SILENT_MS) {
+    h.silent = true;
+    devicesChanged();
+  }
+}
+
+const silentNow = (slot, mic) => Boolean(slot?.stream && hush[mic]?.stream === slot.stream && hush[mic].silent);
+
 function showLevel(rms, mic) {
+  checkSilence(rms, mic);
   // Map roughly -60..0 dBFS onto 0..100 %.
   const pct = Math.max(0, Math.min(100, ((20 * Math.log10(rms + 1e-9) + 60) / 60) * 100));
   for (const el of levelEls(mic)) el.querySelector('.meter-fill').style.width = `${pct}%`;
@@ -287,9 +359,10 @@ function showLevels(buffer) {
   }
 }
 
-function openMics() {
-  return openCapture(used().map(openId), {
+async function openMics() {
+  const opened = await openCapture(used().map(openId), {
     noiseSuppression: els.noise.checked,
+    muted: mutedMics(),
     onChunk: (buffer) => {
       showLevels(buffer);
       if (ws?.readyState === WebSocket.OPEN) ws.send(buffer);
@@ -297,6 +370,17 @@ function openMics() {
     },
     onChange: devicesChanged,
   });
+  syncMutes(opened);
+  return opened;
+}
+
+const isBluetooth = (mic) => /bluetooth|airpods/i.test(picks[mic]?.label ?? '');
+
+function silentNote(name, mic) {
+  const note = `${name} sends no sound. Check that it is not muted.`;
+  const otherBluetooth = used().some((_, other) => other !== mic && isBluetooth(other));
+  if (!isBluetooth(mic) || !otherBluetooth) return note;
+  return `${note} A computer often takes sound from only one Bluetooth headset mic at a time (a Mac always does): connect one of them through its USB receiver or a cable instead.`;
 }
 
 /** Mics or the speaker missing, or mics recording at a low rate, as a warning; the rest goes on without them. */
@@ -307,6 +391,8 @@ function devicesChanged() {
   (capture ?? speaker)?.slots.forEach((slot, mic) => {
     const name = multiMic() ? `${micName(mic)} (${picks[mic].label || 'microphone'})` : picks[mic].label || 'The microphone';
     if (!slot.stream) notes.push(`${name} is not connected; it joins again as soon as it is back.`);
+    else if (picks[mic].muted) return; // muted on purpose: its silence and its quality are no news
+    else if (silentNow(slot, mic)) notes.push(silentNote(name, mic));
     else if (slot.rate && slot.rate < 16000) notes.push(`${name} records at ${slot.rate / 1000} kHz (older Bluetooth headsets do), so its text will be less accurate.`);
   });
   if (speakerPick && !speakerConnected()) notes.push(`The speaker (${speakerPick.label || 'speaker'}) is not connected; it plays again as soon as it is back.`);
@@ -415,8 +501,9 @@ async function restartSpeaker() {
   if (speakerPick && speakerConnected()) {
     speakerOpening = true;
     try {
-      const opened = await openSpeaker(used().map(openId), { sinkId: speakerId(), volume: volume(), onChange: devicesChanged });
+      const opened = await openSpeaker(used().map(openId), { sinkId: speakerId(), volume: volume(), muted: mutedMics(), onChange: devicesChanged });
       if (turn !== speakerTurn) return opened.close(); // chosen again meanwhile
+      syncMutes(opened);
       speaker = opened;
       refreshDevices(); // speaker names become available once the mics are allowed
     } catch (err) {
@@ -471,48 +558,100 @@ function upsertLine(key, { text, start, end, mic = 0, model, ms }, final) {
       el.dataset.mic = mic + 1;
       el.querySelector('.who').textContent = micName(mic);
     }
-    // Keep lines in order even if a live guess for a newer segment arrived first.
-    const after = [...lines.keys()].filter((k) => k > key).sort((a, b) => a - b)[0];
-    els.transcript.insertBefore(el, after ? lines.get(after).el : null);
-    line = { el, mic, labeled };
+    line = { el, mic, labeled, final: false };
     lines.set(key, line);
+    live.add(key);
+    place(key, el);
   }
   if (line.final && !final) return;
+  const finished = final && !line.final;
   Object.assign(line, { text, start, end, final });
   line.el.classList.toggle('partial', !final);
   line.el.querySelector('time').textContent = fmtTime(start);
   line.el.querySelector('.text').textContent = text;
   if (final && model) line.el.title = `${model} · ${ms} ms`;
-  if (final) markOverlap(key);
+  if (finished) {
+    live.delete(key);
+    markOverlap(key);
+  }
   els.empty.hidden = true;
   if (stick) els.transcript.scrollTop = els.transcript.scrollHeight;
   render();
 }
 
+/** Put a new line in order: a live guess for a newer segment can arrive before the older one's. */
+function place(key, el) {
+  let i = order.length;
+  while (i > 0 && order[i - 1] > key) i--; // the newest lines are last, so this is a step or two at most
+  order.splice(i, 0, key);
+  const next = lines.get(order[i + 1]);
+  if (next) {
+    next.el.before(el);
+    return;
+  }
+  // Lines go in blocks: a change lays out its own block and steps over the others, instead of every line.
+  let block = els.transcript.lastElementChild;
+  if (!block?.classList.contains('block') || block.childElementCount >= BLOCK) {
+    block = document.createElement('div');
+    block.className = 'block';
+    els.transcript.append(block);
+  }
+  block.append(el);
+}
+
+/** The index of the first line in `list` (sorted by start time) that starts after `time`. */
+function startsAfter(list, time) {
+  let lo = 0;
+  let hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (list[mid].start <= time) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 /** Mark a final line and the lines from other mics that were spoken at the same time. */
 function markOverlap(key) {
   const line = lines.get(key);
-  if (!line.labeled) return;
-  const sameConnection = (k) => Math.floor(k / 1e6) === Math.floor(key / 1e6); // times restart per connection
-  for (const [k, other] of lines) {
-    if (!other.final || !other.labeled || other.mic === line.mic || !sameConnection(k)) continue;
+  if (!line.labeled || !Number.isFinite(line.start) || !Number.isFinite(line.end)) return;
+  const connection = Math.floor(key / 1e6); // times restart per connection
+  if (spoken.connection !== connection) spoken = { connection, lines: [], longest: 0 };
+  // A line that overlaps this one starts at most `longest` seconds before it: look at those lines alone.
+  const list = spoken.lines;
+  for (let i = startsAfter(list, line.start - spoken.longest - 1); i < list.length && list[i].start < line.end; i++) {
+    const other = list[i];
+    if (other.mic === line.mic) continue;
     if (Math.min(line.end, other.end) - Math.max(line.start, other.start) < OVERLAP_SEC) continue;
     for (const [a, b] of [[line, other], [other, line]]) {
       a.el.classList.add('overlap');
-      a.el.querySelector('.who').title = `Spoken at the same time as ${micName(b.mic)}`;
+      a.with ??= new Set(); // with three or four mics, a line can overlap lines of two others
+      a.with.add(b.mic);
+      a.el.querySelector('.who').title = `Spoken at the same time as ${listMics(a.with)}`;
     }
   }
+  list.splice(startsAfter(list, line.start), 0, line);
+  spoken.longest = Math.max(spoken.longest, line.end - line.start);
 }
 
 function removeLine(key) {
-  lines.get(key)?.el.remove();
+  const line = lines.get(key);
+  if (!line) return; // the final of a click or cough that never had a live guess
+  const block = line.el.parentNode;
+  line.el.remove();
+  if (!block.firstChild) block.remove();
   lines.delete(key);
+  order.splice(order.lastIndexOf(key), 1);
+  live.delete(key);
+  const indexed = line.final ? spoken.lines.lastIndexOf(line) : -1; // the server never takes a final line back; in case
+  if (indexed >= 0) spoken.lines.splice(indexed, 1);
   els.empty.hidden = lines.size > 0;
   render();
 }
 
+/** The final lines in order, for Copy and Download (this looks at every line, so not on every message). */
 function finalLines() {
-  return [...lines.entries()].sort((a, b) => a[0] - b[0]).map(([, l]) => l).filter((l) => l.final);
+  return order.map((key) => lines.get(key)).filter((l) => l.final);
 }
 
 const lineText = (l) => (l.labeled ? `${micName(l.mic)}: ${l.text}` : l.text);
@@ -532,8 +671,11 @@ function downloadText() {
 }
 
 function clearTranscript() {
-  for (const line of lines.values()) line.el.remove();
+  els.transcript.replaceChildren(els.empty);
   lines.clear();
+  order.length = 0;
+  live.clear();
+  spoken = { connection: generation, lines: [], longest: 0 };
   els.empty.hidden = false;
   els.file.textContent = '';
   for (const kind of Object.keys(files)) delete files[kind];
@@ -545,20 +687,34 @@ function clearTranscript() {
 
 /** What the projector view needs: recent final sentences, the ones being spoken, and the mic state. */
 function snapshot() {
-  const entries = [...lines.entries()].sort((a, b) => a[0] - b[0]);
-  const row = ([key, l]) => ({ key, text: l.text, mic: l.labeled ? l.mic : null });
-  const finals = entries.filter(([, l]) => l.final).slice(-5).map(row);
+  const row = (key) => {
+    const l = lines.get(key);
+    return { key, text: l.text, mic: l.labeled ? l.mic : null };
+  };
+  // From the end of the transcript back: only the newest lines are looked at.
+  const finals = [];
+  for (let i = order.length - 1; i >= 0 && finals.length < SHOWN; i--) if (lines.get(order[i]).final) finals.unshift(row(order[i]));
   // The sentence being spoken on each mic: two when people talk at the same time.
-  const live = new Map(entries.filter(([, l]) => !l.final).map((entry) => [entry[1].mic, entry]));
-  const partials = [...live.values()].sort((a, b) => a[0] - b[0]).map(row);
+  const newest = new Map(); // mic -> key
+  for (const key of live) {
+    const { mic } = lines.get(key);
+    if (!(newest.get(mic) > key)) newest.set(mic, key);
+  }
+  const partials = [...newest.values()].sort((a, b) => a - b).map(row);
   return { finals, partials, recording, speaking: speaking.size > 0 };
 }
 
+/** Update the projector view and the caption windows; nothing to do while neither is open. */
 function publish() {
-  if (!stage) return;
+  if (!stage || (!stage.open && !captionWindows.size)) return;
   const snap = snapshot();
   stage.update(snap);
-  channel?.postMessage({ type: 'snapshot', ...snap });
+  if (captionWindows.size) channel?.postMessage({ type: 'snapshot', ...snap });
+}
+
+function showProjector() {
+  stage.update(snapshot()); // it was not kept up to date while closed
+  stage.show();
 }
 
 function openCaptionWindow() {
@@ -603,12 +759,16 @@ function render() {
   }
   const active = models.find((m) => m.id === engine.model);
   els.modelNotes.textContent = active ? `${active.notes} (${active.engine})` : '';
+  els.privacy.textContent = active?.cloud
+    ? `${active.label} sends the speech to the internet for transcription. The other models run on this computer.`
+    : LOCAL_NOTE;
+  els.privacy.classList.toggle('cloud', Boolean(active?.cloud));
 
   const usable = engine.state === 'ready' || engine.state === 'loading';
   els.toggle.disabled = !recording && !usable;
   els.toggle.classList.toggle('recording', recording);
   els.toggleText.textContent = recording ? 'Stop' : 'Start';
-  const hasText = finalLines().length > 0;
+  const hasText = lines.size > live.size; // some line is final
   els.copy.disabled = !hasText;
   els.download.disabled = !hasText;
   els.clear.disabled = lines.size === 0;
@@ -644,16 +804,25 @@ function initMain() {
     onClose: () => stage.hide(),
   });
   if ('BroadcastChannel' in window) {
+    // Captions go out only while a caption window listens: each one says hello when it opens and goodbye when it closes.
     channel = new BroadcastChannel(CHANNEL);
-    channel.onmessage = (e) => e.data?.type === 'hello' && publish(); // a caption window just opened
+    channel.onmessage = ({ data }) => {
+      if (data?.type === 'hello') {
+        captionWindows.add(data.id);
+        publish();
+      } else if (data?.type === 'gone') captionWindows.delete(data.id);
+    };
+    const here = () => channel.postMessage({ type: 'here' }); // caption windows already open say hello again
+    here(); // e.g. this page was reloaded
     window.addEventListener('pagehide', () => channel.postMessage({ type: 'bye' }));
+    window.addEventListener('pageshow', (e) => e.persisted && here()); // back from the browser's page cache
   }
 
   els.toggle.addEventListener('click', () => (recording ? stop() : start()));
-  els.projector.addEventListener('click', () => stage.show());
+  els.projector.addEventListener('click', showProjector);
   els.openSettings.addEventListener('click', () => settings.toggle());
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'p' && !stage.open && !e.metaKey && !e.ctrlKey && !e.target.closest('input, select, textarea')) stage.show();
+    if (e.key === 'p' && !stage.open && !e.metaKey && !e.ctrlKey && !e.target.closest('input, select, textarea')) showProjector();
   });
   els.copy.addEventListener('click', copyText);
   els.download.addEventListener('click', downloadText);
@@ -697,11 +866,16 @@ function initDisplay() {
   stage.update({ ...empty, waiting: true });
   if (!('BroadcastChannel' in window)) return;
   channel = new BroadcastChannel(CHANNEL);
+  const id = Math.random().toString(36).slice(2); // the main window sends captions while any caption window is open
+  const hello = () => channel.postMessage({ type: 'hello', id });
   channel.onmessage = (e) => {
     if (e.data?.type === 'snapshot') stage.update(e.data);
     else if (e.data?.type === 'bye') stage.update({ ...empty, waiting: true });
+    else if (e.data?.type === 'here') hello(); // the main window was reloaded
   };
-  channel.postMessage({ type: 'hello' });
+  hello();
+  window.addEventListener('pagehide', () => channel.postMessage({ type: 'gone', id }));
+  window.addEventListener('pageshow', (e) => e.persisted && hello()); // back from the browser's page cache
 }
 
 if (DISPLAY_ONLY) initDisplay();

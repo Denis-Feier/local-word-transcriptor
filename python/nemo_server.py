@@ -33,7 +33,7 @@ def load_model(args):
     elif args.decoder == "ctc":
         model.change_decoding_strategy(decoder_type="ctc", verbose=False)
     else:
-        model.change_decoding_strategy(decoder_type="rnnt", verbose=False)  # TDT greedy
+        model.change_decoding_strategy(decoder_type="rnnt", verbose=False)  # RNNT/TDT greedy
     return model
 
 
@@ -54,7 +54,7 @@ def main():
     p.add_argument("--port", type=int, required=True)
     p.add_argument("--model", required=True)
     p.add_argument("--lm")
-    p.add_argument("--decoder", choices=["ctc-lm", "ctc", "tdt"], default="tdt")
+    p.add_argument("--decoder", choices=["ctc-lm", "ctc", "rnnt", "tdt"], default="tdt")
     p.add_argument("--beam", type=int, default=32)
     p.add_argument("--threads", type=int, default=4)
     args = p.parse_args()

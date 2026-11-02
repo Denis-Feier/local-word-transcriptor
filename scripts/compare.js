@@ -28,11 +28,12 @@ if (!file) {
   process.exit(1);
 }
 
-const ids = option('--models')?.split(',') ?? MODELS.filter(isInstalled).map((m) => m.id);
+// The cloud model only when named: it would send the recording off the computer, and costs money.
+const ids = option('--models')?.split(',') ?? MODELS.filter((m) => isInstalled(m) && !m.cloud).map((m) => m.id);
 const models = ids.map((id) => findModel(id) ?? (console.error(`Unknown model "${id}"`), process.exit(1)));
 for (const m of models) {
   if (!isInstalled(m)) {
-    console.error(`${m.label} is not downloaded. Run: npm run setup -- ${m.id}`);
+    console.error(m.cloud ? `${m.label} needs ELEVENLABS_API_KEY (see .env.example).` : `${m.label} is not downloaded. Run: npm run setup -- ${m.id}`);
     process.exit(1);
   }
 }

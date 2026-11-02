@@ -1,4 +1,4 @@
-# Python environment for NeMo models (Jackrabbit). Created by `npm run setup -- jackrabbit-110m-ro`
+# Python environment for NeMo models (Jackrabbit, the UPB FastConformer). Created by `npm run setup -- jackrabbit-110m-ro`
 # in python/.venv with uv (brew install uv).
 torch
 torchaudio

@@ -1,4 +1,6 @@
 .settings.json
+.env*
+!.env.example
 __pycache__/
 benchmarks/data/
 dist/
