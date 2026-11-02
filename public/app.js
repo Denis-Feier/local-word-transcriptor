@@ -24,6 +24,7 @@ const els = {
   speakerVolumeField: $('speakerVolumeField'),
   noise: $('noise'),
   saveAudio: $('saveAudio'),
+  steadyLive: $('steadyLive'),
   error: $('error'),
   behind: $('behind'),
   transcript: $('transcript'),
@@ -106,7 +107,7 @@ function connect() {
   ws.binaryType = 'arraybuffer';
   ws.onopen = () => {
     generation++;
-    send({ type: 'options', saveAudio: els.saveAudio.checked });
+    send({ type: 'options', saveAudio: els.saveAudio.checked, steadyLive: els.steadyLive.checked });
     if (resumeName || sentSamples) send({ type: 'resume', name: resumeName, samples: sentSamples });
     const kept = backlog.take();
     for (const chunk of kept.chunks) sendAudio(chunk);
@@ -881,6 +882,10 @@ function initMain() {
     store.set('saveAudio', els.saveAudio.checked);
     send({ type: 'options', saveAudio: els.saveAudio.checked });
   });
+  els.steadyLive.addEventListener('change', () => {
+    store.set('steadyLive', els.steadyLive.checked);
+    send({ type: 'options', steadyLive: els.steadyLive.checked });
+  });
   els.speaker.addEventListener('change', () => chooseSpeaker(els.speaker.value));
   els.speakerVolume.addEventListener('input', () => speaker?.setVolume(volume()));
   els.speakerVolume.addEventListener('change', () => store.set('speakerVolume', Number(els.speakerVolume.value)));
@@ -892,6 +897,7 @@ function initMain() {
 
   els.noise.checked = store.get('noise', false);
   els.saveAudio.checked = store.get('saveAudio', false);
+  els.steadyLive.checked = store.get('steadyLive', true);
   // The volume is remembered; the speaker itself starts at None, so the app never opens with a howl.
   els.speakerVolume.value = store.get('speakerVolume', 80);
   picks = loadPicks();

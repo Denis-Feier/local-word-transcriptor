@@ -141,7 +141,7 @@ async function screenshots() {
     await click('toggle');
     await until(`${finals()} >= 2 && ${live}`);
     await badges([['#toggle', 1], ['#levels', 2, -4, -24], ['#projector', 3], ['#openSettings', 4], ['#copy', 5], ['#model', 6], ['#mics', 7],
-      ['#speaker', 8], ['label:has(#noise)', 9, -14, -19], ['label:has(#saveAudio)', 10, -14, -19], ['#status', 11, -30, -2]]);
+      ['#speaker', 8], ['label:has(#noise)', 9, -14, -19], ['label:has(#saveAudio)', 10, -14, -19], ['label:has(#steadyLive)', 11, -14, -19], ['#status', 12, -30, -2]]);
     await shot('main', page);
     await click('toggle');
 

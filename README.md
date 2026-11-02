@@ -70,7 +70,10 @@ npm start                        # or: PORT=3421 npm start
 
 Open **http://localhost:3000**, press **Start**, and allow the microphone.
 
-- Grey text with a cursor is the live guess while someone speaks.
+- Grey text with a cursor is the live guess while someone speaks. With **Steady live text** (on by default) a word
+  shows only once two live guesses in a row agree on it (LocalAgreement-2), and a word once shown never changes, so the
+  text does not jump around on a projector; words appear about one guess (~0.5 s) later. Untick it to see every guess
+  as the model writes it. The same text goes to the page, the projector view and the caption windows.
 - After a short pause (~0.7 s) the sentence is transcribed again in full and turns final.
 - Final lines are saved as you go to `transcripts/<date-time>.txt`. **Clear** starts a new file. A recording that
   starts in the same second as another (a second tab, or the desktop app beside `npm start`) gets `<date-time>-2`,

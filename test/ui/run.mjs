@@ -119,6 +119,18 @@ app.whenReady().then(async () => {
     await click('clear');
     s = await state();
     t.check('UI-TX-01', 'Clear empties the transcript and disables Copy', s.lines.length === 0 && s.copyDisabled && !s.file);
+    // Steady live text (#26): a box like Save audio, on by default, sent to the server and remembered.
+    const steadyDefault = await js(`document.getElementById('steadyLive').checked`);
+    await js(`window.__sent = []; { const send = WebSocket.prototype.send; WebSocket.prototype.send = function (d) { if (typeof d === 'string') window.__sent.push(JSON.parse(d)); return send.call(this, d); }; } true`);
+    await click('steadyLive');
+    const told = await js(`window.__sent.filter((m) => m.type === 'options')`);
+    await win.loadURL(`http://127.0.0.1:${server.port}/`);
+    await waitFor((x) => x.status === 'ready', 5000);
+    const steadyAfter = await js(`({ checked: document.getElementById('steadyLive').checked, saved: localStorage.getItem('steadyLive') })`);
+    t.check('UI-STEADY-01', 'Steady live text: ticked by default; unticking tells the server and is remembered across a reload',
+      steadyDefault && told.some((m) => m.steadyLive === false) && !steadyAfter.checked && steadyAfter.saved === 'false',
+      `default ${steadyDefault ? 'ticked' : 'unticked'}; sent ${JSON.stringify(told)}; after a reload ${steadyAfter.checked ? 'ticked' : 'unticked'}, saved ${steadyAfter.saved}`);
+    s = await open(); // the default again (open() clears the saved choices)
 
     // ---------- two mics ----------
     await pick(1, 'mic-b');
@@ -130,7 +142,7 @@ app.whenReady().then(async () => {
     await click('toggle');
     s = await waitFor((x) => x.levels.every((l) => l.width > 0), 5000);
     t.check('UI-MIC-04', 'both meters move while recording', s.levels.every((l) => l.width > 0), s.levels.map((l) => `${l.who} ${l.width.toFixed(0)}%`).join(', '));
-    s = await waitFor((x) => x.lines.some((l) => l.partial && l.mic === '1') && x.lines.some((l) => l.partial && l.mic === '2'), 6000);
+    s = await waitFor((x) => x.lines.some((l) => l.partial && l.mic === '1') && x.lines.some((l) => l.partial && l.mic === '2'), 9000); // steady live text: a word shows from a mic's second guess
     t.check('UI-TX-02', 'live text from both mics at once, each in its mic colour',
       s.lines.some((l) => l.partial && l.mic === '1') && s.lines.some((l) => l.partial && l.mic === '2') && new Set(s.lines.filter((l) => l.partial).map((l) => l.color)).size === 2);
     await shot('two-mics-live');
