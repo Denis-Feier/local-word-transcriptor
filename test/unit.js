@@ -16,6 +16,7 @@ import { Session, fileStamp, fmtTime } from '../lib/session.js';
 import { Transcriber } from '../lib/transcriber.js';
 import { config, ROOT } from '../lib/config.js';
 import { MODELS } from '../lib/models.js';
+import { createBacklog, lostNote } from '../public/backlog.js';
 import { SR, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs } from './helpers.js';
 
 const t = suite('unit');
@@ -56,6 +57,23 @@ const badNemo = nemoModels.filter(({ nemo, files }) => !nemoDecoders.includes(ne
   || ![nemo.model, nemo.lm].filter(Boolean).every((f) => files.some((x) => x.file === f)));
 t.check('UNIT-MODEL-01', 'every NeMo model uses a decoder nemo_server.py accepts and downloads the files it loads', nemoModels.length > 0 && !badNemo.length,
   `decoders ${nemoDecoders.join('/')}; ${nemoModels.map((m) => `${m.id}: ${m.nemo.decoder}`).join(', ')}${badNemo.length ? `; wrong: ${badNemo.map((m) => m.id).join(', ')}` : ''}`);
+
+// ---------- the page's backlog while the server is unreachable (#11) ----------
+{
+  const b = createBacklog(3000); // 100 ms chunks: 5 minutes, as the page
+  for (let i = 0; i < 4200; i++) b.push(i); // a 7-minute outage
+  const kept = b.take();
+  t.check('UNIT-NET-01', 'a 7-minute outage keeps the newest 5 minutes in order and counts the 2 minutes dropped',
+    kept.chunks.length === 3000 && kept.chunks[0] === 1200 && kept.chunks.at(-1) === 4199 && kept.dropped === 1200,
+    `${kept.chunks.length} kept from ${kept.chunks[0]}, ${kept.dropped} dropped`);
+  const note = lostNote(kept);
+  t.check('UNIT-NET-02', 'the page says how long the server was away and how much was not transcribed',
+    note.includes('unreachable for 7 min') && note.includes('last 5 min') && note.includes('first 2 min of it were lost'), note);
+  for (let i = 0; i < 50; i++) b.push(i);
+  const short = b.take();
+  t.check('UNIT-NET-03', 'a short outage after it keeps everything and says nothing (take() starts over)',
+    short.chunks.length === 50 && short.dropped === 0 && lostNote(short) === '' && b.take().chunks.length === 0);
+}
 
 // ---------- WAV files ----------
 const tone = Float32Array.from({ length: SR }, (_, i) => 0.5 * Math.sin(i / 10));

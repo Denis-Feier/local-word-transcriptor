@@ -293,7 +293,7 @@ The report (speed, WER, and every model's full transcript) is written to `transc
 - **Put the laptop in the middle** of the group, screen up. The built-in mics face the keyboard area.
 - **An external USB conference or boundary mic** helps the most for people at the far end of the table. Pick it under **Microphone**.
 - **Noise suppression** is off by default because the browser's filter can swallow quiet, distant voices. Turn it on if there is steady background noise (air conditioning, traffic).
-- The page keeps the screen awake while recording or playing on a speaker. If the server restarts mid-meeting, the page keeps recording and sends the buffered audio (up to 5 minutes) once it reconnects.
+- The page keeps the screen awake while recording or playing on a speaker. If the server restarts mid-meeting, the page keeps recording and sends the buffered audio once it reconnects. It keeps the newest 5 minutes: after a longer outage the oldest audio is dropped, and the page says how much was lost.
 - Overlapping speech (two people at once) is transcribed as one mixed sentence. Turn-taking works best, or give
   each speaker their own mic (see *Two microphones*).
 
@@ -315,6 +315,7 @@ mics → AudioWorklet ─WS─▶  Silero VAD + Segmenter per mic        ──�
 | `public/mics.js` | Lists the audio inputs and records one or more of them together; reconnects a mic that comes back |
 | `public/speaker.js` | Plays the mics on the speaker chosen for the room: full quality, low delay, separate from the transcription |
 | `public/app.js` | UI: models, mic and speaker choice, live and final lines (coloured per mic), wake lock, reconnect buffering |
+| `public/backlog.js` | The audio kept while the server is unreachable: the newest 5 minutes, and what a longer outage lost |
 | `public/stage.js` | Projector view: large centred captions, display preferences, full screen; also the caption window (`/?display`) |
 | `public/settings.js` | Settings panel: live speech-detection sliders (`lib/tuning.js` on the server) and projector display options |
 | `server.js` | Static files, WebSocket (only from its own page), model downloads and switching |

@@ -2,6 +2,7 @@ import { createStage } from '/stage.js';
 import { createSettings } from '/settings.js';
 import { listInputs, openCapture } from '/mics.js';
 import { canChooseOutput, listOutputs, openSpeaker } from '/speaker.js';
+import { createBacklog, lostNote } from '/backlog.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -32,7 +33,7 @@ const els = {
   privacy: $('privacy'),
 };
 
-const MAX_BACKLOG = 3000; // 100 ms chunks = 5 minutes of audio kept while the server is unreachable
+const MAX_BACKLOG = 3000; // 100 ms chunks = the newest 5 minutes of audio kept while the server is unreachable
 const CHANNEL = 'transcriber-captions'; // main window -> caption windows (/?display), same browser
 const DISPLAY_ONLY = new URLSearchParams(location.search).has('display');
 const NONE = 'none'; // "no second mic" in the mic menus, "no speaker" in the speaker menu
@@ -47,7 +48,8 @@ let engine = { state: 'loading', message: 'Connecting…', model: null };
 let models = [];
 let recording = false;
 let capture = null; // the open mics while recording (mics.js)
-let backlog = [];
+const backlog = createBacklog(MAX_BACKLOG);
+let lost = ''; // what an outage longer than the backlog cost, shown until the next Start
 let wakeLock = null;
 let modelSignature = '';
 let maxMics = 1; // how many mics may be used at once; the server says (MAX_MICS)
@@ -99,8 +101,10 @@ function connect() {
   ws.onopen = () => {
     generation++;
     send({ type: 'options', saveAudio: els.saveAudio.checked });
-    for (const chunk of backlog) ws.send(chunk);
-    backlog = [];
+    const kept = backlog.take();
+    for (const chunk of kept.chunks) ws.send(chunk);
+    lost = lostNote(kept) || lost;
+    if (lost) showError(lost);
   };
   ws.onmessage = (e) => handle(JSON.parse(e.data));
   ws.onclose = () => {
@@ -122,7 +126,7 @@ function handle(msg) {
       engine = msg;
       if (msg.language) els.lang.textContent = msg.language.toUpperCase();
       if (msg.detector) settings.setDetector(msg.detector);
-      if (msg.state === 'ready') hideError();
+      if (msg.state === 'ready') lost ? showError(lost) : hideError();
       render();
       break;
     case 'models':
@@ -366,7 +370,13 @@ async function openMics() {
     onChunk: (buffer) => {
       showLevels(buffer);
       if (ws?.readyState === WebSocket.OPEN) ws.send(buffer);
-      else if (backlog.length < MAX_BACKLOG) backlog.push(buffer);
+      else {
+        backlog.push(buffer);
+        if (backlog.dropped === 1) {
+          engine = { ...engine, message: 'Server unreachable; still recording, keeping the last 5 minutes…' };
+          render();
+        }
+      }
     },
     onChange: devicesChanged,
   });
@@ -410,6 +420,7 @@ function closeCapture() {
 }
 
 async function start() {
+  lost = '';
   hideError();
   try {
     capture = await openMics();
