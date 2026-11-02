@@ -179,6 +179,7 @@ wss.on('connection', (ws, req) => {
     }
     if (msg.type === 'flush') session.flush();
     else if (msg.type === 'reset') session.reset();
+    else if (msg.type === 'resume') session.resume(msg, [...sessions]);
     else if (msg.type === 'options') session.setOptions(msg);
     else if (msg.type === 'select') selectModel(msg.id);
     else if (msg.type === 'install') install(msg.id);
