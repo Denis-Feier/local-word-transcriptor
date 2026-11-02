@@ -775,7 +775,14 @@ function chooseModel() {
 function render() {
   const downloading = models.find((m) => m.progress !== null);
   let text = engine.message;
-  if (engine.state === 'ready') text = `${models.find((m) => m.id === engine.model)?.label ?? engine.model} · ready`;
+  if (engine.state === 'ready') {
+    // Where it runs: the GPU first, the CPU only when the GPU failed (hover for the device and the reason).
+    const where = /^GPU/.test(engine.device ?? '') ? 'GPU' : engine.device === 'CPU' ? 'CPU' : '';
+    text = `${models.find((m) => m.id === engine.model)?.label ?? engine.model} · ready${where ? ` on ${where}` : ''}`;
+  }
+  els.status.title = engine.state === 'ready' && engine.device
+    ? `Runs on ${engine.device}${engine.fallback ? `. The GPU could not run it: ${engine.fallback.split('\n')[0]}` : ''}`
+    : '';
   if (downloading && engine.state !== 'loading') text = `Downloading ${downloading.label}… ${Math.floor(downloading.progress * 100)}%`;
   els.status.dataset.state = downloading ? 'loading' : engine.state;
   els.statusText.textContent = text;

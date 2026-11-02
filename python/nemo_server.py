@@ -1,7 +1,7 @@
 """Serves an NVIDIA NeMo speech model over local HTTP for the Node app (see lib/engines/python-nemo.js).
 
 GET  /health      -> 200 once the model is loaded: {"status": "ok", "device": "GPU (MPS)" | "CPU", "fallback": ...}
-POST /inference   body: float32 little-endian PCM, 16 kHz mono  -> {"text": "..."}
+POST /inference   body: float32 little-endian PCM, 16 kHz mono  -> {"text": "...", "device": ..., "fallback": ...}
 
 --device auto (the default) puts the acoustic model on the GPU when PyTorch has one (MPS on Apple silicon, CUDA
 elsewhere) and on the CPU otherwise. If the GPU fails to load or warm up the model, or fails on a request later, the
@@ -179,7 +179,8 @@ def main():
             try:
                 raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
                 samples = np.frombuffer(raw, dtype="<f4").copy()
-                self.reply(200, {"text": runner.transcribe(samples) if len(samples) else ""})
+                self.reply(200, {"text": runner.transcribe(samples) if len(samples) else "",
+                                  "device": runner.describe(), "fallback": runner.fallback})
             except Exception as err:  # report to the app instead of dying mid-meeting
                 self.reply(500, {"error": f"{type(err).__name__}: {err}"})
 
