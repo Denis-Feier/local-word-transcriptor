@@ -61,6 +61,8 @@ const modelsMessage = () => ({
     id: m.id,
     label: config.inDocker && m.dockerSlow ? `${m.label} (slow in Docker)` : m.label,
     engine: m.engine,
+    tier: m.tier, // 'recommended' | 'other': the menu's two groups (#28)
+    reason: m.reason, // one line on why it is where it is in the ranking
     size: m.size,
     download: m.downloadSize ?? m.size,
     notes: config.inDocker && m.dockerSlow ? `${m.notes} Too slow for live use in Docker: no GPU there.` : m.notes,

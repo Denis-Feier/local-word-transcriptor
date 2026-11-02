@@ -62,6 +62,17 @@ t.check('UNIT-TUNE-02', 'every setting round-trips through the config', back.vad
 t.check('UNIT-TUNE-03', 'every setting has a range for the Settings sliders', Object.keys(tuningFrom(config)).every((k) => TUNING[k]));
 
 // ---------- model list ----------
+// The ranking (#28): every model has a tier for the menu's two groups and a one-line reason; the recommended ones are
+// the measured best (benchmarks/runs/2026-11-02_20-09_mac-m5), and the catalogue is in ranking order.
+{
+  const tiers = MODELS.map((m) => m.tier);
+  const recommended = MODELS.filter((m) => m.tier === 'recommended').map((m) => m.id);
+  const longReason = MODELS.filter((m) => !m.reason || m.reason.length > 70 || /\n/.test(m.reason));
+  t.check('UNIT-MODEL-02', 'every model has a tier (recommended/other) and a one-line reason of at most 70 characters; Canary and Parakeet Ultra are the recommended ones, listed first; the cloud model is never recommended',
+    tiers.every((x) => ['recommended', 'other'].includes(x)) && !longReason.length && JSON.stringify(recommended) === '["canary-1b-v2","parakeet-ultra"]'
+      && MODELS.slice(0, recommended.length).every((m) => m.tier === 'recommended') && MODELS.find((m) => m.cloud).tier === 'other',
+    `recommended ${recommended.join(', ')}; ${longReason.length ? `reasons too long: ${longReason.map((m) => m.id).join(', ')}` : 'every reason fits'}`);
+}
 // python/nemo_server.py refuses a decoder it does not know, but only once someone picks the model.
 const nemoDecoders = fs.readFileSync(path.join(ROOT, 'python', 'nemo_server.py'), 'utf8').match(/"--decoder", choices=\[([^\]]*)\]/)[1].match(/[\w-]+/g);
 const nemoModels = MODELS.filter((m) => m.engine === 'python-nemo');

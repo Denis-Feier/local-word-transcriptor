@@ -755,11 +755,15 @@ function openCaptionWindow() {
 
 // ---------- models ----------
 
+/** The menu entry: the model, its one-line reason for its place in the ranking (#28), and its download state. */
 function modelOptionLabel(m) {
-  if (m.installed) return `${m.label}`;
-  if (m.progress !== null) return `${m.label} (downloading ${Math.floor(m.progress * 100)}%)`;
-  return `${m.label} (download ${m.download})`;
+  const name = m.reason ? `${m.label} — ${m.reason}` : m.label;
+  if (m.installed) return name;
+  if (m.progress !== null) return `${name} (downloading ${Math.floor(m.progress * 100)}%)`;
+  return `${name} (download ${m.download})`;
 }
+
+const GROUPS = [['recommended', 'Recommended'], ['other', 'Other models']];
 
 function chooseModel() {
   const m = models.find((x) => x.id === els.model.value);
@@ -793,7 +797,15 @@ function render() {
     modelSignature = signature;
     els.model.length = 0;
     if (!engine.model) els.model.add(new Option('Choose a model…', ''));
-    for (const m of models) els.model.add(new Option(modelOptionLabel(m), m.id));
+    // Recommended models first, then the rest, each group in ranking order (the server's order).
+    for (const [tier, label] of GROUPS) {
+      const group = models.filter((m) => (m.tier ?? 'other') === tier);
+      if (!group.length) continue;
+      const optgroup = document.createElement('optgroup');
+      optgroup.label = label;
+      for (const m of group) optgroup.append(new Option(modelOptionLabel(m), m.id));
+      els.model.append(optgroup);
+    }
     els.model.value = engine.model ?? '';
   }
   const active = models.find((m) => m.id === engine.model);
