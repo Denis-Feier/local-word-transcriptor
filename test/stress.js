@@ -11,6 +11,7 @@ import { promisify } from 'node:util';
 import WebSocket from 'ws';
 import { config } from '../lib/config.js';
 import { MODELS, isInstalled, isAvailable } from '../lib/models.js';
+import { wordKey } from '../lib/steady.js';
 import { TUNING, sanitizeTuning } from '../lib/tuning.js';
 import { sharedWords } from '../lib/wer.js';
 import { SR, startServer, scratch, sleep, suite } from './helpers.js';
@@ -47,17 +48,23 @@ const usable = (id) => {
   return m && isInstalled(m) && isAvailable(m, { whisperBin: config.whisper.bin });
 };
 
-/** A child process of the server (a model's own process: whisper-server, Python), or null. */
-function engineProcess(serverPid, skip = new Set()) {
-  const rows = execFileSync('ps', ['-A', '-o', 'pid=,ppid=,command=']).toString().trim().split('\n')
-    .map((l) => l.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/)).filter(Boolean).map(([, pid, ppid, cmd]) => ({ pid: +pid, ppid: +ppid, cmd }));
-  const family = new Set([serverPid]);
+/** The server and its descendants (a model's own process: whisper-server, Python, the Apple speech helper), with their memory in KB. */
+function family(serverPid) {
+  const rows = execFileSync('ps', ['-A', '-o', 'pid=,ppid=,rss=,command=']).toString().trim().split('\n')
+    .map((l) => l.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/)).filter(Boolean).map(([, pid, ppid, rss, cmd]) => ({ pid: +pid, ppid: +ppid, rss: +rss, cmd }));
+  const members = new Set([serverPid]);
   for (let grew = true; grew;) {
     grew = false;
-    for (const r of rows) if (family.has(r.ppid) && !family.has(r.pid)) family.add(r.pid), (grew = true);
+    for (const r of rows) if (members.has(r.ppid) && !members.has(r.pid)) members.add(r.pid), (grew = true);
   }
-  return rows.find((r) => r.pid !== serverPid && family.has(r.pid) && !skip.has(r.pid) && /whisper-server|python/i.test(r.cmd))?.pid ?? null;
+  return rows.filter((r) => members.has(r.pid));
 }
+
+/** A child process of the server (a model's own process: whisper-server, Python, the Apple speech helper), or null. */
+const engineProcess = (serverPid, skip = new Set()) => family(serverPid).find((r) => r.pid !== serverPid && !skip.has(r.pid) && /whisper-server|python|apple-speech/i.test(r.cmd))?.pid ?? null;
+
+/** Memory (MB) of the server and its model processes together: a model switched away from must give its memory back. */
+const familyRss = (serverPid) => Math.round(family(serverPid).reduce((sum, r) => sum + r.rss, 0) / 1024);
 
 // ---------- the client ----------
 
@@ -66,10 +73,12 @@ function engineProcess(serverPid, skip = new Set()) {
  * as the server reads), with the script's events (settings, Clear) at their time. Every message is recorded with the
  * audio sent when it arrived (sentSec: the session's clock). Every 2 s the server is probed (a page file and a
  * WebSocket ping), every 10 s its memory is read. onChunk(i, r, ws) runs after each frame (async allowed);
- * cutAt (meeting seconds) drops the connection there without Stop; startAt (epoch ms) delays the first frame.
+ * cutAt (meeting seconds) drops the connection there without Stop; startAt (epoch ms) delays the first frame;
+ * from (a frame index) starts the meeting there, and resume ({ name, samples }) is sent before any audio, as the page
+ * does after a reconnect (#10); room: one Room can play a meeting on through several connections.
  */
-async function play(server, m, { speed: pace = speed, saveAudio = true, onChunk, cutAt = Infinity, startAt = 0, probe = true, waitMs = 300000, room = new Room(m) } = {}) {
-  const r = { finals: [], allFinals: [], partials: [], starts: new Set(), errors: [], files: [], statuses: [], tuning: [], behind: [], unknown: [], sentSec: 0, sentPerMic: [0, 0, 0], probes: [], memory: [], backlog: [], closed: false };
+async function play(server, m, { speed: pace = speed, saveAudio = true, onChunk, cutAt = Infinity, startAt = 0, probe = true, waitMs = 300000, room = new Room(m), from = 0, resume = null } = {}) {
+  const r = { finals: [], allFinals: [], partials: [], starts: new Set(), errors: [], files: [], statuses: [], tuning: [], behind: [], unknown: [], sentSec: from * STEP, sentPerMic: [0, 0, 0], probes: [], memory: [], backlog: [], closed: false };
   const ws = new WebSocket(server.ws('?mics'));
   r.ws = ws;
   const finalIds = new Set();
@@ -82,7 +91,7 @@ async function play(server, m, { speed: pace = speed, saveAudio = true, onChunk,
       r.allFinals.push(f);
       if (msg.text) r.finals.push(f);
       r.backlog.push({ sentSec: r.sentSec, waiting: r.starts.size - finalIds.size, behind: r.sentSec - msg.end });
-    } else if (msg.type === 'partial') r.partials.push({ mic: msg.mic, sentSec: r.sentSec });
+    } else if (msg.type === 'partial') r.partials.push({ mic: msg.mic, id: msg.id, text: msg.text, sentSec: r.sentSec });
     else if (msg.type === 'vad') msg.speaking && r.starts.add(msg.id);
     else if (msg.type === 'error') r.errors.push({ message: msg.message, sentSec: r.sentSec });
     else if (msg.type === 'file') r.files.push(msg);
@@ -101,6 +110,7 @@ async function play(server, m, { speed: pace = speed, saveAudio = true, onChunk,
     if (Date.now() - t0 > 600000) throw new Error('server not ready');
     await sleep(50);
   }
+  if (resume) ws.send(JSON.stringify({ type: 'resume', ...resume })); // before any audio, as the page does
   ws.send(JSON.stringify({ type: 'options', saveAudio }));
   const timers = [];
   if (probe) {
@@ -121,7 +131,7 @@ async function play(server, m, { speed: pace = speed, saveAudio = true, onChunk,
   while (Date.now() < startAt) await sleep(2);
   const events = new Map(m.events.filter((e) => e.type !== 'layout').map((e) => [Math.round(e.t / STEP), e]));
   const t0 = performance.now();
-  for (let i = 0; i < m.chunks && !r.closed; i++) {
+  for (let i = from; i < m.chunks && !r.closed; i++) {
     if (i * STEP >= cutAt) {
       ws.terminate();
       break;
@@ -141,7 +151,7 @@ async function play(server, m, { speed: pace = speed, saveAudio = true, onChunk,
       while (ws.bufferedAmount > 4e6 && !r.closed) await sleep(5);
       if (i % 50 === 0) await new Promise((resolve) => setImmediate(resolve));
     } else {
-      const wait = t0 + ((i + 1) * 100) / pace - performance.now();
+      const wait = t0 + ((i + 1 - from) * 100) / pace - performance.now();
       if (wait > 3) await sleep(wait);
     }
   }
@@ -225,17 +235,12 @@ function report(name, title, m, r, extra = '') {
   return j;
 }
 
-/** The transcript and audio files of a played meeting (STRESS-MEET-09). */
-function checkFiles(dir, r, clears, length) {
-  const names = fs.existsSync(dir) ? fs.readdirSync(dir).sort() : [];
-  const txt = names.filter((n) => n.endsWith('.txt')).flatMap((n) => fs.readFileSync(path.join(dir, n), 'utf8').split('\n').filter(Boolean));
-  const problems = [];
-  if (txt.length !== r.finals.length) problems.push(`${txt.length} lines in .txt for ${r.finals.length} lines sent`);
-  const bad = txt.filter((l) => !/^\[(\d+:)?\d\d:\d\d\] (Mic \d: )?\S/.test(l));
-  if (bad.length) problems.push(`${bad.length} lines not "[time] (Mic N: )text", e.g. ${JSON.stringify(bad[0])}`);
-  const hourly = txt.filter((l) => /^\[\d+:\d\d:\d\d\]/.test(l)).length;
-  const late = r.finals.filter((f) => f.start >= 3600).length;
-  if (hourly !== late) problems.push(`${hourly} lines with [h:mm:ss], ${late} lines after the first hour`);
+/** Every line of every .txt in a transcripts folder. */
+const txtLines = (dir) => (fs.existsSync(dir) ? fs.readdirSync(dir).sort().filter((n) => n.endsWith('.txt')).flatMap((n) => fs.readFileSync(path.join(dir, n), 'utf8').split('\n').filter(Boolean)) : []);
+/** Lines of a .txt that are not "[time] (Mic N: )text". */
+const malformed = (txt) => txt.filter((l) => !/^\[(\d+:)?\d\d:\d\d\] (Mic \d: )?\S/.test(l));
+/** How many lines of a .txt have an earlier time than the line before them on the same mic. */
+function backwards(txt) {
   const last = {};
   let back = 0;
   for (const l of txt) {
@@ -245,6 +250,21 @@ function checkFiles(dir, r, clears, length) {
     if (sec < (last[k] ?? 0)) back++;
     last[k] = sec;
   }
+  return back;
+}
+
+/** The transcript and audio files of a played meeting (STRESS-MEET-09). */
+function checkFiles(dir, r, clears, length) {
+  const names = fs.existsSync(dir) ? fs.readdirSync(dir).sort() : [];
+  const txt = txtLines(dir);
+  const problems = [];
+  if (txt.length !== r.finals.length) problems.push(`${txt.length} lines in .txt for ${r.finals.length} lines sent`);
+  const bad = malformed(txt);
+  if (bad.length) problems.push(`${bad.length} lines not "[time] (Mic N: )text", e.g. ${JSON.stringify(bad[0])}`);
+  const hourly = txt.filter((l) => /^\[\d+:\d\d:\d\d\]/.test(l)).length;
+  const late = r.finals.filter((f) => f.start >= 3600).length;
+  if (hourly !== late) problems.push(`${hourly} lines with [h:mm:ss], ${late} lines after the first hour`);
+  const back = backwards(txt);
   if (back) problems.push(`times go back ${back}× on a mic`);
   const wavs = names.filter((n) => n.endsWith('.wav'));
   for (let mic = 0; mic < r.sentPerMic.filter(Boolean).length; mic++) {
@@ -266,6 +286,37 @@ const probeMax = (r) => Math.max(0, ...r.probes.map((x) => x.ms));
 /** The server's DEBUG log next to the reports: [final #n mic m] lines, drops, [mics] gate reports (TESTING.md §10). */
 const keepLog = (server, name) => server?.log && fs.writeFileSync(path.join(OUT, `${name}-server.log`), server.log());
 const rate = (x) => (x.n ? x.caught / x.n : 1);
+
+/**
+ * Steady live text (#26) over a whole meeting: every live text of a sentence must be the one before plus words
+ * (compared as the page compares them: without case or punctuation), so no word shown is ever taken back.
+ */
+function steadyCheck(partials) {
+  const keys = (text) => String(text ?? '').split(/\s+/).map(wordKey).filter(Boolean);
+  const byId = new Map();
+  for (const x of partials) byId.set(x.id, [...(byId.get(x.id) ?? []), x.text]);
+  let broken = 0;
+  let example = '';
+  for (const [id, texts] of byId) {
+    for (let i = 1; i < texts.length; i++) {
+      const [a, b] = [keys(texts[i - 1]), keys(texts[i])];
+      if (a.length <= b.length && a.every((k, j) => k === b[j])) continue;
+      broken++;
+      example ||= `#${id}: ${JSON.stringify(texts[i - 1])} → ${JSON.stringify(texts[i])}`;
+      break;
+    }
+  }
+  return { sentences: byId.size, guesses: partials.length, broken, example };
+}
+
+/** Where the model ran, from the status messages: the devices of every ready status, and whether it ever left the GPU. */
+function devices(statuses) {
+  const ready = statuses.filter((s) => s.state === 'ready');
+  const seen = [...new Set(ready.map((s) => s.device ?? 'unknown'))];
+  const fallback = ready.find((s) => s.fallback)?.fallback ?? null;
+  const gpu = ready.length > 0 && seen.every((d) => /^GPU/.test(d)) && !fallback;
+  return { seen, gpu, fallback, detail: `${seen.join(', ') || 'no ready status'}${fallback ? `; fallback: ${String(fallback).split('\n')[0].slice(0, 100)}` : ''}` };
+}
 
 // ---------- MEET and MIC3: hours-long meetings ----------
 
@@ -325,6 +376,11 @@ async function longMeeting(three) {
     t.check('STRESS-MEET-11', 'the presentation: pieces ≤ 20 s, nothing on mic 2 but its questions, accuracy kept',
       pres && longest <= 20.5 && strays === 0 && pres.wer[0] <= B.R.wer[0] + 0.03, `longest piece ${p(longest, 1)} s, ${strays} stray lines on mic 2, WER ${pc(pres?.wer[0] ?? NaN, 1)} vs R ${pc(B.R.wer[0], 1)}`);
     t.check('STRESS-MEET-12', 'open files back to the baseline after the client leaves', filesAfter <= filesBefore + 2, `${filesBefore} → ${filesAfter}`);
+    const steady = steadyCheck(r.partials);
+    t.check('STRESS-MEET-13', 'steady live text for the whole meeting: every live text extends the one before, no word taken back (#26)', steady.broken === 0,
+      `${steady.guesses} live texts for ${steady.sentences} sentences; ${steady.broken} sentence(s) with text taken back${steady.example ? `, e.g. ${steady.example}` : ''}`);
+    const dev = devices(r.statuses);
+    t.check('STRESS-MEET-14', 'the model stays on the GPU for the whole meeting (no move to the CPU)', dev.gpu, dev.detail);
   } finally {
     keepLog(server, three ? 'mic3' : 'meeting');
     await server.stop();
@@ -389,11 +445,13 @@ async function overload(model, minutes, label) {
 // ---------- CAP: can each model keep up with a meeting, with room to spare? ----------
 
 async function capacity() {
-  const ids = (option('--models', null)?.split(',') ?? MODELS.map((m) => m.id)).filter(usable); // --models a,b: just those
+  // --models a,b: just those. Never the cloud model (TESTING.md §2 rule 9: it bills the user and sends the audio away).
+  const ids = (option('--models', null)?.split(',') ?? MODELS.map((m) => m.id)).filter((id) => usable(id) && !MODELS.find((m) => m.id === id)?.cloud);
   const v = await voices({ people: 3 });
   const m = meeting(v, { minutes: { R: 15 } });
   const length = m.toSession(m.length);
   const rows = [];
+  const onGpu = []; // [id, devices()] of every model that can use the GPU (Apple's speech picks its own chip)
   for (const id of ids) {
     const server = await startServer({ model: id, timeoutMs: 900000 }).catch((err) => ({ error: err }));
     if (server.error) {
@@ -411,16 +469,25 @@ async function capacity() {
       const busy = r.finals.reduce((s, f) => s + (f.ms ?? 0), 0) / 1000 / r.wallSec;
       const j = judge(truth(m), lineList(r));
       const ok = last <= first + 2 && busy <= 0.8 && r.missingFinals === 0;
-      const required = id === config.defaultModel || id === 'parakeet-ro-110m';
-      rows.push(`| ${id} | ${ok ? 'yes' : 'no'} | ${p(first, 1)} → ${p(last, 1)} s (p95 ${p(quantile(delays(0, 300), 0.95), 1)} → ${p(quantile(delays(length - 300, Infinity), 0.95), 1)}) | ${p(quantile(r.finals.map((f) => f.ms), 0.5), 0)} ms | ${(busy * 100).toFixed(0)} % | ${pc(j.all.solo.caught, j.all.solo.n)} | ${j.all.wrong} |`);
+      // The recommended models (#28) and the tier's own model must keep up; another that cannot is a known limit (◌).
+      const model = MODELS.find((x) => x.id === id);
+      const required = model.tier === 'recommended' || id === MODEL;
+      const dev = devices(r.statuses);
+      if (model.engine !== 'apple-speech') onGpu.push([id, dev]);
+      rows.push(`| ${id} | ${ok ? 'yes' : 'no'} | ${dev.seen.join(', ')} | ${p(first, 1)} → ${p(last, 1)} s (p95 ${p(quantile(delays(0, 300), 0.95), 1)} → ${p(quantile(delays(length - 300, Infinity), 0.95), 1)}) | ${p(quantile(r.finals.map((f) => f.ms), 0.5), 0)} ms | ${(busy * 100).toFixed(0)} % | ${pc(j.all.solo.caught, j.all.solo.n)} | ${j.all.wrong} |`);
       t.check('STRESS-CAP-01', `${id} keeps up with a meeting at 2× real time`, ok,
-        `median delay first 5 min ${p(first, 1)} s, last 5 min ${p(last, 1)} s (audio); model busy ${(busy * 100).toFixed(0)} % of the time; ${r.missingFinals} never finished${required ? '' : '; not the default model'}`, { known: !required });
+        `median delay first 5 min ${p(first, 1)} s, last 5 min ${p(last, 1)} s (audio); model busy ${(busy * 100).toFixed(0)} % of the time; ${r.missingFinals} never finished; on ${dev.detail}${required ? '' : '; not a recommended model'}`, { known: !required });
     } finally {
       await server.stop();
     }
   }
   fs.writeFileSync(path.join(OUT, 'capacity.md'), ['# Model capacity: block R (15 min, two people) at 2× real time', '',
-    '| Model | Keeps up | Median delay, first → last 5 min | Model time per sentence | Model busy | Solo caught | Wrong mic |', '|---|---|---|---|---|---|---|', ...rows, ''].join('\n'));
+    '| Model | Keeps up | Runs on | Median delay, first → last 5 min | Model time per sentence | Model busy | Solo caught | Wrong mic |', '|---|---|---|---|---|---|---|---|', ...rows, ''].join('\n'));
+  const moved = onGpu.filter(([, d]) => !d.gpu);
+  if (onGpu.length) {
+    t.check('STRESS-CAP-02', 'every local model ran on the GPU throughout its run (none moved to the CPU)', moved.length === 0,
+      moved.length ? moved.map(([id, d]) => `${id}: ${d.detail}`).join('; ') : `${onGpu.length} models: ${onGpu.map(([id, d]) => `${id} ${d.seen.join('/')}`).join(', ')}`);
+  }
 }
 
 // ---------- CONN, CONC, TUNE, DISK: connections, several clients, settings, files ----------
@@ -460,6 +527,66 @@ async function connections() {
     t.check('STRESS-CONN-02', 'every sentence cut off by a closing connection is in a transcript file', txt.length - normal >= cut,
       `${txt.length} .txt lines: ${normal} from finished connections, ${txt.length - normal} from ${cut} cut off`);
   } finally {
+    await server.stop();
+  }
+}
+
+/**
+ * Flaky Wi-Fi (#10, D2): the connection drops many times during a meeting and the page reconnects at once, telling the
+ * server the transcript's name and how much audio it had sent (public/app.js: `resume`), so the same .txt and WAVs go
+ * on. One Room plays the meeting on through every connection: the server hears what one steady page would send. A
+ * sentence cut by a drop is finished by the old connection (its line goes to the .txt; no page gets it) and the rest
+ * by the new one, so those utterances are not judged.
+ */
+async function reconnects() {
+  const server = await startServer({ model: MODEL });
+  try {
+    const v = await voices({ people: 3 });
+    const minutes = short ? 5 : 20;
+    const drops = short ? 12 : 50;
+    const m = meeting(v, { minutes: { R: minutes } });
+    await warmUp(server, v);
+    let rng = 11;
+    const rand = () => (rng = (rng * 16807) % 2147483647) / 2147483647;
+    const cuts = Array.from({ length: drops }, (_, k) => Math.round(((k + 0.7 + 0.6 * rand()) * m.chunks) / (drops + 1))); // every ~24 s, never two at once
+    const room = new Room(m);
+    const all = { finals: [], allFinals: [], errors: [], statuses: [], files: [], names: new Set() };
+    let name = null;
+    let sentSamples = 0; // per mic, as the page counts it
+    let from = 0;
+    let mem0 = null;
+    let last = null;
+    for (const cut of [...cuts, Infinity]) {
+      const r = await play(server, m, { room, from, cutAt: cut === Infinity ? Infinity : cut * STEP, probe: false, waitMs: 120000, resume: from ? { name, samples: sentSamples } : null });
+      for (const key of ['finals', 'allFinals', 'errors', 'statuses', 'files']) all[key].push(...r[key]);
+      for (const f of r.files) all.names.add(f.name);
+      name = r.files.find((f) => f.name)?.name ?? name;
+      sentSamples += r.sentPerMic[0];
+      if (mem0 === null) mem0 = await rss(server.pid);
+      last = r;
+      if (cut === Infinity) break;
+      from = cut;
+      await sleep(500); // the page waits 1.5 s before it reconnects; the old connection's last sentence is finished meanwhile
+    }
+    await close(last.ws);
+    await sleep(1500);
+    const mem1 = await rss(server.pid);
+    const txt = txtLines(server.transcripts);
+    const txtFiles = fs.readdirSync(server.transcripts).filter((n) => n.endsWith('.txt'));
+    const wavs = fs.readdirSync(server.transcripts).filter((n) => n.endsWith('.wav')).map((n) => (fs.statSync(path.join(server.transcripts, n)).size - 44) / 2 / SR);
+    const sentSec = sentSamples / SR;
+    const cutTimes = cuts.map((c) => c * STEP);
+    const items = truth(m).map((u) => ({ ...u, cut: cutTimes.some((c) => c >= u.start - 0.5 && c <= u.end + 1) }));
+    const j = judge(items.map((u) => ({ ...u, orphan: u.orphan || u.cut })), lineList(all));
+    const ok = all.names.size === 1 && txtFiles.length === 1 && !malformed(txt).length && backwards(txt) === 0
+      && wavs.length === 2 && wavs.every((s) => Math.abs(s - sentSec) <= 0.2)
+      && txt.length >= all.finals.length && txt.length - all.finals.length <= 2 * drops
+      && rate(j.all.solo) >= 0.98 && j.all.wrong === 0 && all.errors.length === 0 && mem1 - mem0 <= 30;
+    t.check('STRESS-CONN-03', `(D2) the connection drops ${drops} times in a ${minutes}-minute meeting and resumes the transcript: one .txt with the clock going on, WAVs whole, nothing lost, memory flat`, ok,
+      `${txtFiles.length} .txt (${all.names.size} name(s)); ${txt.length} lines for ${all.finals.length} received (${txt.length - all.finals.length} finished after a drop), ${backwards(txt)} with an earlier time than the line before, ${malformed(txt).length} malformed; `
+      + `WAVs ${wavs.map((s) => p(s, 1)).join(', ')} s for ${p(sentSec, 1)} s sent; solo caught ${pc(j.all.solo.caught, j.all.solo.n)} (${items.filter((u) => u.cut && !u.orphan).length} cut by a drop, not judged), wrong mic ${j.all.wrong}; ${all.errors.length} errors; memory ${mem0} → ${mem1} MB`);
+  } finally {
+    keepLog(server, 'reconnects');
     await server.stop();
   }
 }
@@ -512,6 +639,7 @@ async function tuning() {
     const rand = () => (rng = (rng * 16807) % 2147483647) / 2147483647;
     const expected = {};
     let sent = 0;
+    let toggles = 0;
     let mem0 = null;
     const r = await play(server, m, {
       async onChunk(i, res, ws) {
@@ -522,6 +650,8 @@ async function tuning() {
         Object.assign(expected, sanitizeTuning(values));
         ws.send(JSON.stringify({ type: 'tuning', values }));
         sent++;
+        // Steady live text (#26) off and on again every tenth change, as a box in the page would be.
+        if (sent % 10 === 0) ws.send(JSON.stringify({ type: 'options', steadyLive: (sent / 10) % 2 === 0 })), toggles++;
       },
     });
     await close(r.ws);
@@ -535,7 +665,7 @@ async function tuning() {
     const last = r.tuning.at(-1)?.values ?? {};
     const applied = Object.entries(expected).every(([k, x]) => last[k] === x && saved?.[k] === x);
     const late = r.finals.filter((f) => f.end > 0.8 * m.length).length;
-    t.check('STRESS-TUNE-01', `${sent} setting changes during a meeting: memory flat, the last values applied and saved`, mem1 - mem0 <= 30 && applied && saved !== null && late > 0,
+    t.check('STRESS-TUNE-01', `${sent} setting changes and ${toggles} Steady live text toggles during a meeting: memory flat, the last values applied and saved`, mem1 - mem0 <= 30 && applied && saved !== null && late > 0,
       `memory ${mem0} → ${mem1} MB; last values ${applied ? 'applied and saved' : `differ: sent ${JSON.stringify(expected)}, server ${JSON.stringify(last)}, file ${JSON.stringify(saved)}`}; ${late} lines in the last fifth`);
   } finally {
     await server.stop();
@@ -567,7 +697,8 @@ async function disk() {
       const crash = up ? '' : `; the server exited: ${server.log().split('\n').filter((l) => /ENOSPC|Error:|^\s+at /.test(l)).slice(0, 2).join(' / ').slice(0, 200)}`;
       t.check('STRESS-DISK-01', 'Save audio on a disk that fills up: the server keeps transcribing; one "Could not save audio", at most one "Could not save transcript"; the .txt ends on a whole line',
         up && after >= 3 && audioErrors === 1 && textErrors <= 1 && whole,
-        `alive ${up}; ${after} lines after the disk filled; ${audioErrors} "Could not save audio" and ${textErrors} "Could not save transcript" errors, ${r.errors.length} in all; the .txt ${whole ? 'ends on a whole line' : 'ends mid-line'}${crash}`);
+        `alive ${up}; ${after} lines after the disk filled; ${audioErrors} "Could not save audio" and ${textErrors} "Could not save transcript" errors, ${r.errors.length} in all; the .txt ${whole ? 'ends on a whole line' : 'ends mid-line'}; `
+        + `server memory ${r.memory[0]?.mb ?? '—'} → ${r.memory.at(-1)?.mb ?? '—'} MB (lines without room wait in memory, #19)${crash}`);
     } finally {
       keepLog(server, 'disk');
       await server.stop();
@@ -616,11 +747,13 @@ async function engines() {
         },
       });
       await close(r.ws);
+      await sleep(1500);
+      const txt = txtLines(server.transcripts); // the .txt waits for every earlier sentence (#7): a failed one must not stall it
       const back = kills.map((k) => (r.statuses.find((s) => s.wall > k && s.state === 'ready')?.wall ?? Infinity) - k);
       const j = judge(truth(m), lineList(r));
-      t.check('STRESS-ENG-01', `${id}: the model process killed 3 times, back within 30 s, no sentence lost`,
-        kills.length === 3 && back.every((ms) => ms <= 30000) && r.errors.length === 0 && rate(j.all.solo) >= 0.98,
-        `${kills.length} kills; back after ${back.map((ms) => p(ms / 1000, 1)).join(', ')} s; ${r.errors.length} sentences failed (${r.errors[0]?.message ?? ''}); solo caught ${pc(j.all.solo.caught, j.all.solo.n)}`);
+      t.check('STRESS-ENG-01', `${id}: the model process killed 3 times, back within 30 s, no sentence lost, every line in the .txt`,
+        kills.length === 3 && back.every((ms) => ms <= 30000) && r.errors.length === 0 && rate(j.all.solo) >= 0.98 && txt.length === r.finals.length,
+        `${kills.length} kills; back after ${back.map((ms) => p(ms / 1000, 1)).join(', ')} s; ${r.errors.length} sentences failed (${r.errors[0]?.message ?? ''}); solo caught ${pc(j.all.solo.caught, j.all.solo.n)}; ${txt.length} .txt lines for ${r.finals.length} finals`);
     } finally {
       await server.stop();
     }
@@ -654,27 +787,35 @@ async function engines() {
     }
   } else t.skip('STRESS-ENG-02', 'the model process killed four times within a minute', 'no Whisper or NeMo model installed');
 
-  const plan = ['canary-1b-v2', MODEL, ['whisper-large-v3-turbo', 'parakeet-tdt-0.6b-v3'].find(usable), MODEL].filter((id) => id && usable(id));
+  // One model per engine, each loaded and unloaded in turn: in-process (transcribe.cpp), a Python process (NeMo) and
+  // whisper-server, with the tier's model between them. The memory is the server's and its model processes' together,
+  // so a model process left behind would show.
+  const plan = ['canary-1b-v2', 'jackrabbit-110m-ro', MODEL, 'whisper-large-v3-turbo', MODEL].filter((id) => usable(id));
   const server = await startServer({ model: MODEL });
   try {
     const m = meeting(v, { minutes: { R: 20 } });
-    const at = [4, 8, 12, 16].map((min) => Math.round((min * 60) / STEP));
+    const at = [3, 6, 9, 12, 15].slice(0, plan.length).map((min) => Math.round((min * 60) / STEP));
     let mem0 = null;
     const r = await play(server, m, {
       speed: 2,
       waitMs: 900000,
-      async onChunk(i, res, ws) {
-        if (i === at[0] - 50) mem0 = await rss(server.pid);
+      onChunk(i, res, ws) {
+        if (i === at[0] - 50) mem0 = familyRss(server.pid);
         const k = at.indexOf(i);
         if (k >= 0 && plan[k]) ws.send(JSON.stringify({ type: 'select', id: plan[k] }));
       },
     });
-    await sleep(5000);
-    const mem1 = await rss(server.pid);
+    await sleep(10000); // a model process switched away from has exited by now
+    const mem1 = familyRss(server.pid);
+    const left = family(server.pid).filter((x) => x.pid !== server.pid).length;
     await close(r.ws);
+    await sleep(1500);
+    const txt = txtLines(server.transcripts);
     const j = judge(truth(m), lineList(r));
-    t.check('STRESS-ENG-03', `model switched ${plan.length} times during a meeting: no line lost, memory back`, r.errors.length === 0 && rate(j.all.solo) >= 0.98 && mem1 - mem0 <= 100,
-      `${[MODEL, ...plan].join(' → ')}; ${r.errors.length} failed; solo caught ${pc(j.all.solo.caught, j.all.solo.n)}; memory ${mem0} → ${mem1} MB`);
+    t.check('STRESS-ENG-03', `model switched ${plan.length} times during a meeting: no line lost, every line in the .txt, the memory of the server and its model processes back`,
+      r.errors.length === 0 && rate(j.all.solo) >= 0.98 && txt.length === r.finals.length && mem1 - mem0 <= 100 && left === 0,
+      `${[MODEL, ...plan].join(' → ')}; ${r.errors.length} failed; solo caught ${pc(j.all.solo.caught, j.all.solo.n)}; ${txt.length} .txt lines for ${r.finals.length} finals; `
+      + `memory (server + model processes) ${mem0} → ${mem1} MB; ${left} model process(es) left running`);
   } finally {
     await server.stop();
   }
@@ -690,7 +831,10 @@ const GROUPS = {
     if (!short && usable('canary-1b-v2')) await overload('canary-1b-v2', 20, 'canary-1b-v2');
   },
   cap: () => (short ? t.skip('STRESS-CAP-01', 'each model at 2× real time', 'not in --short') : capacity()),
-  conn: connections,
+  conn: async () => {
+    await connections();
+    await reconnects();
+  },
   conc: concurrent,
   tune: tuning,
   disk,

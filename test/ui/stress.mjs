@@ -341,6 +341,8 @@ async function soak() {
     // SOAK-05: the caption window shows what the page shows.
     const newest = (await finalTexts(win)).at(-1);
     const onCaptions = await waitFor(async () => (await js(captions, `[...document.querySelectorAll('.stage-line')].map((e) => e.textContent).join('\\n')`)).includes(newest), 1000);
+    // SOAK-08: where the model runs after the hours, as the page says it (#39): still the GPU, never moved to the CPU.
+    const where = await js(win, `({ text: document.getElementById('statusText').textContent, title: document.getElementById('status').title })`);
     await click(win, 'toggle');
     const stop = Date.now();
     await sleep(8000);
@@ -393,6 +395,8 @@ async function soak() {
     t.check('STRESS-SOAK-07', 'after Stop: the last sentence is in the .txt, Download has the same lines, no error in the console or on the page', lastIn && same && pageErrors.length === 0 && banner === 0,
       `last line saved ${lastIn}; Download ${download.length} lines, .txt ${txt.length}, same lines ${same}, same order ${differs < 0}${differs < 0 ? '' : ` (from line ${differs + 1}: ${JSON.stringify(download[differs]?.slice(0, 40))} vs ${JSON.stringify(txt[differs]?.slice(0, 40))})`}; `
       + `${pageErrors.length} console errors${pageErrors.length ? ` (${pageErrors.slice(0, 2).join(' | ').slice(0, 160)})` : ''}; error banner seen ${banner}×`);
+    t.check('STRESS-SOAK-08', 'after the hours the page still says the model runs on the GPU (it never moved to the CPU)',
+      /· ready on GPU$/.test(where.text) && /^Runs on GPU/.test(where.title) && !/could not/i.test(where.title), `status ${JSON.stringify(where.text)}, tooltip ${JSON.stringify(where.title)}`);
   } finally {
     win.destroy();
     captions.destroy();

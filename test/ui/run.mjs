@@ -556,7 +556,7 @@ app.whenReady().then(async () => {
     t.check('UI-MODEL-01', 'a model not downloaded shows its size and asks before downloading; No changes nothing',
       s.models.some((m) => /\(download .+\)/.test(m)) && asked.length === 1 && /Download Orukeet/.test(asked[0]) && s.status === 'ready', asked[0]);
     // The menu's two groups (#28): Recommended first, with Canary, then Other models; every entry with its reason.
-    const groups = await js(`[...document.querySelectorAll('#model optgroup')].map((g) => ({ label: g.label, options: [...g.options].map((o) => o.text) }))`);
+    const groups = await js(`[...document.querySelectorAll('#model optgroup')].map((g) => ({ label: g.label, options: [...g.querySelectorAll('option')].map((o) => o.text) }))`); // an <optgroup> has no .options
     t.check('UI-MODEL-03', 'the Model menu has a Recommended group first (Canary in it) and an Other models group, every entry with a one-line reason after a dash',
       groups.length === 2 && groups[0].label === 'Recommended' && groups[1].label === 'Other models' && groups[0].options.some((o) => /^NVIDIA Canary 1B v2 — /.test(o))
         && groups.every((g) => g.options.length > 0 && g.options.every((o) => / — .+/.test(o))),

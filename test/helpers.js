@@ -71,8 +71,12 @@ export async function startServer({ model = process.env.TEST_MODEL ?? 'parakeet-
   child.stdout.on('data', (d) => (log += d));
   child.stderr.on('data', (d) => (log += d));
   const t0 = Date.now();
-  while (!/ready \(|✖/.test(log)) {
-    if (child.exitCode !== null || Date.now() - t0 > timeoutMs) throw new Error(`server did not start:\n${log}`);
+  // The ready line: "<model> ready on GPU (Metal) (0.2 s)" since the GPU work (#38), "<model> ready (0.2 s)" before it.
+  while (!/ ready\b.*\(\d+\.\d s\)|✖/.test(log)) {
+    if (child.exitCode !== null || Date.now() - t0 > timeoutMs) {
+      child.kill('SIGKILL'); // never leave a test server running (TESTING.md §2 rule 5)
+      throw new Error(`server did not start:\n${log}`);
+    }
     await sleep(100);
   }
   if (log.includes('✖')) throw new Error(`server failed:\n${log}`);
