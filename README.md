@@ -427,7 +427,7 @@ Any of these can also go in `.env.local` (git ignores it; see `.env.example`), o
 ## Tests
 
 `npm test` runs the test plan in [TESTING.md](TESTING.md) (~5 min; `npm run test:quick` ~1 min, `npm run test:full`
-~15 min with every speech engine). Each run writes a report to `test-results/`. The plan, the per-merge routine and
+~15 min with every speech engine). Each run writes a signed report to `test-results/` (the exact moment it started as its id, the computer's hardware and software, one row per test). The plan, the per-merge routine and
 the checklist for testing with real microphones are in TESTING.md.
 
 ## Testing without a microphone

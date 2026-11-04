@@ -27,11 +27,22 @@ const git = (cmd) => {
     return '?';
   }
 };
+// The run's signature: the exact moment it started and the commit identify it (the report and its folder carry both).
+const startedAt = new Date();
 const sha = git('rev-parse --short HEAD');
-const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-');
+const RUN_ID = `${startedAt.toISOString()}_${sha}`;
+const stamp = startedAt.toISOString().slice(0, 19).replace(/[T:]/g, '-');
 const OUT = path.join(ROOT, 'test-results', `${stamp}_${sha}`);
 fs.mkdirSync(OUT, { recursive: true });
 const results = []; // { suite, cases: [{ id, title, status, detail }] , seconds, code }
+
+// The computer and the software the run used, for the report (nothing personal: no user name, no host name).
+process.env.ENV_FILE ??= os.devNull; // the runner itself never reads the user's .env.local either (TESTING.md §2 rule 9); lib/config.js loads it on import
+const { machineInfo, describeMachine, describeSoftware } = await import('../lib/benchmark/machine.js');
+const machine = await machineInfo();
+const { MODELS, isInstalled } = await import('../lib/models.js');
+const installedModels = MODELS.filter((m) => !m.cloud && isInstalled(m)).map((m) => m.id); // the cloud model needs the user's key, which the tests never read
+console.log(`run ${RUN_ID}\non ${describeMachine(machine)}\nwith ${describeSoftware(machine)}`);
 
 // One engine per runtime, for the full tier.
 const ENGINES = ['canary-1b-v2', 'whisper-large-v3-turbo', 'jackrabbit-110m-ro'];
@@ -206,7 +217,6 @@ const plan = [
 const rank = { quick: 0, standard: 1, full: 2, stress: 3 };
 // The stress tier runs alone (with the static checks); --only STRESS-<GROUP> runs one of its groups.
 const wanted = (name, level) => (only?.startsWith('STRESS-') ? name === 'stress' : only ? name === only : tier === 'stress' ? ['static', 'stress'].includes(name) : rank[level] <= rank[tier]);
-const t0 = Date.now();
 for (const [name, level, step] of plan) {
   if (!wanted(name, level)) continue;
   console.log(`\n▸ ${name}`);
@@ -217,22 +227,48 @@ for (const [name, level, step] of plan) {
 const all = results.flatMap((r) => r.cases.map((c) => ({ ...c, suite: r.suite })));
 const count = (s) => all.filter((c) => c.status === s).length;
 const dirty = git('status --porcelain') ? ' (uncommitted changes)' : '';
+const finishedAt = new Date();
+/** "2026-11-04 18:27:03.512 (UTC+02:00)": the moment as a clock on this computer showed it. */
+const local = (d) => {
+  const pad = (n, w = 2) => String(n).padStart(w, '0');
+  const off = -d.getTimezoneOffset();
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)} (UTC${off < 0 ? '-' : '+'}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)})`;
+};
+const elapsed = finishedAt - startedAt;
+const compute = machine.compute?.length ? machine.compute.map((d) => `${d.name}${d.description ? ` (${d.description.trim()})` : ''}${d.memoryGb ? `, ${d.memoryGb} GB` : ''}`).join('; ') : 'none';
+const signature = `run \`${RUN_ID}\`, started ${local(startedAt)}`;
+const branch = git('rev-parse --abbrev-ref HEAD');
+const verdict = count('fail') ? 'FAIL' : 'PASS';
+const tally = `${count('pass')} passed, ${count('fail')} failed, ${count('known')} known limits, ${count('skip')} skipped`;
+const stressReports = fs.existsSync(path.join(OUT, 'stress')) ? fs.readdirSync(path.join(OUT, 'stress')).filter((f) => f.endsWith('.md')).sort().map((f) => `stress/${f}`) : [];
 const lines = [
-  `# Test run ${stamp}`,
+  `# Test run ${startedAt.toISOString()}`,
   '',
-  `- Commit: \`${sha}\` on \`${git('rev-parse --abbrev-ref HEAD')}\`${dirty}`,
+  `**Signature:** ${signature}; finished ${local(finishedAt)} after ${Math.floor(elapsed / 60000)} min ${Math.round((elapsed % 60000) / 1000)} s.`,
+  '',
+  `- Commit: \`${sha}\` on \`${branch}\`${dirty}`,
   `- Tier: ${only ? `only ${only}` : tier}${args.includes('--short') ? ' (short)' : ''}${recordings ? ' + real recordings' : ''}`,
-  `- Machine: ${os.type()} ${os.release()} ${os.arch()}, Node ${process.version}, ${os.cpus()[0]?.model ?? ''}`,
-  `- Time: ${Math.round((Date.now() - t0) / 60000)} min`,
-  `- Result: **${count('fail') ? 'FAIL' : 'PASS'}** — ${count('pass')} passed, ${count('fail')} failed, ${count('known')} known limits, ${count('skip')} skipped`,
+  `- Result: **${verdict}** — ${tally}`,
+  `- Computer: ${describeMachine(machine)}; compute devices seen by transcribe.cpp: ${compute}`,
+  `- Software: ${describeSoftware(machine)}`,
+  `- Models installed: ${installedModels.join(', ')} (${installedModels.length})`,
   '',
   '| Suite | Id | Test | Result | Detail |',
   '|---|---|---|---|---|',
   ...all.map((c) => `| ${c.suite} | ${c.id} | ${c.title} | ${{ pass: '✔', fail: '✖ FAIL', known: '◌ known', skip: '– skip' }[c.status]} | ${String(c.detail ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ').slice(0, 200)} |`),
   '',
-  `Logs and screenshots: \`${path.relative(ROOT, OUT)}/\``,
+  `Logs and screenshots: \`${path.relative(ROOT, OUT)}/\`${stressReports.length ? `; reports: ${stressReports.map((r) => `\`${r}\``).join(', ')}` : ''}; this report as data: \`run.json\`.`,
+  '',
+  `Signed: ${signature}, on ${describeMachine(machine)}.`,
 ];
 fs.writeFileSync(path.join(OUT, 'summary.md'), `${lines.join('\n')}\n`);
-console.log(`\n${count('fail') ? '✖ FAIL' : '✔ PASS'}: ${count('pass')} passed, ${count('fail')} failed, ${count('known')} known limits, ${count('skip')} skipped`);
-console.log(`report: ${path.relative(ROOT, path.join(OUT, 'summary.md'))}`);
+// The same as data, for tools and for comparing runs. The recordings option is recorded as yes/no only: never their paths.
+fs.writeFileSync(path.join(OUT, 'run.json'), `${JSON.stringify({
+  id: RUN_ID, startedAt: startedAt.toISOString(), startedAtLocal: local(startedAt), finishedAt: finishedAt.toISOString(), durationSec: Math.round(elapsed / 1000),
+  commit: sha, branch, dirty: Boolean(dirty), tier, only, short: args.includes('--short'), recordings: Boolean(recordings),
+  result: verdict, counts: { pass: count('pass'), fail: count('fail'), known: count('known'), skip: count('skip') },
+  machine, modelsInstalled: installedModels, suites: results.map((r) => ({ suite: r.suite, seconds: r.seconds, code: r.code })), cases: all,
+}, null, 1)}\n`);
+console.log(`\n${count('fail') ? '✖ FAIL' : '✔ PASS'}: ${tally}`);
+console.log(`report: ${path.relative(ROOT, path.join(OUT, 'summary.md'))} (signed: ${signature})`);
 process.exit(count('fail') ? 1 : 0);
