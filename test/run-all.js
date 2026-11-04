@@ -36,6 +36,12 @@ const OUT = path.join(ROOT, 'test-results', `${stamp}_${sha}`);
 fs.mkdirSync(OUT, { recursive: true });
 const results = []; // { suite, cases: [{ id, title, status, detail }] , seconds, code }
 
+// A Mac on battery sleeps after a minute without a person at it, and every process stops with it: on 2026-11-04 the
+// 10-minute conversation lost 590 s that way (TESTING.md §12). caffeinate holds the display and the system awake until
+// this process exits (-w); a lid closed still sleeps. Nothing on other systems.
+const awake = process.platform === 'darwin' ? spawn('caffeinate', ['-dis', '-w', String(process.pid)], { stdio: 'ignore' }).on('error', () => {}) : null;
+awake?.unref();
+
 // The computer and the software the run used, for the report (nothing personal: no user name, no host name).
 process.env.ENV_FILE ??= os.devNull; // the runner itself never reads the user's .env.local either (TESTING.md §2 rule 9); lib/config.js loads it on import
 const { machineInfo, describeMachine, describeSoftware } = await import('../lib/benchmark/machine.js');
@@ -249,7 +255,7 @@ const lines = [
   `- Commit: \`${sha}\` on \`${branch}\`${dirty}`,
   `- Tier: ${only ? `only ${only}` : tier}${args.includes('--short') ? ' (short)' : ''}${recordings ? ' + real recordings' : ''}`,
   `- Result: **${verdict}** — ${tally}`,
-  `- Computer: ${describeMachine(machine)}; compute devices seen by transcribe.cpp: ${compute}`,
+  `- Computer: ${describeMachine(machine)}; compute devices seen by transcribe.cpp: ${compute}${awake ? '; kept awake by caffeinate' : ''}`,
   `- Software: ${describeSoftware(machine)}`,
   `- Models installed: ${installedModels.join(', ')} (${installedModels.length})`,
   '',
