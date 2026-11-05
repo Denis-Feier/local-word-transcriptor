@@ -812,9 +812,14 @@ async function engines() {
     await sleep(1500);
     const txt = txtLines(server.transcripts);
     const j = judge(truth(m), lineList(r));
+    // Which switch each failed sentence came after, and its error (#45).
+    const failed = r.errors.map((e) => {
+      const k = at.findLastIndex((i) => i * STEP <= e.sentSec);
+      return `${e.message} (at ${p(e.sentSec / 60, 1)} min, ${k < 0 ? 'before the first switch' : `after the switch to ${plan[k]}`})`;
+    });
     t.check('STRESS-ENG-03', `model switched ${plan.length} times during a meeting: no line lost, every line in the .txt, the memory of the server and its model processes back`,
       r.errors.length === 0 && rate(j.all.solo) >= 0.98 && txt.length === r.finals.length && mem1 - mem0 <= 100 && left === 0,
-      `${[MODEL, ...plan].join(' → ')}; ${r.errors.length} failed; solo caught ${pc(j.all.solo.caught, j.all.solo.n)}; ${txt.length} .txt lines for ${r.finals.length} finals; `
+      `${[MODEL, ...plan].join(' → ')}; ${r.errors.length} failed${failed.length ? ` (${failed.join('; ')})` : ''}; solo caught ${pc(j.all.solo.caught, j.all.solo.n)}; ${txt.length} .txt lines for ${r.finals.length} finals; `
       + `memory (server + model processes) ${mem0} → ${mem1} MB; ${left} model process(es) left running`);
   } finally {
     await server.stop();
