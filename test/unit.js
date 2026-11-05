@@ -1226,7 +1226,8 @@ function louder(x, from, to, gainDb) {
 if (!silero) {
   for (const id of ['UNIT-GATE-01', 'UNIT-GATE-02', 'UNIT-GATE-03', 'UNIT-GATE-04', 'UNIT-GATE-05', 'UNIT-GATE-06', 'UNIT-GATE-07',
     'UNIT-SESS-01', 'UNIT-SESS-02', 'UNIT-SESS-03', 'UNIT-SESS-04', 'UNIT-SESS-05', 'UNIT-SESS-16', 'UNIT-SESS-17', 'UNIT-SESS-18',
-    'UNIT-SESS-24', 'UNIT-WAIT-01', 'UNIT-WAIT-02', 'UNIT-WAIT-03', 'UNIT-TAIL-01', 'UNIT-TAIL-02', 'UNIT-TAIL-03']) {
+    'UNIT-SESS-24', 'UNIT-WAIT-01', 'UNIT-WAIT-02', 'UNIT-WAIT-03', 'UNIT-TAIL-01', 'UNIT-TAIL-02', 'UNIT-TAIL-03',
+    'UNIT-WAIT-04', 'UNIT-WAIT-05']) {
     t.skip(id, 'crosstalk / two-mic session', `no ${config.vad.sileroModel} (npm run setup)`);
   }
 } else {
@@ -1371,10 +1372,11 @@ if (!silero) {
   // Issue #47. A line waits for another mic's overlapping sentence only while that sentence could still show it to be a
   // copy (D5, #6). The stand-in model answers between two chunks, as a fast model in real time; `at` is how many
   // seconds of audio were sent when each line arrived. A says one sentence; its words are 1.5–7.5 s.
-  const timed = async (m1, m2, text, { margin = config.crosstalkDb } = {}) => {
+  const timed = async (m1, m2, text, { margin = config.crosstalkDb, vad = {} } = {}) => {
     const sent = [];
     const out = scratch('wait');
     const conf = { ...structuredClone(config), transcriptsDir: out, crosstalkDb: margin };
+    Object.assign(conf.vad, vad);
     let session = null;
     let at = 0;
     const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null,
@@ -1443,6 +1445,20 @@ if (!silero) {
   const soft = s.finals.find((f) => f.mic === 0);
   t.check('UNIT-TAIL-03', 'A talks 6 dB softer than B, who starts 3 s into A\'s sentence: A\'s line keeps all of A\'s speech',
     soft && soft.end >= aEnd && s.finals.filter((f) => f.mic === 0).length === 1, spans(s));
+
+  // #46 with #47: a line of one word waits for the other mic's sentence only while it could be that sentence's last
+  // word. In real time (timed), mic 2 hears A's last word 3 dB less clearly ("rare."): it must wait for A's line and be
+  // dropped. B's one-word reply ("Bine.") said inside A's sentence, while A talks on, comes at once.
+  w = await timed(louder(far1, ...lastWord, 9), mic3, (seg) => (seg.mic === 1 ? SENTENCE : 'rare.'));
+  t.check('UNIT-WAIT-04', 'in real time, mic 1 hears A\'s last word 3 dB less clearly than mic 2: the one-word line waits for A\'s line and is dropped',
+    w.length === 1 && w[0].mic === 1 && w[0].text === SENTENCE, lines(w));
+  // A pause of 0.5 s ends a sentence (Settings): the reply is finished before A's sentence has gone on far enough past
+  // it, so it is released only as A's speech goes on (audio() asks again).
+  w = await timed(...twoMics(lead(A), concat(silence(4.5), B.subarray(0, Math.round(0.6 * SR))), { lagMs: 150 }),
+    (seg) => (seg.mic === 0 ? SAID_A : 'Bine.'), { vad: { silenceMs: 500 } });
+  reply = w.find((f) => f.mic === 1);
+  t.check('UNIT-WAIT-05', 'B says "Bine." in the middle of A\'s sentence while A talks on (pause length 0.5 s): the one-word line comes at once, before A has finished',
+    reply?.text === 'Bine.' && reply.at < 8.3 && w.some((f) => f.mic === 0 && f.text === SAID_A), lines(w));
 }
 
 // ---------- voice detectors are reused, not rebuilt (#4) ----------
