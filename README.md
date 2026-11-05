@@ -373,6 +373,7 @@ where macOS decides. In Docker there is no GPU, so everything runs on the CPU th
 | `public/speaker.js` | Plays the mics on the speaker chosen for the room: full quality, low delay, separate from the transcription |
 | `public/app.js` | UI: models, mic and speaker choice, live and final lines (coloured per mic), wake lock, reconnect buffering |
 | `public/backlog.js` | The audio kept while the server is unreachable: the newest 5 minutes, and what a longer outage lost |
+| `public/order.js` | The order of the lines, the order they were spoken in: one rule for the page, Copy, Download and the saved `.txt` |
 | `public/stage.js` | Projector view: large centred captions, display preferences, full screen; also the caption window (`/?display`) |
 | `public/settings.js` | Settings panel: live speech-detection sliders (`lib/tuning.js` on the server) and projector display options |
 | `server.js` | Static files, WebSocket (only from its own page), model downloads and switching |
