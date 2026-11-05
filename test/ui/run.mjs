@@ -616,7 +616,6 @@ app.whenReady().then(async () => {
     t.check('UI-TX-06', 'the rest of a cut sentence, which started first but got its id and live line later: first on the page, in Copy and in Download (speaking order, as the .txt)',
       downloaded.join('\n') === spoken.join('\n') && copied.join('\n') === spoken.map((l) => l.slice(8)).join('\n') && onPage.join('\n') === copied.join('\n'),
       `Download ${JSON.stringify(downloaded)}; on the page ${onPage.map((l) => l.slice(0, 12)).join(' | ')}; Copy ${copied.map((l) => l.slice(0, 12)).join(' | ')}`);
-    await win.loadURL('about:blank'); // off the stand-in before it closes
 
     t.check('UI-LOAD-02', 'no errors in the page console', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
   } catch (err) {
