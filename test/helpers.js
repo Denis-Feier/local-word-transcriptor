@@ -2,6 +2,7 @@
 // two "speakers" cut from the fixture, a room simulator for two-mic tests, and pass/fail bookkeeping.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -181,6 +182,72 @@ export async function fakeElevenLabs({ key = 'test-key', text = (c) => `propoziÈ
       wss.close(resolve);
     }),
   };
+}
+
+/**
+ * A stand-in for server.js, for tests of the page alone: serves the page's files (the routes server.js lists) and
+ * sends the page whatever the test wants. On connecting the page gets a ready fake model, then `greet` (e.g. the
+ * tuning message), then a limit of two mics. send() goes to the newest connection.
+ */
+export async function fakeServer({ greet = [] } = {}) {
+  const routes = Object.fromEntries([...fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8').matchAll(/'(\/[\w.-]*)': \['([\w.-]+)', '([^']+)'\]/g)].map(([, route, file, type]) => [route, [file, type]]));
+  const server = http.createServer((req, res) => {
+    const entry = routes[new URL(req.url, 'http://x').pathname];
+    if (!entry) return res.writeHead(404).end();
+    res.writeHead(200, { 'Content-Type': entry[1] }).end(fs.readFileSync(path.join(ROOT, 'public', entry[0])));
+  });
+  const wss = new WebSocketServer({ server, path: '/ws' });
+  let client = null;
+  wss.on('connection', (ws) => {
+    client = ws;
+    const send = (msg) => ws.send(JSON.stringify(msg));
+    send({ type: 'models', active: 'fake', models: [{ id: 'fake', label: 'Fake model', engine: 'fake', size: '0 MB', download: '0 MB', notes: 'Stand-in for the tests.', installed: true, progress: null }] });
+    send({ type: 'status', state: 'ready', message: 'Fake model ready', model: 'fake', detector: 'silero', language: 'ro' });
+    for (const msg of greet) send(msg);
+    send({ type: 'mics', max: 2 });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    url: `http://127.0.0.1:${server.address().port}/`,
+    send: (msg) => client.send(JSON.stringify(msg)),
+    close: () => new Promise((resolve) => {
+      for (const ws of wss.clients) ws.terminate();
+      wss.close();
+      server.close(resolve);
+    }),
+  };
+}
+
+/**
+ * How many lines of `a` are out of order against `b`, which has the same lines: the fewest lines that must move for
+ * `a` to read as `b` does (`a`'s lines minus the most of them already in `b`'s order). One line in the wrong place
+ * counts 1, however many lines it is away. Lines that only one of the two has are not counted.
+ */
+export function outOfPlace(a, b) {
+  const places = new Map(); // line -> its indexes in b, first first (a line can be there twice)
+  b.forEach((line, i) => (places.get(line) ?? places.set(line, []).get(line)).push(i));
+  const taken = new Map();
+  const where = [];
+  for (const line of a) {
+    const n = taken.get(line) ?? 0;
+    const i = places.get(line)?.[n];
+    if (i === undefined) continue;
+    taken.set(line, n + 1);
+    where.push(i);
+  }
+  // The longest run of them already in b's order: the longest increasing subsequence of their places in b.
+  const tails = []; // tails[k]: the smallest last place of an increasing run of k + 1
+  for (const i of where) {
+    let lo = 0;
+    let hi = tails.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (tails[mid] < i) lo = mid + 1;
+      else hi = mid;
+    }
+    tails[lo] = i;
+  }
+  return where.length - tails.length;
 }
 
 export const loadWav = (file) => decodeWav(fs.readFileSync(file)).samples;
