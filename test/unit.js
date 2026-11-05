@@ -1052,7 +1052,8 @@ function louder(x, from, to, gainDb) {
 
 if (!silero) {
   for (const id of ['UNIT-GATE-01', 'UNIT-GATE-02', 'UNIT-GATE-03', 'UNIT-GATE-04', 'UNIT-GATE-05', 'UNIT-GATE-06', 'UNIT-GATE-07',
-    'UNIT-SESS-01', 'UNIT-SESS-02', 'UNIT-SESS-03', 'UNIT-SESS-04', 'UNIT-SESS-05', 'UNIT-SESS-16', 'UNIT-SESS-17', 'UNIT-SESS-18']) {
+    'UNIT-SESS-01', 'UNIT-SESS-02', 'UNIT-SESS-03', 'UNIT-SESS-04', 'UNIT-SESS-05', 'UNIT-SESS-16', 'UNIT-SESS-17', 'UNIT-SESS-18',
+    'UNIT-WAIT-01', 'UNIT-WAIT-02', 'UNIT-WAIT-03']) {
     t.skip(id, 'crosstalk / two-mic session', `no ${config.vad.sileroModel} (npm run setup)`);
   }
 } else {
@@ -1152,6 +1153,55 @@ if (!silero) {
   s = await run(mic1, mic2, () => 'munții carpați frumoși astăzi', { margin: config.crosstalkDb, mics: (sec) => (sec >= 3 && sec < 5 ? 1 : 2) });
   t.check('UNIT-SESS-18', 'mics 2 -> 1 -> 2, A talks as mic 2 comes back (louder, noisier): A\'s sentence stays on mic 1',
     s.finals.length >= 1 && s.finals.every((f) => f.mic === 0), s.finals.map((f) => `mic${f.mic + 1} at ${f.start.toFixed(1)} s`).join(' | '));
+
+  // Issue #47. A line waits for another mic's overlapping sentence only while that sentence could still show it to be a
+  // copy (D5, #6). The stand-in model answers between two chunks, as a fast model in real time; `at` is how many
+  // seconds of audio were sent when each line arrived. A says one sentence; its words are 1.5–7.5 s.
+  const timed = async (m1, m2, text, { margin = config.crosstalkDb } = {}) => {
+    const sent = [];
+    const out = scratch('wait');
+    const conf = { ...structuredClone(config), transcriptsDir: out, crosstalkDb: margin };
+    let session = null;
+    let at = 0;
+    const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null,
+      transcribe: async () => ({ text: text([...session.transcribing.values()].at(-1)), model: 'stub', ms: 1 }) };
+    session = new Session({ send: (m) => sent.push({ ...m, at }), transcriber: stub, config: conf });
+    for (let i = 0; i + 1600 <= Math.min(m1.length, m2.length); i += 1600) {
+      const frame = new Float32Array(3200);
+      frame.set(m1.subarray(i, i + 1600));
+      frame.set(m2.subarray(i, i + 1600), 1600);
+      at = (i + 1600) / SR;
+      session.audio(frame, 2);
+      await sleep(0);
+    }
+    session.flush();
+    await sleep(50);
+    session.close();
+    fs.rmSync(out, { recursive: true, force: true });
+    return sent.filter((m) => m.type === 'final' && m.text);
+  };
+  const SAID_A = 'Bună ziua, mă numesc Ioana și astăzi vreau să vă povestesc despre o călătorie în munții Carpați.';
+  const SAID_B = 'A fost o experiență frumoasă, deși ploaia ne-a ținut în cabană două zile. Ce părere aveți, mergem și la anul?';
+  const lines = (finals) => finals.map((f) => `mic${f.mic + 1} "${f.text.slice(0, 24)}" at ${f.at.toFixed(1)} s`).join(' | ') || 'none';
+  // B says a word (0.6 s) in the middle of A's sentence; the model writes "Da.". One word can never be a copy.
+  let w = await timed(...twoMics(lead(A), concat(silence(4.5), B.subarray(0, Math.round(0.6 * SR))), { lagMs: 150 }),
+    (seg) => (seg.mic === 0 ? SAID_A : 'Da.'));
+  let reply = w.find((f) => f.mic === 1);
+  t.check('UNIT-WAIT-01', 'B says "Da." in the middle of A\'s sentence: the line comes at once, before A has finished (it used to wait for A\'s whole sentence)',
+    reply?.text === 'Da.' && reply.at < 8.3 && w.some((f) => f.mic === 0 && f.text === SAID_A), lines(w));
+  // B starts 1 s before A has finished (A's words end at 7.5 s, B's start at 6.5 s) and talks on for 8 s: A's line must
+  // not wait for B's sentence, which mic 2 heard more clearly only at A's very end.
+  w = await timed(...twoMics(lead(A), concat(silence(5.9), B), { lagMs: 150 }), (seg) => (seg.mic === 0 ? SAID_A : SAID_B));
+  const first = w.find((f) => f.mic === 0);
+  t.check('UNIT-WAIT-02', 'B starts talking 1 s before A has finished: A\'s line comes when A has finished, before B\'s (it used to wait for B\'s sentence)',
+    first?.text === SAID_A && first.at < 9.5 && first === w[0] && w.some((f) => f.mic === 1 && f.text === SAID_B), lines(w));
+  // The wait itself stays where it matters: mic 2 picks up the first 3.5 s of A, 6 dB less clearly, and that part ends
+  // before A's sentence does. It must still wait for A's line, and is then dropped as a copy.
+  const [whole] = twoMics(lead(A), silence(1.5 + A.length / SR), { bleedDb: 6 });
+  const [, part] = twoMics(lead(A.subarray(0, Math.round(3.5 * SR))), silence(1.5 + A.length / SR), { bleedDb: 6 });
+  w = await timed(whole, part, (seg) => (seg.mic === 0 ? SAID_A : 'Bună ziua, mă numesc Ioana și astăzi vreau'), { margin: 30 });
+  t.check('UNIT-WAIT-03', 'mic 2 picks up the start of A\'s sentence and finishes first: it still waits for mic 1\'s line and is dropped as a copy',
+    w.length === 1 && w[0].mic === 0 && w[0].text === SAID_A, lines(w));
 }
 
 // ---------- voice detectors are reused, not rebuilt (#4) ----------
