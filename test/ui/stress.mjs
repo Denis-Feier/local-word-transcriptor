@@ -369,7 +369,11 @@ async function soak() {
     const p95 = full.map((g) => quantile(g.delays, 0.95));
     const overlapP95 = full.map((g) => quantile(g.overlapDelays, 0.95)).filter(Number.isFinite);
     fs.writeFileSync(path.join(OUT, 'soak.md'), [`# Soak: ${minutes} min in real time through the page (${model})`, '', `Mic offsets in the loop: ${offsets.map((o) => p(o, 2)).join(', ')} s.`, '',
-      table(j.groups, (g) => ({ 'Seen delay p95, solo (s)': p(quantile(g.delays, 0.95)), 'Overlapping (s)': p(quantile(g.overlapDelays, 0.95)), 'Page MB': samples.filter((s) => s.sec <= g.end).at(-1)?.page ?? '—', 'Server MB': samples.filter((s) => s.sec <= g.end).at(-1)?.server ?? '—' })), ''].join('\n'));
+      table(j.groups, (g) => ({ 'Seen delay p95, solo (s)': p(quantile(g.delays, 0.95)), 'Overlapping (s)': p(quantile(g.overlapDelays, 0.95)), 'Page MB': samples.filter((s) => s.sec <= g.end).at(-1)?.page ?? '—', 'Server MB': samples.filter((s) => s.sec <= g.end).at(-1)?.server ?? '—' })), '',
+      // As in meeting.md and mic3.md (test/stress.js): what SOAK-02 counts as wrong, to trace it (issue #46).
+      '## Lines that are wrong', '',
+      ...j.lines.filter((l) => l.kind !== 'ok').slice(0, 50).map((l) => `- ${l.kind} · mic ${l.mic + 1} · ${p(l.start, 1)}–${p(l.end, 1)} s · ${l.text.slice(0, 90)}`),
+      ...j.both.slice(0, 20).map(([a, b]) => `- both mics · ${p(a.start, 1)} s · mic ${a.mic + 1}: ${a.text.slice(0, 60)} · mic ${b.mic + 1}: ${b.text.slice(0, 60)}`), ''].join('\n'));
 
     const wavs = fs.readdirSync(server.transcripts).filter((n) => n.endsWith('.wav')).map((n) => ({ n, sec: (fs.statSync(path.join(server.transcripts, n)).size - 44) / 2 / SR }));
     const recorded = (stop - start) / 1000;

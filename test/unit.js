@@ -1052,7 +1052,8 @@ function louder(x, from, to, gainDb) {
 
 if (!silero) {
   for (const id of ['UNIT-GATE-01', 'UNIT-GATE-02', 'UNIT-GATE-03', 'UNIT-GATE-04', 'UNIT-GATE-05', 'UNIT-GATE-06', 'UNIT-GATE-07',
-    'UNIT-SESS-01', 'UNIT-SESS-02', 'UNIT-SESS-03', 'UNIT-SESS-04', 'UNIT-SESS-05', 'UNIT-SESS-16', 'UNIT-SESS-17', 'UNIT-SESS-18']) {
+    'UNIT-SESS-01', 'UNIT-SESS-02', 'UNIT-SESS-03', 'UNIT-SESS-04', 'UNIT-SESS-05', 'UNIT-SESS-16', 'UNIT-SESS-17', 'UNIT-SESS-18',
+    'UNIT-TAIL-01', 'UNIT-TAIL-02', 'UNIT-TAIL-03']) {
     t.skip(id, 'crosstalk / two-mic session', `no ${config.vad.sileroModel} (npm run setup)`);
   }
 } else {
@@ -1083,8 +1084,8 @@ if (!silero) {
 
   // Session with a stand-in model: same words on both mics -> one copy; different words -> both.
   // text(n, seg): what the model "hears" in the n-th sentence, seg = { mic, start, end }. mics(sec): how many mics are
-  // chosen at that moment (2 when m2 is given).
-  const run = async (m1, m2, text, { margin = 30, saveAudio = false, mics = () => 2 } = {}) => {
+  // chosen at that moment (2 when m2 is given, more with `more`: the signals of mics 3…).
+  const run = async (m1, m2, text, { margin = 30, saveAudio = false, more = [], mics = () => 2 + more.length } = {}) => {
     const sent = [];
     const out = scratch('session');
     const conf = { ...structuredClone(config), transcriptsDir: out, crosstalkDb: margin };
@@ -1094,7 +1095,8 @@ if (!silero) {
       transcribe: async () => ({ text: text(++calls, [...session.transcribing.values()].at(-1)), model: 'stub', ms: 1 }) };
     session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
     session.setOptions({ saveAudio });
-    const n = Math.min(m1.length, m2?.length ?? Infinity);
+    const signals = [m1, m2, ...more];
+    const n = Math.min(...signals.map((m) => m?.length ?? Infinity));
     for (let i = 0; i < n; i += 1600) {
       const len = Math.min(1600, n - i);
       if (!m2) {
@@ -1103,8 +1105,7 @@ if (!silero) {
       }
       const count = mics(i / SR);
       const frame = new Float32Array(count * len);
-      frame.set(m1.subarray(i, i + len));
-      if (count > 1) frame.set(m2.subarray(i, i + len), len);
+      signals.slice(0, count).forEach((m, k) => frame.set(m.subarray(i, i + len), k * len));
       session.audio(frame, count);
     }
     session.flush(); // Stop: finish what is being said, then the connection closes
@@ -1152,6 +1153,33 @@ if (!silero) {
   s = await run(mic1, mic2, () => 'munții carpați frumoși astăzi', { margin: config.crosstalkDb, mics: (sec) => (sec >= 3 && sec < 5 ? 1 : 2) });
   t.check('UNIT-SESS-18', 'mics 2 -> 1 -> 2, A talks as mic 2 comes back (louder, noisier): A\'s sentence stays on mic 1',
     s.finals.length >= 1 && s.finals.every((f) => f.mic === 0), s.finals.map((f) => `mic${f.mic + 1} at ${f.start.toFixed(1)} s`).join(' | '));
+
+  // Issue #46. With three mics the last word of a sentence ("curățenie.", "în octombrie.") reaches the two far mics
+  // only ~3 dB less clearly than the near one: the far mics' detector and gate keep it, the whole-sentence check lets it
+  // through (under half of "Mic separation"), and one word in common was too few for the duplicate check.
+  const lines = (r) => r.finals.map((f) => `mic${f.mic + 1} ${f.start.toFixed(1)}–${f.end.toFixed(1)} s: ${f.text}`).join(' | ');
+  const [mic3, far1] = twoMics(lead(A), quietMic, { bleedDb: 12 });
+  const [, far2] = twoMics(lead(A), quietMic, { bleedDb: 12, seed: 11 });
+  const lastWord = [1.5 + 5.45, 1.5 + 6]; // A's last word, in session seconds
+  s = await run(louder(far1, ...lastWord, 9), louder(far2, ...lastWord, 9), (n, seg) => (seg.mic === 2 ? SENTENCE : 'rare.'),
+    { margin: config.crosstalkDb, more: [mic3] });
+  t.check('UNIT-TAIL-01', 'three mics, only the person on mic 3 talks, mics 1 and 2 hear the last word 3 dB less clearly: no line on mics 1 and 2',
+    s.finals.some((f) => f.mic === 2 && f.text === SENTENCE) && s.finals.every((f) => f.mic === 2), lines(s));
+  // Issue #46. A stops, B on mic 2 goes on 0.3 s later, and mic 1 hears B's first second only 8 dB less clearly: the gate
+  // lets enough of it through to keep A's sentence going, and the model wrote B's words at the end of A's line.
+  const aEnd = 1.5 + 5.95; // A's speech ends here
+  const bStart = aEnd + 0.3; // B's starts 0.4 s into its clip
+  const [glued1, glued2] = twoMics(concat(silence(1.5), A.subarray(0, Math.round(5.95 * SR))), concat(silence(bStart - 0.4), B), { bleedDb: 12 });
+  s = await run(louder(glued1, bStart, bStart + 1.2, 4), glued2, (n, seg) => `fraza${n} mic${seg.mic + 1}`, { margin: config.crosstalkDb });
+  const first = s.finals.find((f) => f.mic === 0);
+  t.check('UNIT-TAIL-02', 'B goes on 0.3 s after A stops, mic 1 hears B\'s first second 8 dB less clearly: A\'s line ends before B starts',
+    first && first.end < bStart + 0.2 && s.finals.filter((f) => f.mic === 0).length === 1, lines(s));
+  // Issue #46: the cut must not take the speech of someone who goes on, softly (6 dB under B), while B talks.
+  const [soft1, soft2] = twoMics(lead(A.map((x) => x / 2)), concat(silence(4.5), B), { bleedDb: 12 });
+  s = await run(soft1, soft2, (n, seg) => `fraza${n} mic${seg.mic + 1}`, { margin: config.crosstalkDb });
+  const soft = s.finals.find((f) => f.mic === 0);
+  t.check('UNIT-TAIL-03', 'A talks 6 dB softer than B, who starts 3 s into A\'s sentence: A\'s line keeps all of A\'s speech',
+    soft && soft.end >= aEnd && s.finals.filter((f) => f.mic === 0).length === 1, lines(s));
 }
 
 // ---------- voice detectors are reused, not rebuilt (#4) ----------
