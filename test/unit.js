@@ -831,6 +831,128 @@ t.check('UNIT-CLOUD-01', 'a wrong key: the model is in error, saying ElevenLabs 
   }
 }
 
+// ---------- a sentence the model goes away under is sent again (#45) ----------
+// A stand-in model process (Node, an HTTP server like whisper-server) killed with SIGKILL while it transcribes the
+// first of three sentences: before the fix the first failed with "fetch failed" and the two queued behind it with
+// "Loading …" (or "fetch failed" too). Each answer names the process that gave it and the sentence's length.
+{
+  const keepKey = config.elevenlabs.apiKey;
+  config.elevenlabs.apiKey = 'stand-in'; // makes the cloud model count as installed; the engine is the stand-in below
+  const script = path.join(dir, 'fake-model-process.mjs');
+  fs.writeFileSync(script, `import http from 'node:http';
+http.createServer((req, res) => {
+  if (req.url === '/health') return res.end(JSON.stringify({ status: 'ok' }));
+  let bytes = 0;
+  req.on('data', (chunk) => (bytes += chunk.length));
+  req.on('end', () => setTimeout(() => res.end(JSON.stringify({ text: process.pid + ' ' + bytes / 4 })), 200));
+}).listen(Number(process.argv[2]), '127.0.0.1');
+`);
+  class FakeModelProcess extends SidecarEngine {
+    command(port) {
+      return { name: 'fake-model', bin: process.execPath, args: [script, String(port)], missing: 'fake program missing' };
+    }
+
+    async transcribe(samples) {
+      const res = await this.post('/inference', { body: Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength) });
+      return { text: JSON.parse(res.text).text };
+    }
+  }
+  const engines = [];
+  class Restarting extends Transcriber {
+    createEngine(model, onCrash) {
+      const engine = new FakeModelProcess({ onCrash });
+      engines.push(engine);
+      return engine;
+    }
+  }
+  const tr = new Restarting(structuredClone(config));
+  const logError = console.error;
+  console.error = () => {};
+  try {
+    await tr.select('elevenlabs-scribe-v2');
+    const first = engines[0].child?.pid;
+    const sentences = [1, 2, 3].map((k) => tr.transcribe(new Float32Array(k * 1000)));
+    await sleep(80); // the first sentence is on the model, the other two wait behind it
+    process.kill(first, 'SIGKILL');
+    const results = await Promise.allSettled(sentences);
+    const texts = results.map((x) => (x.status === 'fulfilled' ? x.value.text : `failed: ${x.reason.message}`));
+    const second = engines[1]?.child?.pid;
+    t.check('UNIT-ENG-02', 'the model process killed mid-sentence, two sentences waiting: it is restarted and all three are transcribed by the new process, none fails',
+      engines.length === 2 && tr.state === 'ready' && second && second !== first && texts.join() === [1000, 2000, 3000].map((n) => `${second} ${n}`).join() && tr.pending === 0,
+      `${engines.length} processes started (killed ${first}, then ${second}); ${tr.state}; ${texts.join(' | ')}`);
+  } finally {
+    console.error = logError;
+    await tr.shutdown();
+    config.elevenlabs.apiKey = keepKey;
+  }
+}
+
+// A switch with sentences waiting for the model (stand-in engines, 100 ms a sentence; a second stand-in model in the
+// list): before the fix the waiting sentences failed with "Loading …". Then the old model's process dies while the
+// switch waits for it: its sentences go to the new model. A sentence the model itself fails on is not sent again.
+{
+  const keepKey = config.elevenlabs.apiKey;
+  config.elevenlabs.apiKey = 'stand-in';
+  const standIn = { id: 'stand-in-model', label: 'Stand-in model', engine: 'elevenlabs', size: 'cloud', cloud: true };
+  MODELS.push(standIn);
+  const log = [];
+  let crash = false;
+  class Switching extends Transcriber {
+    createEngine(model, onCrash) {
+      const name = model === standIn ? 'B' : 'A';
+      return {
+        load: async () => { log.push(`load ${name}`); await sleep(50); },
+        unload: async () => { log.push(`unload ${name}`); },
+        kill: () => {},
+        transcribe: async (samples) => {
+          await sleep(100);
+          log.push(`${name}${samples.length}`);
+          if (crash && name === 'A') {
+            crash = false;
+            onCrash('stand-in crashed.'); // as a model process does: the crash is reported, then the request fails
+            throw new Error('fetch failed');
+          }
+          if (samples.length === 9) throw new Error('stand-in: this audio cannot be read');
+          return { text: `${name}${samples.length}` };
+        },
+      };
+    }
+  }
+  const run = async (crashing) => {
+    log.length = 0;
+    const tr = new Switching(structuredClone(config));
+    await tr.select('elevenlabs-scribe-v2');
+    const queued = [1, 2, 3].map((k) => tr.transcribe(new Float32Array(k)));
+    await sleep(20); // the first is on model A, the other two wait behind it
+    crash = crashing;
+    tr.select(standIn.id);
+    const later = [4, 5, 9].map((k) => tr.transcribe(new Float32Array(k)));
+    const results = await Promise.allSettled([...queued, ...later]);
+    const out = results.map((x) => (x.status === 'fulfilled' ? `${x.value.text} (${x.value.model === standIn.id ? 'B' : 'A'})` : `failed: ${x.reason.message}`));
+    await tr.shutdown();
+    return { out, log: [...log], state: tr.state, pending: tr.pending };
+  };
+  const logError = console.error;
+  console.error = () => {};
+  try {
+    const sw = await run(false);
+    t.check('UNIT-ENG-03', 'a switch with two sentences waiting: the old model transcribes the sentences queued before it, the new one those after it; none fails',
+      sw.out.slice(0, 5).join() === 'A1 (A),A2 (A),A3 (A),B4 (B),B5 (B)' && sw.log.slice(0, 7).join() === 'load A,A1,A2,A3,unload A,load B,B4' && sw.state === 'ready',
+      `${sw.out.slice(0, 5).join(', ')}; ${sw.log.join(', ')}`);
+    t.check('UNIT-ENG-03', 'a sentence the model itself fails on is not sent again: one try, its own error',
+      sw.out[5] === 'failed: stand-in: this audio cannot be read' && sw.log.filter((x) => x === 'B9').length === 1 && sw.pending === 0,
+      `${sw.out[5]}; tried ${sw.log.filter((x) => x === 'B9').length} time(s)`);
+    const died = await run(true);
+    t.check('UNIT-ENG-03', 'the old model\'s process dies during a switch: its sentence and the two waiting go to the new model, which is not reloaded; none fails',
+      died.out.slice(0, 5).join() === 'B1 (B),B2 (B),B3 (B),B4 (B),B5 (B)' && died.log.filter((x) => x.startsWith('load')).join() === 'load A,load B' && died.state === 'ready',
+      `${died.out.slice(0, 5).join(', ')}; ${died.log.join(', ')}`);
+  } finally {
+    console.error = logError;
+    MODELS.splice(MODELS.indexOf(standIn), 1);
+    config.elevenlabs.apiKey = keepKey;
+  }
+}
+
 // ---------- GPU first, CPU only as the fallback ----------
 // Every local model that can use the GPU is on an engine that tries the GPU first (stand-ins for the GPU: none in tests).
 {
