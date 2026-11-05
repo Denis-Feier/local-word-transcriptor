@@ -7,13 +7,11 @@
 import { app, BrowserWindow, session } from 'electron';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
-import http from 'node:http';
 import path from 'node:path';
-import { WebSocketServer } from 'ws';
 import { config } from '../../lib/config.js';
 import { MODELS, isInstalled, isAvailable } from '../../lib/models.js';
 import { TUNING, tuningFrom } from '../../lib/tuning.js';
-import { ROOT, SR, freePort, saveWav, scratch, silence, sleep, startServer, suite } from '../helpers.js';
+import { ROOT, SR, fakeServer, freePort, outOfPlace, saveWav, scratch, silence, sleep, startServer, suite } from '../helpers.js';
 import { SCRIPTS, Room, contentWords, judge, loopOffset, loopTruth, meeting, quantile, table, voices, windows } from '../meeting.js';
 
 const args = process.argv.slice(2);
@@ -133,32 +131,6 @@ function speakFor(m) {
 
 // ---------- PAGE: a page holding hours of transcript ----------
 
-/** A stand-in for server.js: serves the page and sends it whatever the test wants. */
-async function fakeServer() {
-  const routes = Object.fromEntries([...fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8').matchAll(/'(\/[\w.-]*)': \['([\w.-]+)', '([^']+)'\]/g)].map(([, route, file, type]) => [route, [file, type]]));
-  const server = http.createServer((req, res) => {
-    const entry = routes[new URL(req.url, 'http://x').pathname];
-    if (!entry) return res.writeHead(404).end();
-    res.writeHead(200, { 'Content-Type': entry[1] }).end(fs.readFileSync(path.join(ROOT, 'public', entry[0])));
-  });
-  const wss = new WebSocketServer({ server, path: '/ws' });
-  let client = null;
-  wss.on('connection', (ws) => {
-    client = ws;
-    const send = (msg) => ws.send(JSON.stringify(msg));
-    send({ type: 'models', active: 'fake', models: [{ id: 'fake', label: 'Fake model', engine: 'fake', size: '0 MB', download: '0 MB', notes: 'Stand-in for the stress test.', installed: true, progress: null }] });
-    send({ type: 'status', state: 'ready', message: 'Fake model ready', model: 'fake', detector: 'silero', language: 'ro' });
-    send({ type: 'tuning', values: tuningFrom(config), defaults: tuningFrom(config), ranges: TUNING });
-    send({ type: 'mics', max: 2 });
-  });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  return {
-    url: `http://127.0.0.1:${server.address().port}/`,
-    send: (msg) => client.send(JSON.stringify(msg)),
-    close: () => new Promise((resolve) => (wss.close(), server.close(resolve))),
-  };
-}
-
 /** n lines of a two-mic meeting from line `from` on, ~4.3 s each, a quarter overlapping the line before. */
 function fakeLines(from, n) {
   const bank = fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'meeting-ro.txt'), 'utf8').split('\n').filter((l) => l && !l.startsWith('#') && contentWords(l) >= 3);
@@ -186,7 +158,7 @@ const messages = (l) => {
 async function pageGroup() {
   const N = short ? 1000 : 5000;
   for (const f of ['a', 'b', 'c']) saveWav(path.join(SPEAKERS, `${f}.wav`), silence(1));
-  const fake = await fakeServer();
+  const fake = await fakeServer({ greet: [{ type: 'tuning', values: tuningFrom(config), defaults: tuningFrom(config), ranges: TUNING }] });
   const win = newWindow();
   try {
     await open(win, fake.url);
@@ -391,9 +363,11 @@ async function soak() {
     const lastIn = txt.some((l) => l.endsWith(lines.at(-1)?.text ?? '\u0000'));
     const differs = download.findIndex((l, i) => l !== txt[i]);
     const sorted = (x) => [...x].sort().join('\n');
-    const same = sorted(download) === sorted(txt); // the .txt is in the order lines were finished (§14.5 #9)
-    t.check('STRESS-SOAK-07', 'after Stop: the last sentence is in the .txt, Download has the same lines, no error in the console or on the page', lastIn && same && pageErrors.length === 0 && banner === 0,
-      `last line saved ${lastIn}; Download ${download.length} lines, .txt ${txt.length}, same lines ${same}, same order ${differs < 0}${differs < 0 ? '' : ` (from line ${differs + 1}: ${JSON.stringify(download[differs]?.slice(0, 40))} vs ${JSON.stringify(txt[differs]?.slice(0, 40))})`}; `
+    const same = sorted(download) === sorted(txt);
+    const moved = outOfPlace(download, txt); // both in speaking order since #7 and #50
+    t.check('STRESS-SOAK-07', 'after Stop: the last sentence is in the .txt, Download has the same lines in the same order, no error in the console or on the page',
+      lastIn && same && moved === 0 && pageErrors.length === 0 && banner === 0,
+      `last line saved ${lastIn}; Download ${download.length} lines, .txt ${txt.length}, same lines ${same}, ${moved} out of order${differs < 0 ? '' : ` (the first at line ${differs + 1}: ${JSON.stringify(download[differs]?.slice(0, 40))} vs ${JSON.stringify(txt[differs]?.slice(0, 40))})`}; `
       + `${pageErrors.length} console errors${pageErrors.length ? ` (${pageErrors.slice(0, 2).join(' | ').slice(0, 160)})` : ''}; error banner seen ${banner}×`);
     t.check('STRESS-SOAK-08', 'after the hours the page still says the model runs on the GPU (it never moved to the CPU)',
       /· ready on GPU$/.test(where.text) && /^Runs on GPU/.test(where.title) && !/could not/i.test(where.title), `status ${JSON.stringify(where.text)}, tooltip ${JSON.stringify(where.title)}`);

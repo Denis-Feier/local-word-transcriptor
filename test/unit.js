@@ -30,6 +30,7 @@ import { runModel, planStages, STAGES, CONDITIONS, SILENCE_INPUTS } from '../lib
 import { renderReport } from '../lib/benchmark/report.js';
 import { parseArgs } from '../scripts/benchmark-suite.js';
 import { createBacklog, lostNote } from '../public/backlog.js';
+import { spokenOrder } from '../public/order.js';
 import { SR, FIXTURE, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs, loadWav, saveWav } from './helpers.js';
 
 const t = suite('unit');
@@ -595,6 +596,56 @@ const so = await speakingOrder();
 t.check('UNIT-SESS-15', 'mic 2\'s short line is transcribed before mic 1\'s longer one that started earlier: the .txt still has them in speaking order (as the page\'s Download), and the page gets the short line at once',
   so.finals === 'mic2, mic1' && so.txt === so.spoken,
   `page got ${so.finals || 'nothing'}; .txt ${so.txt === so.spoken ? 'in speaking order' : JSON.stringify(so.txt)}`);
+
+// ---------- the page and the .txt in one order (#50; loudness detector, stand-in model) ----------
+// Mic 1 talks for 5.5 s with one short dip, longer than the longest sentence (5 s here): the session cuts it at the
+// dip, 3 s back, and the rest gets its id only then. Mic 2 started a short sentence after the dip but before the cut,
+// so it has the smaller id and the later start. The page (public/order.js, the rule app.js places lines with) and the
+// .txt must both put mic 1's rest first. Before the fix the page sorted by id: mic 2's line came first.
+async function splitOrder() {
+  const sent = [];
+  const out = scratch('order50');
+  const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy', maxSegmentSec: 5 } };
+  // No word in common: a line that shares words with one on the other mic at the same time is dropped as heard twice.
+  const said = (sec) => (sec < 1.5 ? 'cifrele sunt bune' : sec < 3 ? 'vreau să subliniez' : 'că toate rezultatele contează');
+  const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null, transcribe: async (samples) => ({ text: said(samples.length / SR), model: 'stub', ms: 1 }) };
+  const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
+  const dip = (sec) => Float32Array.from({ length: Math.round(sec * SR) }, (_, i) => 0.0001 * Math.sin(i * 1.7));
+  const mics = [concat(quiet(1), loud(2), dip(0.3), loud(3.2), quiet(3.5)), concat(quiet(4), loud(0.8), quiet(5.2))];
+  for (let i = 0; i < mics[0].length; i += 1600) {
+    const frame = new Float32Array(3200);
+    mics.forEach((m, mic) => frame.set(m.subarray(i, i + 1600), mic * 1600));
+    session.audio(frame, 2);
+  }
+  session.flush();
+  await sleep(300);
+  session.close();
+  const finals = sent.filter((m) => m.type === 'final' && m.text);
+  const file = sent.find((m) => m.type === 'file' && m.kind === 'text');
+  const txt = file ? fs.readFileSync(path.resolve(file.path), 'utf8') : '';
+  fs.rmSync(out, { recursive: true, force: true });
+  const line = (f) => `[${fmtTime(f.start)}] Mic ${f.mic + 1}: ${f.text}\n`;
+  const lines = (sort) => [...finals].sort(sort).map(line).join('');
+  return {
+    finals: finals.map((f) => `#${f.id} mic ${f.mic + 1} ${f.start.toFixed(2)}–${f.end.toFixed(2)} s`).join(', '),
+    page: lines(spokenOrder), // what the page shows and downloads
+    txt,
+    byStart: lines((a, b) => a.start - b.start),
+    byId: lines((a, b) => a.id - b.id), // the page before the fix
+  };
+}
+const sp = await splitOrder();
+t.check('UNIT-ORDER-01', 'a sentence too long for the model is cut 3 s back, after mic 2 started a short one: the page\'s order and the .txt both put the rest of mic 1\'s sentence first, in speaking order (by id, the page\'s order before the fix, mic 2 came first)',
+  sp.page === sp.txt && sp.txt === sp.byStart && sp.byId !== sp.byStart,
+  `${sp.finals}; page ${sp.page === sp.byStart ? 'in speaking order' : JSON.stringify(sp.page)}; .txt ${sp.txt === sp.byStart ? 'in speaking order' : JSON.stringify(sp.txt)}; by id ${sp.byId === sp.byStart ? 'the same (the case did not happen)' : 'another order'}`);
+const rule = [
+  { connection: 1, start: 0.5, id: 1 }, // a later connection: ids and, when it could not carry on, times restart
+  { connection: 0, start: 3.8, id: 2 },
+  { connection: 0, start: 3.3, id: 3 }, // started earlier, id given later
+  { connection: 0, start: 3.8, id: 4 }, // the same moment as #2
+  { start: 0.8, id: 5 }, // the .txt's lines have no connection: the first
+].sort(spokenOrder).map((l) => `${l.connection ?? '-'}:${l.id}`).join(' ');
+t.check('UNIT-ORDER-02', 'the order rule (public/order.js): by connection, then by start, then by id', rule === '-:5 0:3 0:2 0:4 1:1', rule);
 
 // ---------- recordings that start in the same second (#2; loudness detector: deterministic) ----------
 // File names have whole seconds. Two tabs, or the desktop app and `npm start` (they share transcripts/), can start
