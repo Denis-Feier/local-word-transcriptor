@@ -1052,7 +1052,8 @@ function louder(x, from, to, gainDb) {
 
 if (!silero) {
   for (const id of ['UNIT-GATE-01', 'UNIT-GATE-02', 'UNIT-GATE-03', 'UNIT-GATE-04', 'UNIT-GATE-05', 'UNIT-GATE-06', 'UNIT-GATE-07',
-    'UNIT-SESS-01', 'UNIT-SESS-02', 'UNIT-SESS-03', 'UNIT-SESS-04', 'UNIT-SESS-05', 'UNIT-SESS-16', 'UNIT-SESS-17', 'UNIT-SESS-18']) {
+    'UNIT-SESS-01', 'UNIT-SESS-02', 'UNIT-SESS-03', 'UNIT-SESS-04', 'UNIT-SESS-05', 'UNIT-SESS-16', 'UNIT-SESS-17', 'UNIT-SESS-18',
+    'UNIT-SESS-24']) {
     t.skip(id, 'crosstalk / two-mic session', `no ${config.vad.sileroModel} (npm run setup)`);
   }
 } else {
@@ -1152,6 +1153,48 @@ if (!silero) {
   s = await run(mic1, mic2, () => 'munții carpați frumoși astăzi', { margin: config.crosstalkDb, mics: (sec) => (sec >= 3 && sec < 5 ? 1 : 2) });
   t.check('UNIT-SESS-18', 'mics 2 -> 1 -> 2, A talks as mic 2 comes back (louder, noisier): A\'s sentence stays on mic 1',
     s.finals.length >= 1 && s.finals.every((f) => f.mic === 0), s.finals.map((f) => `mic${f.mic + 1} at ${f.start.toFixed(1)} s`).join(' | '));
+
+  // Issue #44. The connection drops after 5 s of a two-mic meeting and the page resumes the transcript (D2); A talks
+  // from the new connection's first moment, mic 2 louder and noisier. The new connection's gate must start with the
+  // noise levels the old one learned, or (as in UNIT-GATE-05) the louder mic wins until the next long pause.
+  const midMeeting = async () => {
+    const out = scratch('resume-gate');
+    const conf = { ...structuredClone(config), transcriptsDir: out };
+    const stub = { supportsPrompt: false, avgMs: 10, busy: false, tryTranscribe: () => null,
+      transcribe: async () => ({ text: 'munții carpați frumoși astăzi', model: 'stub', ms: 1 }) };
+    const [m1, m2] = twoMics(concat(silence(5), A), silence(5 + A.length / SR), { bleedDb: 6, lagMs: 150, gain2Db: 12, noise2: -50 });
+    const cut = 5 * SR;
+    const connect = async (from, to, resume) => {
+      const sent = [];
+      const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
+      session.setOptions({ saveAudio: true });
+      if (resume) session.resume(resume, []);
+      const floors = session.floors.map((f) => f.learned); // what the gate starts with
+      for (let i = from; i < to; i += 1600) {
+        const len = Math.min(1600, to - i);
+        const frame = new Float32Array(2 * len);
+        frame.set(m1.subarray(i, i + len));
+        frame.set(m2.subarray(i, i + len), len);
+        session.audio(frame, 2);
+      }
+      if (resume) {
+        session.flush(); // Stop, so the last sentence reaches the page before the connection closes
+        await sleep(200);
+      }
+      session.close(); // the first connection just drops
+      return { floors, name: sent.find((m) => m.type === 'file')?.name, finals: sent.filter((m) => m.type === 'final' && m.text) };
+    };
+    const one = await connect(0, cut);
+    const two = await connect(cut, m1.length, { name: one.name, samples: cut });
+    fs.rmSync(out, { recursive: true, force: true });
+    return { one, two };
+  };
+  const mid = await midMeeting();
+  t.check('UNIT-SESS-24', 'a reconnect mid-meeting, A talks at once (mic 2 louder, noisier): the resumed gate starts with both mics\' noise levels and A\'s sentence stays on mic 1',
+    mid.two.name === mid.one.name && mid.two.floors.length === 2 && mid.two.floors.every(Boolean)
+      && mid.two.finals.length >= 1 && mid.two.finals.every((f) => f.mic === 0),
+    `noise levels at the start: ${mid.two.floors.length ? mid.two.floors.map((l, mic) => `mic ${mic + 1} ${l ? 'kept' : 'not measured'}`).join(', ') : 'none'}; `
+      + `${mid.two.finals.map((f) => `mic${f.mic + 1} at ${f.start.toFixed(1)} s`).join(' | ') || 'no lines'}${mid.two.name === mid.one.name ? '' : '; a new transcript'}`);
 }
 
 // ---------- voice detectors are reused, not rebuilt (#4) ----------
