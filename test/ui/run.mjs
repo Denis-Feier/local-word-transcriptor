@@ -6,7 +6,7 @@
 import { app, BrowserWindow, session, nativeTheme } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT, SR, FIXTURE, startServer, speakers, loadWav, saveWav, scratch, sleep, suite, fakeElevenLabs } from '../helpers.js';
+import { ROOT, SR, FIXTURE, startServer, speakers, loadWav, saveWav, scratch, sleep, suite, fakeElevenLabs, fakeServer } from '../helpers.js';
 
 const OUT = process.env.UI_OUT ?? scratch('ui');
 fs.mkdirSync(OUT, { recursive: true });
@@ -583,6 +583,39 @@ app.whenReady().then(async () => {
       s.models.some((m) => /ElevenLabs/.test(m)) && onCloud.cloud && /internet/.test(onCloud.text) && onCloud.color !== onLocal.color
         && live.length > 0 && cloudFinals.length > 0 && cloudFinals.every((x) => /^propoziția \d+$/.test(x)) && !onLocal.cloud && /No audio leaves/.test(onLocal.text),
       `footer: "${onCloud.text}"; live ${live.join(' | ')}; finals ${cloudFinals.join(' | ')}; after switching: "${onLocal.text}"`);
+
+    // ---------- speaking order, from a stand-in server (#50) ----------
+    // The rest of a sentence cut for being too long (#7) starts before the sentence the other mic started meanwhile,
+    // but gets its id after it, and its live line comes later. The page, Copy and Download put it first, as the .txt
+    // does (the same rule, public/order.js). Before the fix they went by id: Mic 2's line came first.
+    const stand = await fakeServer();
+    fakes.push(stand);
+    await win.loadURL(stand.url);
+    await js('localStorage.clear(); sessionStorage.clear()');
+    await win.loadURL(stand.url);
+    await waitFor((x) => x.status === 'ready' && x.maxMics >= 2, 10000);
+    await pick(1, 'mic-b'); // two mics: lines say which mic heard them
+    const said = [
+      { id: 5, mic: 0, start: 1805.216, end: 1810.624, text: 'Am terminat capitolul doi.' },
+      { id: 6, mic: 1, start: 1813.024, end: 1814.112, text: 'Cifrele bine.' },
+      { id: 7, mic: 0, start: 1811.008, end: 1816.384, text: 'Vreau să subliniez că toate merg.' },
+    ];
+    for (const l of said) {
+      stand.send({ type: 'vad', mic: l.mic, speaking: true, id: l.id });
+      stand.send({ type: 'partial', mic: l.mic, id: l.id, start: l.start, text: l.text.split(' ')[0] });
+    }
+    for (const l of said) stand.send({ type: 'final', ...l, model: 'fake', ms: 30 });
+    s = await waitFor((x) => finals(x).length === 3, 5000);
+    await click('copy');
+    await click('download');
+    await sleep(300);
+    const spoken = ['[30:05] Mic 1: Am terminat capitolul doi.', '[30:11] Mic 1: Vreau să subliniez că toate merg.', '[30:13] Mic 2: Cifrele bine.'];
+    const onPage = finals(s).map((l) => `${l.who}: ${l.text}`);
+    const copied = (await js('window.__clipboard ?? ""')).split('\n');
+    const downloaded = (await js('window.__download ?? ""')).trim().split('\n');
+    t.check('UI-TX-06', 'the rest of a cut sentence, which started first but got its id and live line later: first on the page, in Copy and in Download (speaking order, as the .txt)',
+      downloaded.join('\n') === spoken.join('\n') && copied.join('\n') === spoken.map((l) => l.slice(8)).join('\n') && onPage.join('\n') === copied.join('\n'),
+      `Download ${JSON.stringify(downloaded)}; on the page ${onPage.map((l) => l.slice(0, 12)).join(' | ')}; Copy ${copied.map((l) => l.slice(0, 12)).join(' | ')}`);
 
     t.check('UI-LOAD-02', 'no errors in the page console', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
   } catch (err) {

@@ -3,6 +3,7 @@ import { createSettings } from '/settings.js';
 import { listInputs, openCapture } from '/mics.js';
 import { canChooseOutput, listOutputs, openSpeaker } from '/speaker.js';
 import { createBacklog, lostNote } from '/backlog.js';
+import { spokenOrder } from '/order.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -78,8 +79,8 @@ let channel = null;
 const captionWindows = new Set(); // the caption windows (/?display) open in this browser, by their id
 const files = {};
 // Every message touches only the newest lines, so its cost stays the same however long the meeting gets.
-const lines = new Map(); // generation * 1e6 + segment id -> { el, text, start, end, mic, labeled, final }
-const order = []; // the keys of `lines` in transcript order (ascending); new lines are almost always last
+const lines = new Map(); // generation * 1e6 + segment id -> { el, connection, id, text, start, end, mic, labeled, final }
+const order = []; // the keys of `lines` in speaking order, as in the .txt (order.js); new lines are almost always last
 const live = new Set(); // keys of the lines not final yet (being spoken or transcribed): a few at a time
 let spoken = { connection: 0, lines: [], longest: 0 }; // this connection's final lines with a mic label, by start, for ⇄
 
@@ -589,10 +590,11 @@ function upsertLine(key, { text, start, end, mic = 0, model, ms }, final) {
       el.dataset.mic = mic + 1;
       el.querySelector('.who').textContent = micName(mic);
     }
-    line = { el, mic, labeled, final: false };
+    // Where the line goes depends on when its sentence started: known from its first message, and it never changes.
+    line = { el, connection: Math.floor(key / 1e6), id: key % 1e6, start, mic, labeled, final: false };
     lines.set(key, line);
     live.add(key);
-    place(key, el);
+    place(key, line);
   }
   if (line.final && !final) return;
   const finished = final && !line.final;
@@ -610,10 +612,14 @@ function upsertLine(key, { text, start, end, mic = 0, model, ms }, final) {
   render();
 }
 
-/** Put a new line in order: a live guess for a newer segment can arrive before the older one's. */
-function place(key, el) {
+/**
+ * Put a new line in speaking order (order.js): a live guess for a newer sentence can arrive before the older one's,
+ * and the rest of a sentence cut for being too long starts before a sentence another mic started meanwhile (#50).
+ */
+function place(key, line) {
+  const { el } = line;
   let i = order.length;
-  while (i > 0 && order[i - 1] > key) i--; // the newest lines are last, so this is a step or two at most
+  while (i > 0 && spokenOrder(line, lines.get(order[i - 1])) < 0) i--; // the newest lines are last: a step or two
   order.splice(i, 0, key);
   const next = lines.get(order[i + 1]);
   if (next) {

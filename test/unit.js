@@ -30,6 +30,7 @@ import { runModel, planStages, STAGES, CONDITIONS, SILENCE_INPUTS } from '../lib
 import { renderReport } from '../lib/benchmark/report.js';
 import { parseArgs } from '../scripts/benchmark-suite.js';
 import { createBacklog, lostNote } from '../public/backlog.js';
+import { spokenOrder } from '../public/order.js';
 import { SR, FIXTURE, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs, loadWav, saveWav } from './helpers.js';
 
 const t = suite('unit');
@@ -596,6 +597,56 @@ t.check('UNIT-SESS-15', 'mic 2\'s short line is transcribed before mic 1\'s long
   so.finals === 'mic2, mic1' && so.txt === so.spoken,
   `page got ${so.finals || 'nothing'}; .txt ${so.txt === so.spoken ? 'in speaking order' : JSON.stringify(so.txt)}`);
 
+// ---------- the page and the .txt in one order (#50; loudness detector, stand-in model) ----------
+// Mic 1 talks for 5.5 s with one short dip, longer than the longest sentence (5 s here): the session cuts it at the
+// dip, 3 s back, and the rest gets its id only then. Mic 2 started a short sentence after the dip but before the cut,
+// so it has the smaller id and the later start. The page (public/order.js, the rule app.js places lines with) and the
+// .txt must both put mic 1's rest first. Before the fix the page sorted by id: mic 2's line came first.
+async function splitOrder() {
+  const sent = [];
+  const out = scratch('order50');
+  const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy', maxSegmentSec: 5 } };
+  // No word in common: a line that shares words with one on the other mic at the same time is dropped as heard twice.
+  const said = (sec) => (sec < 1.5 ? 'cifrele sunt bune' : sec < 3 ? 'vreau să subliniez' : 'că toate rezultatele contează');
+  const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null, transcribe: async (samples) => ({ text: said(samples.length / SR), model: 'stub', ms: 1 }) };
+  const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
+  const dip = (sec) => Float32Array.from({ length: Math.round(sec * SR) }, (_, i) => 0.0001 * Math.sin(i * 1.7));
+  const mics = [concat(quiet(1), loud(2), dip(0.3), loud(3.2), quiet(3.5)), concat(quiet(4), loud(0.8), quiet(5.2))];
+  for (let i = 0; i < mics[0].length; i += 1600) {
+    const frame = new Float32Array(3200);
+    mics.forEach((m, mic) => frame.set(m.subarray(i, i + 1600), mic * 1600));
+    session.audio(frame, 2);
+  }
+  session.flush();
+  await sleep(300);
+  session.close();
+  const finals = sent.filter((m) => m.type === 'final' && m.text);
+  const file = sent.find((m) => m.type === 'file' && m.kind === 'text');
+  const txt = file ? fs.readFileSync(path.resolve(file.path), 'utf8') : '';
+  fs.rmSync(out, { recursive: true, force: true });
+  const line = (f) => `[${fmtTime(f.start)}] Mic ${f.mic + 1}: ${f.text}\n`;
+  const lines = (sort) => [...finals].sort(sort).map(line).join('');
+  return {
+    finals: finals.map((f) => `#${f.id} mic ${f.mic + 1} ${f.start.toFixed(2)}–${f.end.toFixed(2)} s`).join(', '),
+    page: lines(spokenOrder), // what the page shows and downloads
+    txt,
+    byStart: lines((a, b) => a.start - b.start),
+    byId: lines((a, b) => a.id - b.id), // the page before the fix
+  };
+}
+const sp = await splitOrder();
+t.check('UNIT-ORDER-01', 'a sentence too long for the model is cut 3 s back, after mic 2 started a short one: the page\'s order and the .txt both put the rest of mic 1\'s sentence first, in speaking order (by id, the page\'s order before the fix, mic 2 came first)',
+  sp.page === sp.txt && sp.txt === sp.byStart && sp.byId !== sp.byStart,
+  `${sp.finals}; page ${sp.page === sp.byStart ? 'in speaking order' : JSON.stringify(sp.page)}; .txt ${sp.txt === sp.byStart ? 'in speaking order' : JSON.stringify(sp.txt)}; by id ${sp.byId === sp.byStart ? 'the same (the case did not happen)' : 'another order'}`);
+const rule = [
+  { connection: 1, start: 0.5, id: 1 }, // a later connection: ids and, when it could not carry on, times restart
+  { connection: 0, start: 3.8, id: 2 },
+  { connection: 0, start: 3.3, id: 3 }, // started earlier, id given later
+  { connection: 0, start: 3.8, id: 4 }, // the same moment as #2
+  { start: 0.8, id: 5 }, // the .txt's lines have no connection: the first
+].sort(spokenOrder).map((l) => `${l.connection ?? '-'}:${l.id}`).join(' ');
+t.check('UNIT-ORDER-02', 'the order rule (public/order.js): by connection, then by start, then by id', rule === '-:5 0:3 0:2 0:4 1:1', rule);
+
 // ---------- recordings that start in the same second (#2; loudness detector: deterministic) ----------
 // File names have whole seconds. Two tabs, or the desktop app and `npm start` (they share transcripts/), can start
 // in the same second; so can a Clear, and the clock going back an hour when summer time ends.
@@ -831,6 +882,128 @@ t.check('UNIT-CLOUD-01', 'a wrong key: the model is in error, saying ElevenLabs 
   }
 }
 
+// ---------- a sentence the model goes away under is sent again (#45) ----------
+// A stand-in model process (Node, an HTTP server like whisper-server) killed with SIGKILL while it transcribes the
+// first of three sentences: before the fix the first failed with "fetch failed" and the two queued behind it with
+// "Loading …" (or "fetch failed" too). Each answer names the process that gave it and the sentence's length.
+{
+  const keepKey = config.elevenlabs.apiKey;
+  config.elevenlabs.apiKey = 'stand-in'; // makes the cloud model count as installed; the engine is the stand-in below
+  const script = path.join(dir, 'fake-model-process.mjs');
+  fs.writeFileSync(script, `import http from 'node:http';
+http.createServer((req, res) => {
+  if (req.url === '/health') return res.end(JSON.stringify({ status: 'ok' }));
+  let bytes = 0;
+  req.on('data', (chunk) => (bytes += chunk.length));
+  req.on('end', () => setTimeout(() => res.end(JSON.stringify({ text: process.pid + ' ' + bytes / 4 })), 200));
+}).listen(Number(process.argv[2]), '127.0.0.1');
+`);
+  class FakeModelProcess extends SidecarEngine {
+    command(port) {
+      return { name: 'fake-model', bin: process.execPath, args: [script, String(port)], missing: 'fake program missing' };
+    }
+
+    async transcribe(samples) {
+      const res = await this.post('/inference', { body: Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength) });
+      return { text: JSON.parse(res.text).text };
+    }
+  }
+  const engines = [];
+  class Restarting extends Transcriber {
+    createEngine(model, onCrash) {
+      const engine = new FakeModelProcess({ onCrash });
+      engines.push(engine);
+      return engine;
+    }
+  }
+  const tr = new Restarting(structuredClone(config));
+  const logError = console.error;
+  console.error = () => {};
+  try {
+    await tr.select('elevenlabs-scribe-v2');
+    const first = engines[0].child?.pid;
+    const sentences = [1, 2, 3].map((k) => tr.transcribe(new Float32Array(k * 1000)));
+    await sleep(80); // the first sentence is on the model, the other two wait behind it
+    process.kill(first, 'SIGKILL');
+    const results = await Promise.allSettled(sentences);
+    const texts = results.map((x) => (x.status === 'fulfilled' ? x.value.text : `failed: ${x.reason.message}`));
+    const second = engines[1]?.child?.pid;
+    t.check('UNIT-ENG-02', 'the model process killed mid-sentence, two sentences waiting: it is restarted and all three are transcribed by the new process, none fails',
+      engines.length === 2 && tr.state === 'ready' && second && second !== first && texts.join() === [1000, 2000, 3000].map((n) => `${second} ${n}`).join() && tr.pending === 0,
+      `${engines.length} processes started (killed ${first}, then ${second}); ${tr.state}; ${texts.join(' | ')}`);
+  } finally {
+    console.error = logError;
+    await tr.shutdown();
+    config.elevenlabs.apiKey = keepKey;
+  }
+}
+
+// A switch with sentences waiting for the model (stand-in engines, 100 ms a sentence; a second stand-in model in the
+// list): before the fix the waiting sentences failed with "Loading …". Then the old model's process dies while the
+// switch waits for it: its sentences go to the new model. A sentence the model itself fails on is not sent again.
+{
+  const keepKey = config.elevenlabs.apiKey;
+  config.elevenlabs.apiKey = 'stand-in';
+  const standIn = { id: 'stand-in-model', label: 'Stand-in model', engine: 'elevenlabs', size: 'cloud', cloud: true };
+  MODELS.push(standIn);
+  const log = [];
+  let crash = false;
+  class Switching extends Transcriber {
+    createEngine(model, onCrash) {
+      const name = model === standIn ? 'B' : 'A';
+      return {
+        load: async () => { log.push(`load ${name}`); await sleep(50); },
+        unload: async () => { log.push(`unload ${name}`); },
+        kill: () => {},
+        transcribe: async (samples) => {
+          await sleep(100);
+          log.push(`${name}${samples.length}`);
+          if (crash && name === 'A') {
+            crash = false;
+            onCrash('stand-in crashed.'); // as a model process does: the crash is reported, then the request fails
+            throw new Error('fetch failed');
+          }
+          if (samples.length === 9) throw new Error('stand-in: this audio cannot be read');
+          return { text: `${name}${samples.length}` };
+        },
+      };
+    }
+  }
+  const run = async (crashing) => {
+    log.length = 0;
+    const tr = new Switching(structuredClone(config));
+    await tr.select('elevenlabs-scribe-v2');
+    const queued = [1, 2, 3].map((k) => tr.transcribe(new Float32Array(k)));
+    await sleep(20); // the first is on model A, the other two wait behind it
+    crash = crashing;
+    tr.select(standIn.id);
+    const later = [4, 5, 9].map((k) => tr.transcribe(new Float32Array(k)));
+    const results = await Promise.allSettled([...queued, ...later]);
+    const out = results.map((x) => (x.status === 'fulfilled' ? `${x.value.text} (${x.value.model === standIn.id ? 'B' : 'A'})` : `failed: ${x.reason.message}`));
+    await tr.shutdown();
+    return { out, log: [...log], state: tr.state, pending: tr.pending };
+  };
+  const logError = console.error;
+  console.error = () => {};
+  try {
+    const sw = await run(false);
+    t.check('UNIT-ENG-03', 'a switch with two sentences waiting: the old model transcribes the sentences queued before it, the new one those after it; none fails',
+      sw.out.slice(0, 5).join() === 'A1 (A),A2 (A),A3 (A),B4 (B),B5 (B)' && sw.log.slice(0, 7).join() === 'load A,A1,A2,A3,unload A,load B,B4' && sw.state === 'ready',
+      `${sw.out.slice(0, 5).join(', ')}; ${sw.log.join(', ')}`);
+    t.check('UNIT-ENG-03', 'a sentence the model itself fails on is not sent again: one try, its own error',
+      sw.out[5] === 'failed: stand-in: this audio cannot be read' && sw.log.filter((x) => x === 'B9').length === 1 && sw.pending === 0,
+      `${sw.out[5]}; tried ${sw.log.filter((x) => x === 'B9').length} time(s)`);
+    const died = await run(true);
+    t.check('UNIT-ENG-03', 'the old model\'s process dies during a switch: its sentence and the two waiting go to the new model, which is not reloaded; none fails',
+      died.out.slice(0, 5).join() === 'B1 (B),B2 (B),B3 (B),B4 (B),B5 (B)' && died.log.filter((x) => x.startsWith('load')).join() === 'load A,load B' && died.state === 'ready',
+      `${died.out.slice(0, 5).join(', ')}; ${died.log.join(', ')}`);
+  } finally {
+    console.error = logError;
+    MODELS.splice(MODELS.indexOf(standIn), 1);
+    config.elevenlabs.apiKey = keepKey;
+  }
+}
+
 // ---------- GPU first, CPU only as the fallback ----------
 // Every local model that can use the GPU is on an engine that tries the GPU first (stand-ins for the GPU: none in tests).
 {
@@ -1053,7 +1226,7 @@ function louder(x, from, to, gainDb) {
 if (!silero) {
   for (const id of ['UNIT-GATE-01', 'UNIT-GATE-02', 'UNIT-GATE-03', 'UNIT-GATE-04', 'UNIT-GATE-05', 'UNIT-GATE-06', 'UNIT-GATE-07',
     'UNIT-SESS-01', 'UNIT-SESS-02', 'UNIT-SESS-03', 'UNIT-SESS-04', 'UNIT-SESS-05', 'UNIT-SESS-16', 'UNIT-SESS-17', 'UNIT-SESS-18',
-    'UNIT-WAIT-01', 'UNIT-WAIT-02', 'UNIT-WAIT-03']) {
+    'UNIT-SESS-24', 'UNIT-WAIT-01', 'UNIT-WAIT-02', 'UNIT-WAIT-03']) {
     t.skip(id, 'crosstalk / two-mic session', `no ${config.vad.sileroModel} (npm run setup)`);
   }
 } else {
@@ -1154,6 +1327,47 @@ if (!silero) {
   t.check('UNIT-SESS-18', 'mics 2 -> 1 -> 2, A talks as mic 2 comes back (louder, noisier): A\'s sentence stays on mic 1',
     s.finals.length >= 1 && s.finals.every((f) => f.mic === 0), s.finals.map((f) => `mic${f.mic + 1} at ${f.start.toFixed(1)} s`).join(' | '));
 
+  // Issue #44. The connection drops after 5 s of a two-mic meeting and the page resumes the transcript (D2); A talks
+  // from the new connection's first moment, mic 2 louder and noisier. The new connection's gate must start with the
+  // noise levels the old one learned, or (as in UNIT-GATE-05) the louder mic wins until the next long pause.
+  const midMeeting = async () => {
+    const out = scratch('resume-gate');
+    const conf = { ...structuredClone(config), transcriptsDir: out };
+    const stub = { supportsPrompt: false, avgMs: 10, busy: false, tryTranscribe: () => null,
+      transcribe: async () => ({ text: 'munții carpați frumoși astăzi', model: 'stub', ms: 1 }) };
+    const [m1, m2] = twoMics(concat(silence(5), A), silence(5 + A.length / SR), { bleedDb: 6, lagMs: 150, gain2Db: 12, noise2: -50 });
+    const cut = 5 * SR;
+    const connect = async (from, to, resume) => {
+      const sent = [];
+      const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
+      session.setOptions({ saveAudio: true });
+      if (resume) session.resume(resume, []);
+      const floors = session.floors.map((f) => f.learned); // what the gate starts with
+      for (let i = from; i < to; i += 1600) {
+        const len = Math.min(1600, to - i);
+        const frame = new Float32Array(2 * len);
+        frame.set(m1.subarray(i, i + len));
+        frame.set(m2.subarray(i, i + len), len);
+        session.audio(frame, 2);
+      }
+      if (resume) {
+        session.flush(); // Stop, so the last sentence reaches the page before the connection closes
+        await sleep(200);
+      }
+      session.close(); // the first connection just drops
+      return { floors, name: sent.find((m) => m.type === 'file')?.name, finals: sent.filter((m) => m.type === 'final' && m.text) };
+    };
+    const one = await connect(0, cut);
+    const two = await connect(cut, m1.length, { name: one.name, samples: cut });
+    fs.rmSync(out, { recursive: true, force: true });
+    return { one, two };
+  };
+  const mid = await midMeeting();
+  t.check('UNIT-SESS-24', 'a reconnect mid-meeting, A talks at once (mic 2 louder, noisier): the resumed gate starts with both mics\' noise levels and A\'s sentence stays on mic 1',
+    mid.two.name === mid.one.name && mid.two.floors.length === 2 && mid.two.floors.every(Boolean)
+      && mid.two.finals.length >= 1 && mid.two.finals.every((f) => f.mic === 0),
+    `noise levels at the start: ${mid.two.floors.length ? mid.two.floors.map((l, mic) => `mic ${mic + 1} ${l ? 'kept' : 'not measured'}`).join(', ') : 'none'}; `
+      + `${mid.two.finals.map((f) => `mic${f.mic + 1} at ${f.start.toFixed(1)} s`).join(' | ') || 'no lines'}${mid.two.name === mid.one.name ? '' : '; a new transcript'}`);
   // Issue #47. A line waits for another mic's overlapping sentence only while that sentence could still show it to be a
   // copy (D5, #6). The stand-in model answers between two chunks, as a fast model in real time; `at` is how many
   // seconds of audio were sent when each line arrived. A says one sentence; its words are 1.5–7.5 s.
