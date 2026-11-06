@@ -227,6 +227,14 @@ constructor, carry a declared type, or the checker adds `undefined` to them. `No
 with `>=` and relies on undefined comparing false; a `number` cast with a comment keeps that. The models catalogue
 typed as `Model[]` without a change, and so did `Readable.fromWeb(res.body)` once told the two stream types are one.
 Full tier: 236 / 0 / 5 / 0. After N8 every file is checked under
+
+What happened in N3 (2026-11-06, `ts/2-n3`): the five engines and the transcriber. The engines' `Object.assign(this,
+{ … })` shorthands became plain `this.x = x` assignments, which is the only way the checker learns a class's fields.
+The in-process engine types what it needs from a loaded model (`LoadedModel`), so transcribe.cpp's `TranscribeModel`
+and the tests' stand-ins both fit; the cloud engine takes its connection and query types from the SDK's client
+(`Awaited<ReturnType<…connect>>`), and its two private resolver fields start as no-ops because the checker cannot see
+that a Promise executor runs at once. `clearTimeout(x)` on a `Timeout | null` field became `clearTimeout(x ??
+undefined)`, Node's types taking no null. Full tier: 236 / 0 / 5 / 0.
 `strict`, and the only `any` left are the ones written on purpose with a reason.
 
 ## 6. Phase 3 — the server side becomes `.ts`
@@ -323,7 +331,8 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 | Phase 1 | `ts/1-types` | done, awaiting merge | 2026-11-06 | seven type files; both projects green; nothing imports them yet |
 | Phase 2 N1 | `ts/2-n1` | done, awaiting merge | 2026-11-06 | ten files; both projects green; standard tier 216 / 0 / 2 / 0 |
 | Phase 2 N2 | `ts/2-n2` | done, awaiting merge | 2026-11-06 | six files; full tier 236 / 0 / 5 / 0 |
-| Phase 2 N3 … N8, B1 … B3 | `ts/2-<batch>` | not started | | |
+| Phase 2 N3 | `ts/2-n3` | done, awaiting merge | 2026-11-06 | six files; full tier 236 / 0 / 5 / 0 |
+| Phase 2 N4 … N8, B1 … B3 | `ts/2-<batch>` | drafted in the worktree, each waits for its gate | | |
 | Phase 3 N1 … N7 | `ts/3-<batch>` | not started | | E1 decides `desktop/main.ts` |
 | Phase 4 | `ts/4-web` | not started | | D2 confirmed? |
 | Phase 5 | `ts/5-tighten` | not started | | |
