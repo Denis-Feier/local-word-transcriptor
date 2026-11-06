@@ -4,6 +4,13 @@ import type { ClientMessage, Spoken, StageSnapshot, TuningMessage } from './prot
 import type { DetectorName } from './audio.ts';
 
 export type { Backlog, BacklogTaken } from './audio.ts';
+
+declare global {
+  interface AudioContext {
+    /** Chromium's choice of audio output (speaker.js); the page checks for it first (`canChooseOutput`). */
+    setSinkId(sinkId: string | { type: 'none' }): Promise<void>;
+  }
+}
 import type { TranscriberState } from './engine.ts';
 
 export type { CaptionRow, Spoken, StageSnapshot } from './protocol.ts';
