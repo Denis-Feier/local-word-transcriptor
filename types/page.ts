@@ -1,10 +1,10 @@
 // The page's shapes (public/*.js): the projector view, the settings panel, mics, speaker, backlog and transcript lines.
 // Web project only (tsconfig.web.json): these use the DOM's types. Phase 1 of docs/typescript-migration.md.
-import type { ClientMessage, StageSnapshot, TuningMessage } from './protocol.ts';
+import type { ClientMessage, Spoken, StageSnapshot, TuningMessage } from './protocol.ts';
 import type { DetectorName } from './audio.ts';
 import type { TranscriberState } from './engine.ts';
 
-export type { CaptionRow, StageSnapshot } from './protocol.ts';
+export type { CaptionRow, Spoken, StageSnapshot } from './protocol.ts';
 
 // ---------- projector view (stage.js) ----------
 
@@ -157,14 +157,6 @@ export interface Backlog {
 }
 
 // ---------- transcript (app.js, order.js) ----------
-
-/** What spokenOrder() compares: the page's lines and the server's held lines both have these. */
-export interface Spoken {
-  /** The connection's number; ids restart with every connection. Missing counts as 0. */
-  connection?: number;
-  start: number;
-  id: number;
-}
 
 /** One line of the transcript as the page keeps it (the `lines` map), live or final. */
 export interface Line extends Spoken {

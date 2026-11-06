@@ -202,6 +202,20 @@ export type ClientMessage =
 
 export type ClientMessageType = ClientMessage['type'];
 
+// ---------- shared by the server and the page ----------
+
+/**
+ * What spokenOrder() (public/order.js) compares: the page's lines and the server's held lines both have these, so
+ * the transcript and the .txt come out in one order (#7, #50).
+ */
+export interface Spoken {
+  /** The connection's number; ids restart with every connection. Missing counts as 0. */
+  connection?: number;
+  /** Seconds since the session started. */
+  start: number;
+  id: number;
+}
+
 // ---------- main window ↔ caption windows (BroadcastChannel 'transcriber-captions') ----------
 
 /** One line of the projector view: a final sentence or the one being spoken; `mic` only with several mics. */

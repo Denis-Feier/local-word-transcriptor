@@ -207,7 +207,16 @@ a real bug the checker finds is fixed in its own commit, with a test (`UNIT-*` o
 | N7 | `test/helpers.js`, `test/stream-wav.js`, `test/unit.js`, `test/protocol.js`, `test/smoke.js`, `test/scenarios.js`, `test/meeting.js`, `test/stress.js`, `test/run-all.js`, `test/ui/run.mjs`, `test/ui/stress.mjs` | `npm test`; `npm run test:stress -- --short` only if the owner asks |
 | N8 | flip `checkJs: true` in both tsconfigs, delete every `// @ts-check` | `npm run test:quick` |
 
-A batch may be split further when its diff passes about 400 changed lines. After N8 every file is checked under
+A batch may be split further when its diff passes about 400 changed lines.
+
+What happened in N1 (2026-11-06, `ts/2-n1`): ten files, about 210 lines added, all comments but for five casts and one
+local alias, where `strict` could not see what the code knows: `Object.entries(TUNING)` loses its keys (cast to
+`[TuningKey, TuningRange][]`), `.at(-1)` may be undefined (a cast in `inRoom`, an alias `finalKeys` in
+`liveSteadiness`), a catch variable is `unknown` (`/** @type {any} */` on it in `WavWriter`), and `child.on('error')`
+hands an `Error` without `code` (`NodeJS.ErrnoException`). The checker inferred `WavWriter`'s `fd` and the
+segmenter-free modules without help. `Spoken`, which `public/order.js` shares with `lib/session.js`, moved from
+`types/page.ts` (web only) to `types/protocol.ts`, so the Node project can import it. The drafts were written in a
+detached worktree in the scratchpad while the gate run read the main tree; worth repeating for every batch. After N8 every file is checked under
 `strict`, and the only `any` left are the ones written on purpose with a reason.
 
 ## 6. Phase 3 — the server side becomes `.ts`
@@ -302,7 +311,8 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 | Plan | `feature/typescript-plan` | written | 2026-11-06 | this document, from the scan of `133a274` |
 | Phase 0 | `ts/0-tooling` | done (`9254b4f`), awaiting merge | 2026-11-06 | TypeScript 7.0.2; `STATIC-06`; both projects green on the untouched code |
 | Phase 1 | `ts/1-types` | done, awaiting merge | 2026-11-06 | seven type files; both projects green; nothing imports them yet |
-| Phase 2 N1 … N8, B1 … B3 | `ts/2-<batch>` | not started | | |
+| Phase 2 N1 | `ts/2-n1` | done, awaiting merge | 2026-11-06 | ten files; both projects green; standard tier 216 / 0 / 2 / 0 |
+| Phase 2 N2 … N8, B1 … B3 | `ts/2-<batch>` | not started | | |
 | Phase 3 N1 … N7 | `ts/3-<batch>` | not started | | E1 decides `desktop/main.ts` |
 | Phase 4 | `ts/4-web` | not started | | D2 confirmed? |
 | Phase 5 | `ts/5-tighten` | not started | | |
