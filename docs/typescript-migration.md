@@ -265,7 +265,19 @@ maker returns, `ReportRun` for what the report needs of a run), `Engine.supports
 were `let x = null` variables and empty arrays inside object literals, which the checker types as `null` and `never[]`.
 Code changes only where the checker was right about a gap, each behaviour-neutral: `JSON.parse(data)` on a Buffer now
 `.toString()`s it, `FinalizationRegistry.register` gets its second argument, the stand-in model carries the catalogue's
-fields, two `Date` subtractions use `getTime()`. Standard tier: .
+fields, two `Date` subtractions use `getTime()`. Standard tier: every check passed (157 of 157), but the UI suite then
+hung in its teardown and was killed at its 10-minute limit (`UI-RUN` failed); the same tier on the page batches right
+after, with the same test code, passed with the UI suite at its usual 2 minutes (216 / 0 / 2 / 0), so the hang was a one-off
+(TESTING.md §12). The batch was committed before that report was read: the gate's result was taken from the exit code
+of a piped command, which is the pipe's, not the runner's. Read the verdict line.
+
+What happened in B1, B2 and B3 (2026-11-07, `ts/2-b1` … `ts/2-b3`): the page, typed against `types/protocol.ts` and
+`types/page.ts`. The backlog's types moved to `types/audio.ts`, because the unit tests import the backlog and the
+Node project must not see DOM types; `types/page.ts` declares Chromium's `AudioContext.setSinkId`, which the DOM
+library lacks. The page's imports of its own modules became relative. Numbers written to `dataset` and input values
+go through `String()`, the stage and settings handles start without a null, a final line is a `Line` with its `end`,
+and a stage button with no hook calls it optionally (the button is hidden then). Casts where the DOM's types are wider
+than the markup. One gate for the three stacked branches: standard tier 216 / 0 / 2 / 0.
 `strict`, and the only `any` left are the ones written on purpose with a reason.
 
 ## 6. Phase 3 — the server side becomes `.ts`
@@ -367,7 +379,8 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 | Phase 2 N5 | `ts/2-n5` | done, awaiting merge | 2026-11-07 | benchmark library and scripts; standard tier 216 / 0 / 2 / 0 |
 | Phase 2 N6 | `ts/2-n6` | done, awaiting merge | 2026-11-07 | the desktop app; standard tier 216 / 0 / 2 / 0; the app started and quit once |
 | Phase 2 N7 | `ts/2-n7` | done, awaiting merge | 2026-11-07 | the test suites, in their own project; standard tier  |
-| Phase 2 B1 … B3, N8 | `ts/2-<batch>` | drafted in the worktree, each waits for its gate | | |
+| Phase 2 B1, B2, B3 | `ts/2-b1`, `ts/2-b2`, `ts/2-b3` | done, awaiting merge | 2026-11-07 | the page; one standard tier on the tip: 216 / 0 / 2 / 0 |
+| Phase 2 N8 | `ts/2-n8` | in progress | 2026-11-07 | |
 | Phase 3 N1 … N7 | `ts/3-<batch>` | not started | | E1 decides `desktop/main.ts` |
 | Phase 4 | `ts/4-web` | not started | | D2 confirmed? |
 | Phase 5 | `ts/5-tighten` | not started | | |
