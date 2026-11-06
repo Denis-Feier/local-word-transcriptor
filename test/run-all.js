@@ -7,7 +7,7 @@
 //                                  --hours 8, --only STRESS-<GROUP> (one group, e.g. MEET)
 //   node test/run-all.js --only ui            one suite: static, unit, protocol, smoke, scenarios, ui, engines, long
 //   node test/run-all.js full --recordings transcripts/a.wav,transcripts/b.wav   also real voices (stay local)
-import { spawn, execSync } from 'node:child_process';
+import { spawn, execFileSync, execSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -138,6 +138,21 @@ function staticChecks() {
   const served = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
   const unserved = fs.readdirSync(path.join(ROOT, 'public')).filter((f) => f !== 'index.html' && !served.includes(`'/${f}': ['${f}'`));
   check('STATIC-04', 'the server serves every file in public/', unserved.length === 0, unserved.join(', ') || 'all listed in server.js');
+
+  // The types (docs/typescript-migration.md): both projects pass tsc without emitting, the server side (tsconfig.json:
+  // server.js, lib/, scripts/, desktop/, test/, types/) and the page (tsconfig.web.json: public/). Node runs .ts files
+  // itself and node --check cannot parse them, so this is also the syntax check for every .ts file.
+  const tsc = path.join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
+  const typeErrors = ['tsconfig.json', 'tsconfig.web.json'].flatMap((project) => {
+    try {
+      execFileSync(process.execPath, [tsc, '--noEmit', '-p', path.join(ROOT, project)], { cwd: ROOT, stdio: 'pipe' });
+      return [];
+    } catch (err) {
+      const lines = `${err.stdout ?? ''}${err.stderr ?? ''}`.trim().split('\n').filter(Boolean);
+      return [`${project}: ${lines[0] ?? err.message}${lines.length > 1 ? ` (+${lines.length - 1} lines)` : ''}`];
+    }
+  });
+  check('STATIC-06', 'the types check: tsc passes on the server side and on the page', typeErrors.length === 0, typeErrors.join('; ') || 'tsconfig.json, tsconfig.web.json');
 
   // The plan and the tests must agree: every test id in the code is described in TESTING.md, and every
   // automated id in TESTING.md exists in the code.
