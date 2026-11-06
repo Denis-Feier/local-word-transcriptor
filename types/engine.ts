@@ -45,6 +45,17 @@ export interface StreamingSentence {
   readonly result: Promise<TranscribeResult>;
 }
 
+/** What a session needs from the transcriber (lib/session.js): the Transcriber, or a test's stand-in. */
+export interface TranscriberLike {
+  readonly supportsPrompt: boolean;
+  /** Moving average of inference time; null before the first sentence. */
+  avgMs: number | null;
+  /** A throwaway live guess, only while the model is idle; null otherwise. */
+  tryTranscribe(samples: Float32Array, opts?: TranscribeOptions): Promise<TranscribeResult> | null;
+  transcribe(samples: Float32Array, opts?: TranscribeOptions): Promise<TimedResult>;
+  stream?(opts?: StreamOptions): SessionStream | null;
+}
+
 /** The transcriber's handle on a streamed sentence, as lib/session.js uses it (Transcriber.stream()). */
 export interface SessionStream {
   push(samples: Float32Array): void;
@@ -56,8 +67,8 @@ export interface SessionStream {
 
 /** One speech engine: owns one loaded model. */
 export interface Engine {
-  /** Takes a previous-text prompt (whisper.cpp, ElevenLabs). */
-  readonly supportsPrompt: boolean;
+  /** Takes a previous-text prompt (whisper.cpp, ElevenLabs); unset counts as no. */
+  readonly supportsPrompt?: boolean;
   /** Where the model runs once loaded: 'GPU (Metal)', 'CPU', …; null or unset before load(). */
   device?: string | null;
   /** Why the GPU was not used, when it was not. */

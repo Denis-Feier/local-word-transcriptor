@@ -36,6 +36,8 @@ declare module 'sherpa-onnx-node' {
   /** sherpa-onnx's voice activity detector (node_modules/sherpa-onnx-node/vad.js). */
   export class Vad {
     constructor(config: VadConfig, bufferSizeInSeconds: number);
+    /** As given to the constructor. */
+    readonly config: VadConfig;
     acceptWaveform(samples: Float32Array): void;
     isEmpty(): boolean;
     isDetected(): boolean;

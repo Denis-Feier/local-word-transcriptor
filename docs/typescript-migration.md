@@ -70,7 +70,7 @@ Each needs a yes from the owner before its phase starts; the recommendation is f
 | D2 | How `.ts` reaches the browser | **Sources in `web/*.ts`, `tsc -p tsconfig.web.json` emits `public/*.js`; the emitted files are committed, and a static check fails when they are stale.** | Browsers do not strip types, so the page needs one emit step. Committing the output keeps `git clone && npm install && npm start`, the Dockerfile (`npm install --omit=dev`, `COPY . .`), the CI workflow and `build.files` exactly as they are, and the route table, `STATIC-04` and `PROT-STATIC-02` unchanged. The output is the current JavaScript with the annotations removed, so diffs stay readable. Alternative: gitignore `public/*.js` and add `prestart`/`pretest`/`predist` hooks plus a build stage in the Dockerfile and a step in CI; choose this if committed output is unwanted. |
 | D3 | One compiler for both sides | **`typescript` only; no esbuild, no bundler.** | `tsc` checks and emits; `rewriteRelativeImportExtensions` lets `web/*.ts` import `./stage.ts` and emit `./stage.js`. One devDependency. |
 | D4 | Types before syntax | **Phase 1 writes the types as `types/*.ts`, Phase 2 attaches them to the JavaScript with JSDoc, Phase 3 renames.** | The user asked for it in this order; it also means every module is typed and checked before any rename, so the renames are mechanical and the test suites catch nothing new. |
-| D5 | Strictness | **`strict: true` from day one, `checkJs` per file (`// @ts-check`) until every file has it, then global.** | Turning strict on later means doing the annotations twice. |
+| D5 | Strictness | **`strict: true` from day one, `checkJs` per file (`// @ts-check`) until every file has it, then global.** Amended in N7 (2026-11-07): the test suites are checked in their own project, `tsconfig.test.json`, strict except for `noImplicitAny`. | Turning strict on later means doing the annotations twice. The suites' callbacks probe messages and stand-ins loosely by design; `noImplicitAny` would have asked for about 700 parameter annotations that say nothing, while the rest of `strict` found the real gaps. |
 | D6 | What stays JavaScript | `test/ui/preload.cjs` (Electron preload, CommonJS, injected into Chromium: no stripping there); `python/`, `native/` untouched. | Not worth a build step for one file. |
 | D7 | Step size | **One branch and one pull request per batch in §5–§7; `npm test` before each merge, `test:full` where CLAUDE.md asks (audio, voice detection, crosstalk, session, engines, transcriber).** | Small diffs, each reviewable in minutes; `main` stays green between them. |
 
@@ -254,6 +254,18 @@ the utility process's `env` (a spread of `process.env` loses its index signature
 possibly absent), and a menu entry inside a conditional spread, which loses its literal type. Standard tier 216 / 0 /
 2 / 0, and the app started once from source in test mode (`LT_TEST=1`, scratch settings): its server reported the model
 ready on the GPU, and it quit cleanly on the signal.
+
+What happened in N7 (2026-11-07, `ts/2-n7`): every file in `test/` but `ui/preload.cjs`. Checked under full `strict`,
+the five large suites reported about a thousand errors, two thirds of them untyped callback parameters: test code
+probes messages, files and stand-ins loosely, by design. So the suites got their own project, `tsconfig.test.json`,
+strict except for `noImplicitAny` (D5 amended); `STATIC-06` and `npm run typecheck` run all three projects. The 230
+errors that remained were real gaps, mostly stand-ins the app's types did not take: three became interfaces the
+app's code takes (`TranscriberLike` for what a session needs from the transcriber, `VadPool` generic over what its
+maker returns, `ReportRun` for what the report needs of a run), `Engine.supportsPrompt` became optional, and the rest
+were `let x = null` variables and empty arrays inside object literals, which the checker types as `null` and `never[]`.
+Code changes only where the checker was right about a gap, each behaviour-neutral: `JSON.parse(data)` on a Buffer now
+`.toString()`s it, `FinalizationRegistry.register` gets its second argument, the stand-in model carries the catalogue's
+fields, two `Date` subtractions use `getTime()`. Standard tier: .
 `strict`, and the only `any` left are the ones written on purpose with a reason.
 
 ## 6. Phase 3 — the server side becomes `.ts`
@@ -354,7 +366,8 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 | Phase 2 N4 | `ts/2-n4` | done, awaiting merge | 2026-11-06 | session and server; full tier 236 / 0 / 5 / 0 |
 | Phase 2 N5 | `ts/2-n5` | done, awaiting merge | 2026-11-07 | benchmark library and scripts; standard tier 216 / 0 / 2 / 0 |
 | Phase 2 N6 | `ts/2-n6` | done, awaiting merge | 2026-11-07 | the desktop app; standard tier 216 / 0 / 2 / 0; the app started and quit once |
-| Phase 2 N7, N8, B1 … B3 | `ts/2-<batch>` | drafted in the worktree, each waits for its gate | | |
+| Phase 2 N7 | `ts/2-n7` | done, awaiting merge | 2026-11-07 | the test suites, in their own project; standard tier  |
+| Phase 2 B1 … B3, N8 | `ts/2-<batch>` | drafted in the worktree, each waits for its gate | | |
 | Phase 3 N1 … N7 | `ts/3-<batch>` | not started | | E1 decides `desktop/main.ts` |
 | Phase 4 | `ts/4-web` | not started | | D2 confirmed? |
 | Phase 5 | `ts/5-tighten` | not started | | |

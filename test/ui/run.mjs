@@ -1,3 +1,4 @@
+// @ts-check
 // The page in Chromium (Electron, the same engine as the desktop app), driven like a person would, with fake
 // microphones that play the test speakers (preload.cjs). Starts its own servers. Screenshots go to UI_OUT
 // (default: a temp folder, printed at the end) for a person or an AI to look at.
@@ -52,7 +53,7 @@ app.whenReady().then(async () => {
     for (let attempt = 1; ; attempt++) {
       try {
         return fs.writeFileSync(path.join(OUT, `${name}.png`), (await w.webContents.capturePage()).toPNG());
-      } catch (err) {
+      } catch (/** @type {any} */ err) {
         if (attempt === 3) return console.log(`screenshot ${name}.png not taken: ${err.message}`);
         await sleep(500);
       }
@@ -618,7 +619,7 @@ app.whenReady().then(async () => {
       `Download ${JSON.stringify(downloaded)}; on the page ${onPage.map((l) => l.slice(0, 12)).join(' | ')}; Copy ${copied.map((l) => l.slice(0, 12)).join(' | ')}`);
 
     t.check('UI-LOAD-02', 'no errors in the page console', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     t.check('UI-RUN', 'the UI run finished', false, err.stack);
   } finally {
     for (const s of servers) await s.stop().catch(() => {});
@@ -626,6 +627,6 @@ app.whenReady().then(async () => {
     for (const dir of [SPEAKERS, ...scratchDirs]) fs.rmSync(dir, { recursive: true, force: true });
     console.log(`\nscreenshots: ${OUT}`);
     t.finish();
-    app.exit(process.exitCode ?? 0);
+    app.exit(/** @type {number} */ (process.exitCode ?? 0)); // a number here, or unset
   }
 });

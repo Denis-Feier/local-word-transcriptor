@@ -1,3 +1,4 @@
+// @ts-check
 // End-to-end check that runs on any OS (CI runs it before building the installers): starts the server with
 // a fresh models folder, lets it download the small Romanian model by itself, streams test/fixtures/ro.wav
 // and requires the expected words in the transcript. Then streams it again as two mics, where the second mic only
@@ -12,14 +13,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+/** @param {number} ms */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** @returns {Promise<number>} */
 function freePort() {
   return new Promise((resolve, reject) => {
     const probe = net.createServer();
     probe.on('error', reject);
     probe.listen(0, '127.0.0.1', () => {
-      const { port } = probe.address();
+      const { port } = /** @type {import('node:net').AddressInfo} */ (probe.address()); // listening on a TCP port
       probe.close(() => resolve(port));
     });
   });
@@ -48,16 +51,21 @@ try {
       await sleep(250);
     }
   }
+  /**
+   * @param {string[]} args
+   * @param {number} minutes
+   * @returns {Promise<number>}
+   */
   const stream = (args, minutes) => {
     const test = spawn(process.execPath, [path.join(ROOT, 'test', 'stream-wav.js'), path.join(ROOT, 'test', 'fixtures', 'ro.wav'), ...args], { env, stdio: 'inherit' });
     const timer = setTimeout(() => test.kill(), minutes * 60 * 1000);
-    return new Promise((resolve) => test.on('exit', (c) => resolve(c ?? 1))).finally(() => clearTimeout(timer));
+    return /** @type {Promise<number>} */ (new Promise((resolve) => test.on('exit', (c) => resolve(c ?? 1)))).finally(() => clearTimeout(timer));
   };
   code = await stream(['--speed', '3', '--expect', 'munții'], 10); // includes the model download
   // Two mics: the second only hears the speaker from across the room (quieter, late like Bluetooth),
   // so every sentence must stay on mic 1.
   if (code === 0) code = await stream(['--mic2', 'silence', '--bleed', '12', '--lag', '150', '--only-mic', '1', '--speed', '3', '--expect', 'munții'], 2);
-} catch (err) {
+} catch (/** @type {any} */ err) {
   console.error(`✖ ${err.message}`);
 } finally {
   server.kill();

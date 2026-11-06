@@ -85,7 +85,8 @@ export interface FakeElevenLabsOptions {
 export interface FakeElevenLabs {
   url: string;
   connections: FakeConnection[];
-  close(): Promise<void>;
+  /** Resolves once the socket server has closed (with whatever its close callback was given). */
+  close(): Promise<unknown>;
 }
 
 export interface FakeServerOptions {
@@ -96,8 +97,9 @@ export interface FakeServerOptions {
 /** fakeServer(): serves the page and sends it whatever a test wants. */
 export interface FakeServer {
   url: string;
-  send(msg: ServerMessage): void;
-  close(): Promise<void>;
+  /** To the newest connection; anything a test wants the page to get, a real message or not. */
+  send(msg: object): void;
+  close(): Promise<unknown>;
 }
 
 export interface TwoMicsOptions {

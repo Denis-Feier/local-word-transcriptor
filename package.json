@@ -16,7 +16,7 @@
     "test:ui": "node test/run-all.js --only ui",
     "test:stress": "node test/run-all.js stress",
     "test:wav": "node test/stream-wav.js",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.test.json",
     "benchmark": "node scripts/benchmark.js",
     "benchmark:suite": "node scripts/benchmark-suite.js",
     "manual": "node scripts/manual.mjs",

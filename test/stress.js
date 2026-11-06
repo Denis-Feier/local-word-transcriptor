@@ -1,3 +1,4 @@
+// @ts-check
 // The stress tier, server side (TESTING.md §14): hours-long synthetic meetings and what goes wrong in long meetings,
 // against real servers. Groups run separately so run-all.js can put them in parallel lanes.
 //
@@ -9,6 +10,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import WebSocket from 'ws';
+/** @import { Model } from '../types/model.ts' */
+/** @import { TestServer } from '../types/test.ts' */
 import { config } from '../lib/config.js';
 import { MODELS, isInstalled, isAvailable } from '../lib/models.js';
 import { wordKey } from '../lib/steady.js';
@@ -16,6 +19,16 @@ import { TUNING, sanitizeTuning } from '../lib/tuning.js';
 import { sharedWords } from '../lib/wer.js';
 import { SR, serverMemory, startServer, scratch, sleep, suite } from './helpers.js';
 import { CHUNK, SCRIPTS, Room, contentWords, hoursScript, judge, meeting, meetingFrom, memoryCheck, quantile, sessionBlocks, table, truth, voices, windows } from './meeting.js';
+
+/**
+ * What play() records: every message with the audio sent when it arrived (sentSec), the probes and the memory samples.
+ * @typedef {{ finals: any[], allFinals: any[], partials: any[], starts: Set<number>, errors: any[], files: any[], statuses: any[], tuning: any[], behind: any[],
+ *   unknown: any[], sentSec: number, sentPerMic: number[], probes: any[], memory: any[], backlog: any[], closed: boolean, ws: WebSocket, wallSec: number, missingFinals: number }} Played
+ */
+/**
+ * @typedef {{ speed?: number, saveAudio?: boolean, onChunk?: (i: number, r: Played, ws: WebSocket) => unknown, cutAt?: number, startAt?: number, probe?: boolean,
+ *   waitMs?: number, room?: Room, from?: number, resume?: { name: string | null, samples: number } | null }} PlayOptions
+ */
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -50,8 +63,8 @@ const usable = (id) => {
 
 /** The server and its descendants (a model's own process: whisper-server, Python, the Apple speech helper), with their memory in KB. */
 function family(serverPid) {
-  const rows = execFileSync('ps', ['-A', '-o', 'pid=,ppid=,rss=,command=']).toString().trim().split('\n')
-    .map((l) => l.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/)).filter(Boolean).map(([, pid, ppid, rss, cmd]) => ({ pid: +pid, ppid: +ppid, rss: +rss, cmd }));
+  const rows = /** @type {RegExpMatchArray[]} */ (execFileSync('ps', ['-A', '-o', 'pid=,ppid=,rss=,command=']).toString().trim().split('\n')
+    .map((l) => l.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/)).filter(Boolean)).map(([, pid, ppid, rss, cmd]) => ({ pid: +pid, ppid: +ppid, rss: +rss, cmd }));
   const members = new Set([serverPid]);
   for (let grew = true; grew;) {
     grew = false;
@@ -76,14 +89,18 @@ const familyRss = (serverPid) => Math.round(family(serverPid).reduce((sum, r) =>
  * cutAt (meeting seconds) drops the connection there without Stop; startAt (epoch ms) delays the first frame;
  * from (a frame index) starts the meeting there, and resume ({ name, samples }) is sent before any audio, as the page
  * does after a reconnect (#10); room: one Room can play a meeting on through several connections.
+ * @param {TestServer} server
+ * @param {any} m  the meeting (test/meeting.js)
+ * @param {PlayOptions} [opts]
+ * @returns {Promise<Played>}
  */
 async function play(server, m, { speed: pace = speed, saveAudio = true, onChunk, cutAt = Infinity, startAt = 0, probe = true, waitMs = 300000, room = new Room(m), from = 0, resume = null } = {}) {
-  const r = { finals: [], allFinals: [], partials: [], starts: new Set(), errors: [], files: [], statuses: [], tuning: [], behind: [], unknown: [], sentSec: from * STEP, sentPerMic: [0, 0, 0], probes: [], memory: [], backlog: [], closed: false };
   const ws = new WebSocket(server.ws('?mics'));
-  r.ws = ws;
+  /** @type {Played} */
+  const r = { finals: [], allFinals: [], partials: [], starts: new Set(), errors: [], files: [], statuses: [], tuning: [], behind: [], unknown: [], sentSec: from * STEP, sentPerMic: [0, 0, 0], probes: [], memory: [], backlog: [], closed: false, ws, wallSec: 0, missingFinals: 0 };
   const finalIds = new Set();
   ws.on('message', (data) => {
-    const msg = JSON.parse(data);
+    const msg = JSON.parse(data.toString());
     const now = Date.now();
     if (msg.type === 'final') {
       finalIds.add(msg.id);
@@ -168,7 +185,8 @@ async function play(server, m, { speed: pace = speed, saveAudio = true, onChunk,
   return r;
 }
 
-const close = (ws) => new Promise((resolve) => (ws.readyState === WebSocket.CLOSED ? resolve() : (ws.once('close', resolve), ws.close())));
+/** @param {WebSocket} ws */
+const close = (ws) => /** @type {Promise<void>} */ (new Promise((resolve) => (ws.readyState === WebSocket.CLOSED ? resolve() : (ws.once('close', /** @type {() => void} */ (resolve)), ws.close()))));
 
 /** Text for clips without one (real recordings): each transcribed alone, as the scenarios' references. */
 async function fillTexts(server, voice) {
@@ -457,7 +475,7 @@ async function capacity() {
   const rows = [];
   const onGpu = []; // [id, devices()] of every model that can use the GPU (Apple's speech picks its own chip)
   for (const id of ids) {
-    const server = await startServer({ model: id, timeoutMs: 900000 }).catch((err) => ({ error: err }));
+    const server = /** @type {TestServer & { error?: Error }} */ (await startServer({ model: id, timeoutMs: 900000 }).catch((err) => ({ error: err })));
     if (server.error) {
       t.check('STRESS-CAP-01', `${id} keeps up with a meeting at 2× real time`, false, `server did not start: ${String(server.error.message).split('\n')[0]}`);
       continue;
@@ -474,7 +492,7 @@ async function capacity() {
       const j = judge(truth(m), lineList(r));
       const ok = last <= first + 2 && busy <= 0.8 && r.missingFinals === 0;
       // The recommended models (#28) and the tier's own model must keep up; another that cannot is a known limit (◌).
-      const model = MODELS.find((x) => x.id === id);
+      const model = /** @type {Model} */ (MODELS.find((x) => x.id === id)); // ids come from the catalogue
       const required = model.tier === 'recommended' || id === MODEL;
       const dev = devices(r.statuses);
       if (model.engine !== 'apple-speech') onGpu.push([id, dev]);
@@ -555,10 +573,13 @@ async function reconnects() {
     const cuts = Array.from({ length: drops }, (_, k) => Math.round(((k + 0.7 + 0.6 * rand()) * m.chunks) / (drops + 1))); // every ~24 s, never two at once
     const room = new Room(m);
     const all = { finals: [], allFinals: [], errors: [], statuses: [], files: [], names: new Set() };
+    /** @type {string | null} */
     let name = null;
     let sentSamples = 0; // per mic, as the page counts it
     let from = 0;
+    /** @type {number | null} */
     let mem0 = null;
+    /** @type {Played | null} */
     let last = null;
     for (const cut of [...cuts, Infinity]) {
       const r = await play(server, m, { room, from, cutAt: cut === Infinity ? Infinity : cut * STEP, probe: false, waitMs: 120000, resume: from ? { name, samples: sentSamples } : null });
@@ -572,7 +593,7 @@ async function reconnects() {
       from = cut;
       await sleep(500); // the page waits 1.5 s before it reconnects; the old connection's last sentence is finished meanwhile
     }
-    await close(last.ws);
+    await close(/** @type {Played} */ (last).ws); // the loop ran at least once
     await sleep(1500);
     const mem1 = await rss(server.pid);
     const txt = txtLines(server.transcripts);
@@ -585,7 +606,7 @@ async function reconnects() {
     const ok = all.names.size === 1 && txtFiles.length === 1 && !malformed(txt).length && backwards(txt) === 0
       && wavs.length === 2 && wavs.every((s) => Math.abs(s - sentSec) <= 0.2)
       && txt.length >= all.finals.length && txt.length - all.finals.length <= 2 * drops
-      && rate(j.all.solo) >= 0.98 && j.all.wrong === 0 && all.errors.length === 0 && mem1 - mem0 <= 30;
+      && rate(j.all.solo) >= 0.98 && j.all.wrong === 0 && all.errors.length === 0 && mem1 - /** @type {number} */ (mem0) <= 30;
     t.check('STRESS-CONN-03', `(D2) the connection drops ${drops} times in a ${minutes}-minute meeting and resumes the transcript: one .txt with the clock going on, WAVs whole, nothing lost, memory flat`, ok,
       `${txtFiles.length} .txt (${all.names.size} name(s)); ${txt.length} lines for ${all.finals.length} received (${txt.length - all.finals.length} finished after a drop), ${backwards(txt)} with an earlier time than the line before, ${malformed(txt).length} malformed; `
       + `WAVs ${wavs.map((s) => p(s, 1)).join(', ')} s for ${p(sentSec, 1)} s sent; solo caught ${pc(j.all.solo.caught, j.all.solo.n)} (${items.filter((u) => u.cut && !u.orphan).length} cut by a drop, not judged), wrong mic ${j.all.wrong}; ${all.errors.length} errors; memory ${mem0} → ${mem1} MB`);
@@ -654,10 +675,11 @@ async function tuning() {
     const every = Math.max(1, Math.floor((to - from) / changes));
     let rng = 3;
     const rand = () => (rng = (rng * 16807) % 2147483647) / 2147483647;
+    /** @type {Record<string, number>} */
     const expected = {};
     let sent = 0;
     let toggles = 0;
-    let mem0 = null;
+    let mem0 = /** @type {number | null} */ (null); // set by onChunk below
     const r = await play(server, m, {
       async onChunk(i, res, ws) {
         if (i === from) mem0 = await rss(server.pid);
@@ -673,6 +695,7 @@ async function tuning() {
     });
     await close(r.ws);
     const mem1 = await rss(server.pid);
+    /** @type {Record<string, number> | null} */
     let saved = null;
     try {
       saved = JSON.parse(fs.readFileSync(server.settingsFile, 'utf8')).tuning;
@@ -682,7 +705,7 @@ async function tuning() {
     const last = r.tuning.at(-1)?.values ?? {};
     const applied = Object.entries(expected).every(([k, x]) => last[k] === x && saved?.[k] === x);
     const late = r.finals.filter((f) => f.end > 0.8 * m.length).length;
-    t.check('STRESS-TUNE-01', `${sent} setting changes and ${toggles} Steady live text toggles during a meeting: memory flat, the last values applied and saved`, mem1 - mem0 <= 30 && applied && saved !== null && late > 0,
+    t.check('STRESS-TUNE-01', `${sent} setting changes and ${toggles} Steady live text toggles during a meeting: memory flat, the last values applied and saved`, mem1 - /** @type {number} */ (mem0) <= 30 && applied && saved !== null && late > 0,
       `memory ${mem0} → ${mem1} MB; last values ${applied ? 'applied and saved' : `differ: sent ${JSON.stringify(expected)}, server ${JSON.stringify(last)}, file ${JSON.stringify(saved)}`}; ${late} lines in the last fifth`);
   } finally {
     await server.stop();
@@ -779,10 +802,11 @@ async function engines() {
     const server = await startServer({ model: sidecars[0], timeoutMs: 900000 });
     try {
       const killed = new Set();
-      let gaveUpAt = null;
+      let gaveUpAt = /** @type {number | null} */ (null); // set by the killer below
       const killer = (async () => {
         await sleep(30000);
         for (let k = 0; k < 4; k++) {
+          /** @type {number | null} */
           let pid = null;
           for (let t0 = Date.now(); !pid && Date.now() - t0 < 30000; await sleep(200)) pid = engineProcess(server.pid, killed);
           if (!pid) break;
@@ -794,11 +818,12 @@ async function engines() {
       })();
       const r = await play(server, meeting(v, { minutes: { R: 5 } }), { speed: 1, waitMs: 60000 });
       await killer;
+      const gaveUp = /** @type {number} */ (gaveUpAt); // the killer set it
       await close(r.ws);
-      const errorAfter = r.statuses.filter((s) => s.wall >= gaveUpAt - 5000).some((s) => s.state === 'error');
-      const back = r.statuses.some((s) => s.wall > gaveUpAt && s.state === 'ready');
+      const errorAfter = r.statuses.filter((s) => s.wall >= gaveUp - 5000).some((s) => s.state === 'error');
+      const back = r.statuses.some((s) => s.wall > gaveUp && s.state === 'ready');
       t.check('STRESS-ENG-02', `(D4) ${sidecars[0]} killed ${killed.size} times within a minute: the error is shown, then transcription comes back on its own`, killed.size === 4 && errorAfter && back,
-        `${killed.size} kills; error shown ${errorAfter}; ${back ? 'came back' : `still not working ${p((Date.now() - gaveUpAt) / 1000, 0)} s later`}`);
+        `${killed.size} kills; error shown ${errorAfter}; ${back ? 'came back' : `still not working ${p((Date.now() - gaveUp) / 1000, 0)} s later`}`);
     } finally {
       await server.stop();
     }
@@ -812,7 +837,7 @@ async function engines() {
   try {
     const m = meeting(v, { minutes: { R: 20 } });
     const at = [3, 6, 9, 12, 15].slice(0, plan.length).map((min) => Math.round((min * 60) / STEP));
-    let mem0 = null;
+    let mem0 = /** @type {number | null} */ (null); // set by onChunk below
     const r = await play(server, m, {
       speed: 2,
       waitMs: 900000,
@@ -835,7 +860,7 @@ async function engines() {
       return `${e.message} (at ${p(e.sentSec / 60, 1)} min, ${k < 0 ? 'before the first switch' : `after the switch to ${plan[k]}`})`;
     });
     t.check('STRESS-ENG-03', `model switched ${plan.length} times during a meeting: no line lost, every line in the .txt, the memory of the server and its model processes back`,
-      r.errors.length === 0 && rate(j.all.solo) >= 0.98 && txt.length === r.finals.length && mem1 - mem0 <= 100 && left === 0,
+      r.errors.length === 0 && rate(j.all.solo) >= 0.98 && txt.length === r.finals.length && mem1 - /** @type {number} */ (mem0) <= 100 && left === 0,
       `${[MODEL, ...plan].join(' → ')}; ${r.errors.length} failed${failed.length ? ` (${failed.join('; ')})` : ''}; solo caught ${pc(j.all.solo.caught, j.all.solo.n)}; ${txt.length} .txt lines for ${r.finals.length} finals; `
       + `memory (server + model processes) ${mem0} → ${mem1} MB; ${left} model process(es) left running`);
   } finally {
@@ -866,7 +891,7 @@ for (const g of groups) {
   const t0 = Date.now();
   try {
     await GROUPS[g]();
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     t.check(`STRESS-${g.toUpperCase()}-RUN`, `the ${g} group ran to the end`, false, err.stack);
   }
   console.log(`(${g}: ${((Date.now() - t0) / 60000).toFixed(1)} min)\n`);

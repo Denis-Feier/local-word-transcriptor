@@ -1,3 +1,4 @@
+// @ts-check
 // The synthetic meeting for the stress tier (TESTING.md §14.2): a script of blocks (who talks, the room, events),
 // voiced from the sentence bank, played 100 ms at a time the way the page sends it, with the ground truth of who
 // said what and when, and the judge that compares a server's lines with that truth (§14.3).
@@ -16,6 +17,7 @@ const STEP = CHUNK / SR;
 const BANK = path.join(ROOT, 'test', 'fixtures', 'meeting-ro.txt');
 const CACHE = path.join(os.tmpdir(), 'transcriber-meeting-voices');
 const RATES = [180, 205, 160]; // words per minute: each person speaks at their own pace
+/** @type {[start: number, end: number, text: string][]} */
 const FIXTURE_SENTENCES = [
   [0, 6.8, 'Bună ziua, mă numesc Ioana și astăzi vreau să vă povestesc despre o călătorie în munții Carpați.'],
   [7.3, 13.0, 'A fost o experiență frumoasă, deși ploaia ne-a ținut în cabană două zile.'],
@@ -34,7 +36,7 @@ const SPEAKER_DB = -18; // the speaker in the room, as each mic hears it
 const SPEAKER_LAG = 0.02;
 const GAP = 0.3; // the page reopens its capture when the mics change: no audio for this long
 
-/** Blocks and their minutes. A block left out (or 0) is skipped; R2 repeats R exactly. */
+/** Blocks and their minutes. A block left out (or 0) is skipped; R2 repeats R exactly. @type {Record<string, Record<string, number>>} */
 export const SCRIPTS = {
   full: { R: 15, shared: 60, presentation: 20, debate: 20, break: 15, hvac: 40, flaky: 30, changes: 20, R2: 15 },
   short: { R: 4, shared: 5, presentation: 3, debate: 3, break: 2, hvac: 4, flaky: 4, changes: 5, R2: 4 },
@@ -114,6 +116,7 @@ function pieces(file) {
  * Each person's voice: a list of clips { text, samples, roomed, short }. The sentence bank spoken by macOS
  * `say -v Ioana` at the person's pace (cached in the temp folder); without that voice, the fixture's three sentences;
  * with recordings, pieces of those (text null until the caller fills it in). keep(i) picks sentences from the bank.
+ * @param {{ people?: number, recordings?: string | null, keep?: (i: number) => boolean }} [opts]
  */
 export async function voices({ people = 3, recordings = null, keep = () => true } = {}) {
   if (recordings) {
@@ -161,6 +164,8 @@ function transient(rng, kind) {
 /**
  * The meeting for `voice` (from voices()): blocks of minutes in a fixed order (SCRIPTS), on 2 or 3 mics.
  * Times are meeting seconds. Returns the utterances (ground truth), events, blocks and what the room does when.
+ * @param {Awaited<ReturnType<typeof voices>>} voice
+ * @param {{ minutes?: Record<string, number>, mics?: number, seed?: number }} [opts]
  */
 export function meeting(voice, { minutes = SCRIPTS.full, mics = 2, seed = 1 } = {}) {
   const homeOf = (p) => (mics === 2 && p === 2 ? 0 : p);
@@ -187,6 +192,7 @@ export function meeting(voice, { minutes = SCRIPTS.full, mics = 2, seed = 1 } = 
 
   /** People taking turns: 1–4 sentences each, a share of the turns starting before the previous one ends. */
   const discussion = (rng, block, at, len, who, { overlap = 0.25, most = 3.5, replies = 0 } = {}) => {
+    /** @type {{ person: number, start: number, end: number } | null} */
     let prev = null;
     for (;;) {
       const others = who.filter((p) => p !== prev?.person);
@@ -197,6 +203,7 @@ export function meeting(voice, { minutes = SCRIPTS.full, mics = 2, seed = 1 } = 
       const n = 1 + Math.floor(rng() ** 1.6 * 4);
       if (start + 8 > at + len) break;
       let t = start;
+      /** @type {ReturnType<typeof speak> | null} */
       let last = null;
       for (let i = 0; i < n && t + 6 < at + len; i++) {
         last = speak(person, pick(rng, longOf(person), busy(t)), t, block, 'turn', i === 0);
@@ -274,7 +281,11 @@ export function meeting(voice, { minutes = SCRIPTS.full, mics = 2, seed = 1 } = 
   return finishMeeting({ mics, length: t + 2, utterances, events, dropouts, transients, ramps, speaker, blocks, voice: voice.source });
 }
 
-/** A meeting from given utterances ({ person, start, clip }): for short checks that need exact control. */
+/**
+ * A meeting from given utterances ({ person, start, clip }): for short checks that need exact control.
+ * @param {any[]} utterances
+ * @param {{ mics?: number, length?: number }} [opts]
+ */
 export function meetingFrom(utterances, { mics = 2, length } = {}) {
   const list = utterances.map((u) => ({ home: mics === 2 && u.person === 2 ? 0 : u.person, end: u.start + u.clip.samples.length / SR, text: u.clip.text, block: 'R', kind: 'turn', first: true, ...u }));
   const end = Math.max(...list.map((u) => u.end));
@@ -436,6 +447,9 @@ export function memoryCheck(samples, warmSec) {
  * each line is ok, phantom (nobody spoke) or wrong (another person's speech); pairs of lines are "both" when two mics
  * kept the same words; each utterance is caught or not (§14.3). An ok line is solo when nobody else spoke during it. groups: [{ name, start, end }] in session seconds
  * (blocks, windows); each gets its own numbers. partials: [{ sentSec }].
+ * @param {any[]} items
+ * @param {any[]} lines
+ * @param {{ groups?: { name: string, start: number, end: number, window?: boolean }[], partials?: { sentSec: number }[] }} [opts]  window: a 10-minute window rather than a block
  */
 export function judge(items, lines, { groups = [], partials = [] } = {}) {
   const byStart = [...items].sort((a, b) => a.at[0][0] - b.at[0][0]);
@@ -493,6 +507,7 @@ export function judge(items, lines, { groups = [], partials = [] } = {}) {
     const [s, e] = u.at[u.home];
     const text = perMic[u.home].filter((l) => overlap(l.start, l.end, s - 0.3, e + 0.3) > 0).map((l) => l.text).join(' ');
     const caught = sharedWords(u.text, text).count >= Math.ceil(contentWords(u.text) / 2);
+    /** @type {number | null} */
     let offset = null;
     if (caught && u.solo && u.first) {
       const line = perMic[u.home].filter((l) => overlap(l.start, l.end, s, e) > 0).sort((a, b) => overlap(b.start, b.end, s, e) - overlap(a.start, a.end, s, e))[0];
@@ -541,7 +556,11 @@ export function fmt(sec) {
 const pct = (x) => (Number.isFinite(x) ? `${(x * 100).toFixed(1)} %` : '—');
 const num = (x, d = 2) => (Number.isFinite(x) ? x.toFixed(d) : '—');
 
-/** A Markdown table of the groups (blocks or windows); extra: (group) => { column: value }. */
+/**
+ * A Markdown table of the groups (blocks or windows).
+ * @param {any[]} groups
+ * @param {(group: any) => Record<string, unknown>} [extra]  more columns per group
+ */
 export function table(groups, extra = () => ({})) {
   const rows = groups.map((g) => ({
     Part: g.name,

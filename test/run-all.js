@@ -1,3 +1,4 @@
+// @ts-check
 // Runs the test plan (TESTING.md) and writes a report to test-results/<date>_<commit>/.
 //
 //   npm test                       standard tier (~5 min): static, unit, protocol, smoke, scenarios, ui
@@ -13,13 +14,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { ROOT } from './helpers.js';
+/** @import { RunResult, TestCase } from '../types/test.ts' */
 
 const require = createRequire(import.meta.url);
 const args = process.argv.slice(2);
 const tier = ['quick', 'standard', 'full', 'stress'].find((x) => args.includes(x)) ?? 'standard';
+/** @param {string} name */
 const option = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : null);
 const only = option('--only');
 const recordings = option('--recordings');
+/** @param {string} cmd */
 const git = (cmd) => {
   try {
     return execSync(`git ${cmd}`, { cwd: ROOT }).toString().trim();
@@ -34,7 +38,8 @@ const RUN_ID = `${startedAt.toISOString()}_${sha}`;
 const stamp = startedAt.toISOString().slice(0, 19).replace(/[T:]/g, '-');
 const OUT = path.join(ROOT, 'test-results', `${stamp}_${sha}`);
 fs.mkdirSync(OUT, { recursive: true });
-const results = []; // { suite, cases: [{ id, title, status, detail }] , seconds, code }
+/** @type {RunResult[]} */
+const results = []; // one per suite
 
 // A Mac on battery sleeps after a minute without a person at it, and every process stops with it: on 2026-11-04 the
 // 10-minute conversation lost 590 s that way (TESTING.md §12). caffeinate holds the display and the system awake until
@@ -53,11 +58,20 @@ console.log(`run ${RUN_ID}\non ${describeMachine(machine)}\nwith ${describeSoftw
 // One engine per runtime, for the full tier.
 const ENGINES = ['canary-1b-v2', 'whisper-large-v3-turbo', 'jackrabbit-110m-ro'];
 
+/**
+ * One suite as a child process; its result file joins the report.
+ * @param {string} name
+ * @param {string} cmd
+ * @param {string[]} cmdArgs
+ * @param {{ minutes?: number, env?: Record<string, string>, tag?: boolean }} [opts]  minutes: every caller gives it
+ * @returns {Promise<void>}
+ */
 function run(name, cmd, cmdArgs, { minutes, env = {}, tag = false } = {}) {
   return new Promise((resolve) => {
     const resultFile = path.join(OUT, `${name}.json`);
     const log = fs.createWriteStream(path.join(OUT, `${name}.log`));
     // ENV_FILE: the suites never read the user's .env.local, which holds their real API keys (TESTING.md §2).
+    /** @type {NodeJS.ProcessEnv} */
     const childEnv = { ...process.env, TEST_RESULT: resultFile, ENV_FILE: os.devNull, ...env };
     delete childEnv.ELECTRON_RUN_AS_NODE; // set inside VS Code's terminal; it would turn Electron into plain Node
     delete childEnv.ELEVENLABS_API_KEY;
@@ -68,13 +82,14 @@ function run(name, cmd, cmdArgs, { minutes, env = {}, tag = false } = {}) {
     let pending = ''; // output arrives in chunks that can split a line
     child.stdout.on('data', (d) => {
       const lines = (pending + d).split('\n');
-      pending = lines.pop();
+      pending = /** @type {string} */ (lines.pop()); // split() gives at least one piece
       for (const l of lines) if (/^[✔✖◌–]/.test(l)) process.stdout.write(`  ${tag ? `[${name}] ` : ''}${l}\n`); // tag: lanes run in parallel
     });
-    const timer = setTimeout(() => child.kill('SIGKILL'), minutes * 60000);
+    const timer = setTimeout(() => child.kill('SIGKILL'), /** @type {number} */ (minutes) * 60000);
     child.on('exit', (code, signal) => {
       clearTimeout(timer);
       const seconds = Math.round((Date.now() - t0) / 1000);
+      /** @type {TestCase[]} */
       let cases = [];
       try {
         cases = JSON.parse(fs.readFileSync(resultFile, 'utf8')).cases;
@@ -94,12 +109,21 @@ function run(name, cmd, cmdArgs, { minutes, env = {}, tag = false } = {}) {
 
 // ---------- static checks: no server, no model ----------
 function staticChecks() {
+  /** @type {TestCase[]} */
   const cases = [];
+  /**
+   * @param {string} id
+   * @param {string} title
+   * @param {boolean} ok
+   * @param {string} [detail]
+   */
   const check = (id, title, ok, detail = '') => {
     cases.push({ id, title, status: ok ? 'pass' : 'fail', detail });
     console.log(`  ${ok ? '✔' : '✖'} ${id} ${title}${detail ? ` — ${detail}` : ''}`);
   };
+  /** @type {string[]} */
   const files = [];
+  /** @param {string} dir */
   const walk = (dir) => {
     for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
       const rel = path.join(dir, e.name);
@@ -124,6 +148,7 @@ function staticChecks() {
   check('STATIC-02', 'the installers include server.js, lib/ and public/', ['server.js', 'lib/**', 'public/**', 'desktop/main.mjs'].every((p) => packaged.includes(p)), packaged.join(' '));
 
   // A new version needs its manual rebuilt (npm run manual, or the user-manual skill) before it is tagged.
+  /** @type {{ version?: string }} */
   let manual = {};
   try {
     manual = JSON.parse(fs.readFileSync(path.join(ROOT, 'docs', 'manual', 'manual.json'), 'utf8'));
@@ -139,20 +164,20 @@ function staticChecks() {
   const unserved = fs.readdirSync(path.join(ROOT, 'public')).filter((f) => f !== 'index.html' && !served.includes(`'/${f}': ['${f}'`));
   check('STATIC-04', 'the server serves every file in public/', unserved.length === 0, unserved.join(', ') || 'all listed in server.js');
 
-  // The types (docs/typescript-migration.md): both projects pass tsc without emitting, the server side (tsconfig.json:
-  // server.js, lib/, scripts/, desktop/, test/, types/) and the page (tsconfig.web.json: public/). Node runs .ts files
-  // itself and node --check cannot parse them, so this is also the syntax check for every .ts file.
+  // The types (docs/typescript-migration.md): every project passes tsc without emitting: the server side (tsconfig.json:
+  // server.js, lib/, scripts/, desktop/, types/), the page (tsconfig.web.json: public/) and the tests (tsconfig.test.json:
+  // test/). Node runs .ts files itself and node --check cannot parse them, so this is also the syntax check for every .ts file.
   const tsc = path.join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
-  const typeErrors = ['tsconfig.json', 'tsconfig.web.json'].flatMap((project) => {
+  const typeErrors = ['tsconfig.json', 'tsconfig.web.json', 'tsconfig.test.json'].flatMap((project) => {
     try {
       execFileSync(process.execPath, [tsc, '--noEmit', '-p', path.join(ROOT, project)], { cwd: ROOT, stdio: 'pipe' });
       return [];
-    } catch (err) {
+    } catch (/** @type {any} */ err) {
       const lines = `${err.stdout ?? ''}${err.stderr ?? ''}`.trim().split('\n').filter(Boolean);
       return [`${project}: ${lines[0] ?? err.message}${lines.length > 1 ? ` (+${lines.length - 1} lines)` : ''}`];
     }
   });
-  check('STATIC-06', 'the types check: tsc passes on the server side and on the page', typeErrors.length === 0, typeErrors.join('; ') || 'tsconfig.json, tsconfig.web.json');
+  check('STATIC-06', 'the types check: tsc passes on the server side, the page and the tests', typeErrors.length === 0, typeErrors.join('; ') || 'tsconfig.json, tsconfig.web.json, tsconfig.test.json');
 
   // The plan and the tests must agree: every test id in the code is described in TESTING.md, and every
   // automated id in TESTING.md exists in the code.
@@ -161,8 +186,8 @@ function staticChecks() {
   const inCode = new Set(files.filter((f) => f.startsWith('test')).flatMap((f) => fs.readFileSync(path.join(ROOT, f), 'utf8').match(ID) ?? []));
   for (const c of cases) inCode.add(c.id);
   const planRows = plan.split('\n').filter((l) => /^\| `?[A-Z]+-[A-Z0-9-]+`? \|/.test(l));
-  const automated = new Set(planRows.filter((l) => /\| auto \|/.test(l)).map((l) => l.match(ID)?.[0]).filter(Boolean));
-  const described = new Set(planRows.map((l) => l.match(ID)?.[0]).filter(Boolean));
+  const automated = new Set(/** @type {string[]} */ (planRows.filter((l) => /\| auto \|/.test(l)).map((l) => l.match(ID)?.[0]).filter(Boolean)));
+  const described = new Set(/** @type {string[]} */ (planRows.map((l) => l.match(ID)?.[0]).filter(Boolean)));
   const undocumented = [...inCode].filter((id) => !described.has(id) && !id.endsWith('-RUN'));
   const missing = [...automated].filter((id) => !inCode.has(id) && !/^SMOKE-/.test(id));
   check('STATIC-03', 'TESTING.md lists every test in the code, and every automated test in it exists', !undocumented.length && !missing.length,
@@ -172,7 +197,7 @@ function staticChecks() {
 
 // ---------- the stress tier (TESTING.md §14) ----------
 const node = process.execPath;
-const electron = require('electron'); // in Node this is the path to the Electron binary
+const electron = /** @type {string} */ (/** @type {unknown} */ (require('electron'))); // in Node this is the path to the Electron binary
 
 /** Phase A: lanes in parallel (steady loads); phase B: alone (it measures limits). --only STRESS-<GROUP>: that group. */
 async function stressTier() {
@@ -180,8 +205,17 @@ async function stressTier() {
   const hours = Number(option('--hours') ?? 4);
   const pass = [...(short ? ['--short'] : []), ...(option('--hours') ? ['--hours', String(hours)] : []), ...(recordings ? ['--recordings', recordings] : [])];
   const env = { STRESS_OUT: path.join(OUT, 'stress'), NODE_BIN: node };
+  /**
+   * @param {string} group
+   * @param {number} minutes
+   */
   const server = (group, minutes) => () => run(`stress-${group.replace(/,/g, '-')}`, node, ['test/stress.js', '--group', group, ...pass], { minutes, env, tag: true });
+  /**
+   * @param {string} group
+   * @param {number} minutes
+   */
   const page = (group, minutes) => () => run(`stress-${group}`, electron, ['test/ui/stress.mjs', '--group', group, ...pass], { minutes, env, tag: true });
+  /** @type {Record<string, () => Promise<void>>} */
   const groups = {
     soak: page('soak', 150),
     meet: server('meet', short ? 20 : (hours * 60) / 8 + 30),
@@ -212,6 +246,7 @@ async function stressTier() {
 }
 
 // ---------- the tiers ----------
+/** @type {[name: string, level: string, step: () => unknown][]} */
 const plan = [
   ['static', 'quick', () => staticChecks()],
   ['unit', 'quick', () => run('unit', node, ['test/unit.js'], { minutes: 3 })],
@@ -235,8 +270,13 @@ const plan = [
   ['recordings', 'full', () => (recordings ? run('recordings', node, ['test/scenarios.js', '--recordings', recordings], { minutes: 20 }) : null)],
   ['stress', 'stress', stressTier],
 ];
+/** @type {Record<string, number>} */
 const rank = { quick: 0, standard: 1, full: 2, stress: 3 };
 // The stress tier runs alone (with the static checks); --only STRESS-<GROUP> runs one of its groups.
+/**
+ * @param {string} name
+ * @param {string} level
+ */
 const wanted = (name, level) => (only?.startsWith('STRESS-') ? name === 'stress' : only ? name === only : tier === 'stress' ? ['static', 'stress'].includes(name) : rank[level] <= rank[tier]);
 for (const [name, level, step] of plan) {
   if (!wanted(name, level)) continue;
@@ -246,16 +286,21 @@ for (const [name, level, step] of plan) {
 
 // ---------- report ----------
 const all = results.flatMap((r) => r.cases.map((c) => ({ ...c, suite: r.suite })));
+/** @param {TestCase['status']} s */
 const count = (s) => all.filter((c) => c.status === s).length;
 const dirty = git('status --porcelain') ? ' (uncommitted changes)' : '';
 const finishedAt = new Date();
 /** "2026-11-04 18:27:03.512 (UTC+02:00)": the moment as a clock on this computer showed it. */
-const local = (d) => {
+const local = (/** @type {Date} */ d) => {
+  /**
+   * @param {number} n
+   * @param {number} [w]
+   */
   const pad = (n, w = 2) => String(n).padStart(w, '0');
   const off = -d.getTimezoneOffset();
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)} (UTC${off < 0 ? '-' : '+'}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)})`;
 };
-const elapsed = finishedAt - startedAt;
+const elapsed = finishedAt.getTime() - startedAt.getTime();
 const compute = machine.compute?.length ? machine.compute.map((d) => `${d.name}${d.description ? ` (${d.description.trim()})` : ''}${d.memoryGb ? `, ${d.memoryGb} GB` : ''}`).join('; ') : 'none';
 const signature = `run \`${RUN_ID}\`, started ${local(startedAt)}`;
 const branch = git('rev-parse --abbrev-ref HEAD');

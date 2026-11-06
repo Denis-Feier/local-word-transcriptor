@@ -1,3 +1,4 @@
+// @ts-check
 // The stress tier, in the page (TESTING.md §14): Chromium (Electron) with the fake mics of preload.cjs.
 //   page: thousands of lines from a fake server: speed, memory, Copy/Download, reading back, projector, Clear
 //   soak: a long meeting recorded in real time through the page, on the default model
@@ -333,11 +334,12 @@ async function soak() {
     // A line said over someone else's speech waits for the other mic's sentence (decision #6), so it is held to a
     // looser limit; solo lines, most of a meeting where people take turns, must come within 2 s.
     const inWindow = (g) => (l) => (l.start + l.end) / 2 >= g.start && (l.start + l.end) / 2 < g.end;
-    for (const g of j.groups) {
+    const groups = /** @type {((typeof j.groups)[number] & { delays?: number[], overlapDelays?: number[] })[]} */ (j.groups); // the two lists are added here
+    for (const g of groups) {
       g.delays = j.lines.filter(inWindow(g)).filter((l) => l.solo).map((l) => l.delay);
       g.overlapDelays = j.lines.filter(inWindow(g)).filter((l) => !l.solo).map((l) => l.delay);
     }
-    const full = j.groups.filter((g) => Math.min(g.end, length) - g.start >= 120); // at least 2 minutes of meeting
+    const full = groups.filter((g) => Math.min(g.end, length) - g.start >= 120); // at least 2 minutes of meeting
     const windowsOk = full.every((g) => (g.solo.n + g.overlapped.n ? (g.solo.caught + g.overlapped.caught) / (g.solo.n + g.overlapped.n) : 1) >= 0.95 && g.wrong === 0);
     const p95 = full.map((g) => quantile(g.delays, 0.95));
     const overlapP95 = full.map((g) => quantile(g.overlapDelays, 0.95)).filter(Number.isFinite);
@@ -422,7 +424,7 @@ async function net() {
     for (const [minute, outage] of plan) {
       await sleep(start + minute * 60000 - Date.now());
       const shown = await finalTexts(win);
-      process.kill(server.pid, 'SIGKILL');
+      process.kill(/** @type {number} */ (server.pid), 'SIGKILL'); // a started server has a pid
       const before = sockets().length;
       await sleep(outage * 1000);
       server = await startServer({ model: MODEL, env });
@@ -467,7 +469,7 @@ async function net() {
       return said <= size && size - said <= 2 * 3200;
     });
     // One transcript for the whole recording, its times never going back on a mic.
-    const times = (txt[0] ?? []).map((l) => l.match(/^\[([\d:]+)\] (?:(Mic \d+): )?/)).filter(Boolean)
+    const times = /** @type {RegExpMatchArray[]} */ ((txt[0] ?? []).map((l) => l.match(/^\[([\d:]+)\] (?:(Mic \d+): )?/)).filter(Boolean))
       .map(([, at, mic]) => ({ mic, sec: at.split(':').reduce((sum, x) => sum * 60 + Number(x), 0) }));
     const latest = {};
     const backwards = times.filter(({ mic, sec }) => {
@@ -504,11 +506,11 @@ app.whenReady().then(async () => {
   session.defaultSession.setPermissionCheckHandler(() => true);
   try {
     await { page: pageGroup, soak, net }[group]();
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     t.check(`STRESS-${group.toUpperCase()}-RUN`, `the ${group} group ran to the end`, false, err.stack);
   } finally {
     fs.rmSync(SPEAKERS, { recursive: true, force: true });
     t.finish();
-    app.exit(process.exitCode ?? 0);
+    app.exit(/** @type {number} */ (process.exitCode ?? 0)); // a number here, or unset
   }
 });
