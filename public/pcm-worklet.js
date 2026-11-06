@@ -1,9 +1,11 @@
+// @ts-check
 // Runs on the audio thread: converts each mic (one input per mic) to 16 kHz mono Float32 and posts ~100 ms chunks.
 // A chunk is an ArrayBuffer: a Uint32 mic count, then each mic's 1600 samples in turn, all from the same moment.
 const TARGET_RATE = 16000;
 const CHUNK = 1600;
 
 class PcmCapture extends AudioWorkletProcessor {
+  /** @param {{ processorOptions: { mics: number } }} options */
   constructor({ processorOptions }) {
     super();
     this.mics = processorOptions.mics;
@@ -16,11 +18,14 @@ class PcmCapture extends AudioWorkletProcessor {
   }
 
   newChunk() {
+    /** @type {ArrayBuffer} */
     this.buffer = new ArrayBuffer(4 + this.mics * CHUNK * 4);
     new Uint32Array(this.buffer, 0, 1)[0] = this.mics;
+    /** @type {Float32Array} */
     this.chunk = new Float32Array(this.buffer, 4);
   }
 
+  /** @param {Float32Array[][]} inputs  one per mic, each its channels */
   process(inputs) {
     // A mic that is not connected (yet, or any more) has no channels: it records silence, so the others stay in step.
     const channels = inputs.map((input) => input[0]);

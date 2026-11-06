@@ -93,3 +93,19 @@ export interface DecodedWav {
   sampleRate: number;
   samples: Float32Array;
 }
+
+// ---------- the page's audio backlog (public/backlog.js; here, not in page.ts, because the unit tests import it) ----------
+
+export interface BacklogTaken {
+  /** Oldest first. */
+  chunks: ArrayBuffer[];
+  dropped: number;
+}
+
+/** createBacklog(): audio kept while the server is unreachable (#11). */
+export interface Backlog {
+  push(chunk: ArrayBuffer): void;
+  readonly dropped: number;
+  /** Everything kept and how many chunks were dropped; empties the backlog. */
+  take(): BacklogTaken;
+}

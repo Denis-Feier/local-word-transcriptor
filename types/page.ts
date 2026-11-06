@@ -2,6 +2,8 @@
 // Web project only (tsconfig.web.json): these use the DOM's types. Phase 1 of docs/typescript-migration.md.
 import type { ClientMessage, Spoken, StageSnapshot, TuningMessage } from './protocol.ts';
 import type { DetectorName } from './audio.ts';
+
+export type { Backlog, BacklogTaken } from './audio.ts';
 import type { TranscriberState } from './engine.ts';
 
 export type { CaptionRow, Spoken, StageSnapshot } from './protocol.ts';
@@ -138,22 +140,6 @@ export interface Speaker extends MicFeed {
 export interface Inputs {
   inputs: MediaDeviceInfo[];
   defaultId: string;
-}
-
-// ---------- backlog (backlog.js) ----------
-
-export interface BacklogTaken {
-  /** Oldest first. */
-  chunks: ArrayBuffer[];
-  dropped: number;
-}
-
-/** createBacklog(): audio kept while the server is unreachable (#11). */
-export interface Backlog {
-  push(chunk: ArrayBuffer): void;
-  readonly dropped: number;
-  /** Everything kept and how many chunks were dropped; empties the backlog. */
-  take(): BacklogTaken;
 }
 
 // ---------- transcript (app.js, order.js) ----------
