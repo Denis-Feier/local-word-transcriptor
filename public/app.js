@@ -1,4 +1,3 @@
-// @ts-check
 import { createStage } from './stage.js';
 import { createSettings } from './settings.js';
 import { listInputs, openCapture } from './mics.js';

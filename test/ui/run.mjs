@@ -1,4 +1,3 @@
-// @ts-check
 // The page in Chromium (Electron, the same engine as the desktop app), driven like a person would, with fake
 // microphones that play the test speakers (preload.cjs). Starts its own servers. Screenshots go to UI_OUT
 // (default: a temp folder, printed at the end) for a person or an AI to look at.

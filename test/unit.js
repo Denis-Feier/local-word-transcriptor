@@ -1,4 +1,3 @@
-// @ts-check
 // Logic checks that need no speech model (seconds). The crosstalk, session and detector-reuse checks use the Silero
 // voice detector (models/silero_vad.onnx) and are skipped without it. Case ids match TESTING.md.
 //

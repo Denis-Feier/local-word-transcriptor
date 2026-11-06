@@ -1,4 +1,3 @@
-// @ts-check
 // Two-mic conversations streamed through a real server and model: each mic must get its own speaker's
 // sentences, never the other's, and never the same sentence twice. Speakers are cut from the fixture; with
 // --recordings two real recordings are used instead (they stay on this computer; never commit them).

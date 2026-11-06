@@ -1,4 +1,3 @@
-// @ts-check
 // The stress tier, server side (TESTING.md §14): hours-long synthetic meetings and what goes wrong in long meetings,
 // against real servers. Groups run separately so run-all.js can put them in parallel lanes.
 //

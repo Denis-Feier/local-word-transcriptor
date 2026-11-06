@@ -1,4 +1,3 @@
-// @ts-check
 // The synthetic meeting for the stress tier (TESTING.md §14.2): a script of blocks (who talks, the room, events),
 // voiced from the sentence bank, played 100 ms at a time the way the page sends it, with the ground truth of who
 // said what and when, and the judge that compares a server's lines with that truth (§14.3).

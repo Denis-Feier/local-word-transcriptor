@@ -1,4 +1,3 @@
-// @ts-check
 // Downloads models into models/, where they stay for offline use.
 //   npm run setup                  voice detector + the default model (Canary 1B v2)
 //   npm run setup -- <model-id>    another model (or several, space separated)

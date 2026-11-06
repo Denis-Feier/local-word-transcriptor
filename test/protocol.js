@@ -1,4 +1,3 @@
-// @ts-check
 // The server as the page (and other clients) use it: static files, WebSocket messages, settings, files,
 // mic layouts, broken input, startup and shutdown. Starts its own servers (Parakeet 110M by default).
 //

@@ -1,4 +1,3 @@
-// @ts-check
 // Run several models over the same recording and compare their text, speed and (optionally) accuracy.
 //
 //   npm run compare -- transcripts/2026-10-29_21-00-00.wav

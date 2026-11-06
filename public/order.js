@@ -1,4 +1,3 @@
-// @ts-check
 // The order of the transcript's lines: the order they were spoken in. The page (its lines, Copy and Download) and the
 // server (the saved .txt, lib/session.js) both sort with this one rule, so the two cannot disagree (#7, #50).
 /** @import { Spoken } from '../types/protocol.ts' */

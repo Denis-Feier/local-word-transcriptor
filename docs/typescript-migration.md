@@ -278,6 +278,12 @@ library lacks. The page's imports of its own modules became relative. Numbers wr
 go through `String()`, the stage and settings handles start without a null, a final line is a `Line` with its `end`,
 and a stage button with no hook calls it optionally (the button is hidden then). Casts where the DOM's types are wider
 than the markup. One gate for the three stacked branches: standard tier 216 / 0 / 2 / 0.
+
+What happened in N8 (2026-11-07, `ts/2-n8`): `checkJs: true` in `tsconfig.json` and `tsconfig.web.json` (the test
+project inherits it), and the 52 `// @ts-check` lines gone. All three projects pass; quick tier 149 / 0 / 1 / 0 with
+`STATIC-06` naming the three projects. Phase 2 is complete: every JavaScript file in the app is type-checked under
+`strict` (the suites without `noImplicitAny`), with the shared shapes in `types/` and the rest as JSDoc. Phase 3 can
+rename files mechanically.
 `strict`, and the only `any` left are the ones written on purpose with a reason.
 
 ## 6. Phase 3 — the server side becomes `.ts`
@@ -380,7 +386,7 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 | Phase 2 N6 | `ts/2-n6` | done, awaiting merge | 2026-11-07 | the desktop app; standard tier 216 / 0 / 2 / 0; the app started and quit once |
 | Phase 2 N7 | `ts/2-n7` | done, awaiting merge | 2026-11-07 | the test suites, in their own project; standard tier  |
 | Phase 2 B1, B2, B3 | `ts/2-b1`, `ts/2-b2`, `ts/2-b3` | done, awaiting merge | 2026-11-07 | the page; one standard tier on the tip: 216 / 0 / 2 / 0 |
-| Phase 2 N8 | `ts/2-n8` | in progress | 2026-11-07 | |
+| Phase 2 N8 | `ts/2-n8` | done, awaiting merge | 2026-11-07 | `checkJs` on everywhere, no pragmas; quick tier 149 / 0 / 1 / 0. **Phase 2 complete.** |
 | Phase 3 N1 … N7 | `ts/3-<batch>` | not started | | E1 decides `desktop/main.ts` |
 | Phase 4 | `ts/4-web` | not started | | D2 confirmed? |
 | Phase 5 | `ts/5-tighten` | not started | | |

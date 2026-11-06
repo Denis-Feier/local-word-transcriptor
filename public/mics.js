@@ -1,4 +1,3 @@
-// @ts-check
 // Microphones: lists the computer's audio inputs and records several of them at once.
 // How a mic is connected (built-in, USB, jack, Bluetooth) doesn't matter: any input the browser lists can be used.
 // All mics feed one AudioContext and one worklet, so every chunk holds the same moment from each mic.

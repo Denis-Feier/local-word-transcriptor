@@ -1,4 +1,3 @@
-// @ts-check
 // End-to-end check that runs on any OS (CI runs it before building the installers): starts the server with
 // a fresh models folder, lets it download the small Romanian model by itself, streams test/fixtures/ro.wav
 // and requires the expected words in the transcript. Then streams it again as two mics, where the second mic only

@@ -1,4 +1,3 @@
-// @ts-check
 // The shareable benchmark: every installed local model through accuracy, speed, live-text steadiness, noise, long
 // sentences and silence, on open audio (FLEURS Romanian), sized to fit about an hour, exported with a description of
 // the computer so the results can be sent back and compared across machines.

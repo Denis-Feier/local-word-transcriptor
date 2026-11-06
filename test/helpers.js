@@ -1,4 +1,3 @@
-// @ts-check
 // Shared by the test scripts (see TESTING.md): an isolated server per test, the streaming client,
 // two "speakers" cut from the fixture, a room simulator for two-mic tests, and pass/fail bookkeeping.
 import { execFile, spawn } from 'node:child_process';

@@ -1,4 +1,3 @@
-// @ts-check
 // Runs on the audio thread: converts each mic (one input per mic) to 16 kHz mono Float32 and posts ~100 ms chunks.
 // A chunk is an ArrayBuffer: a Uint32 mic count, then each mic's 1600 samples in turn, all from the same moment.
 const TARGET_RATE = 16000;

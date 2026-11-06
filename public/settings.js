@@ -1,4 +1,3 @@
-// @ts-check
 // Settings panel: speech detection (applied live on the server, shared by all windows) and
 // projector display (stored in this browser).
 import { SIZE, THEMES, loadPrefs } from './stage.js';

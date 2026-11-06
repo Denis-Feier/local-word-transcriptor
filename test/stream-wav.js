@@ -1,4 +1,3 @@
-// @ts-check
 // Streams a 16 kHz mono WAV file to the running server in real time, exactly like the browser does,
 // and prints partial and final transcripts.
 //

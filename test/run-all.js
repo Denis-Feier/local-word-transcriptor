@@ -1,4 +1,3 @@
-// @ts-check
 // Runs the test plan (TESTING.md) and writes a report to test-results/<date>_<commit>/.
 //
 //   npm test                       standard tier (~5 min): static, unit, protocol, smoke, scenarios, ui

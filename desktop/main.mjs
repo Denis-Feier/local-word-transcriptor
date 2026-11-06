@@ -1,4 +1,3 @@
-// @ts-check
 // Desktop app (Electron): runs the transcription server in the background and shows its page in a window.
 // Users install a .dmg / .exe and never see a terminal. From source: npm run app
 import { app, BrowserWindow, Menu, dialog, screen, session, shell, systemPreferences, utilityProcess } from 'electron';

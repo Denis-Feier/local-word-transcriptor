@@ -1,4 +1,3 @@
-// @ts-check
 // Speaker: plays the mics in the room through an output the person picks, so everyone hears the person talking.
 // Any output the computer lists can be used: its own speakers, a jack, USB or Bluetooth speaker, a projector's HDMI
 // sound. Separate from the transcription: its own streams of the mics, at full quality and with the least delay.

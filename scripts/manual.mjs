@@ -1,4 +1,3 @@
-// @ts-check
 // Builds the user manual in docs/manual/: screenshots of the page, then one PDF per language from
 // manual.<lang>.html. The page runs against its own server with the UI test's fake microphones
 // (test/ui/preload.cjs) and the synthetic test voices, so it never touches a real microphone, the saved settings

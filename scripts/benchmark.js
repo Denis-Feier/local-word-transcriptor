@@ -1,4 +1,3 @@
-// @ts-check
 // Scores the models on the whole FLEURS Romanian test set: 883 recorded sentences with checked transcripts
 // (Google, CC-BY-4.0). Downloads the set (~500 MB) into benchmarks/data the first time. The one-hour, shareable
 // benchmark of everything (accuracy, live text, noise, long sentences, silence) is scripts/benchmark-suite.js.

@@ -1,4 +1,3 @@
-// @ts-check
 // Projector view: the last few sentences in large type, centred, plus the sentence being spoken.
 // Used by the main page (Projector button) and by the caption-only window (/?display).
 

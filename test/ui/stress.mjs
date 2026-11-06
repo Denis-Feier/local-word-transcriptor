@@ -1,4 +1,3 @@
-// @ts-check
 // The stress tier, in the page (TESTING.md §14): Chromium (Electron) with the fake mics of preload.cjs.
 //   page: thousands of lines from a fake server: speed, memory, Copy/Download, reading back, projector, Clear
 //   soak: a long meeting recorded in real time through the page, on the default model

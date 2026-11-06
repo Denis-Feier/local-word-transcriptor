@@ -1,4 +1,3 @@
-// @ts-check
 // Audio recorded while the server is unreachable, kept until it is back. An outage longer than the limit keeps the
 // newest audio and drops the oldest, so the page catches up on what is being said now, and says how much was lost (#11).
 
