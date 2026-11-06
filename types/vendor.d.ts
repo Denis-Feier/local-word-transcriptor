@@ -1,5 +1,13 @@
 // Declarations for dependencies that ship none: only the surface this app uses (docs/typescript-migration.md, E11).
 
+// Inside the desktop app the server runs as an Electron utility process, which gives it a port to its parent;
+// desktop/main.mjs sends 'shutdown' over it (server.js). Node's own types do not know the port.
+declare namespace NodeJS {
+  interface Process {
+    parentPort?: { on(event: 'message', listener: (e: { data: unknown }) => void): void };
+  }
+}
+
 declare module 'sherpa-onnx-node' {
   /** The Silero voice detector's settings, as lib/vad.js builds them. */
   export interface SileroVadConfig {

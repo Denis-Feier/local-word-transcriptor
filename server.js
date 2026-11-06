@@ -1,3 +1,4 @@
+// @ts-check
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,8 +8,11 @@ import { MODELS, SILERO_VAD, isInstalled, isAvailable, installModel, download } 
 import { Transcriber } from './lib/transcriber.js';
 import { Session } from './lib/session.js';
 import { TUNING, tuningFrom, sanitizeTuning, applyTuning } from './lib/tuning.js';
+/** @import { Settings, TuningPatch } from './types/config.ts' */
+/** @import { ClientMessage, ModelsMessage, ServerMessage, StatusMessage, TuningMessage } from './types/protocol.ts' */
 
 const PUBLIC = path.join(ROOT, 'public');
+/** @type {Record<string, [file: string, type: string]>} */
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
@@ -22,6 +26,7 @@ const STATIC = {
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
 };
 
+/** @returns {Settings} */
 const readSettings = () => {
   try {
     return JSON.parse(fs.readFileSync(config.settingsFile, 'utf8'));
@@ -29,11 +34,12 @@ const readSettings = () => {
     return {};
   }
 };
+/** @param {Partial<Settings>} patch */
 const writeSettings = (patch) => {
   try {
     fs.mkdirSync(path.dirname(config.settingsFile), { recursive: true });
     fs.writeFileSync(config.settingsFile, JSON.stringify({ ...readSettings(), ...patch }, null, 2));
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     console.error(`Could not save settings: ${err.message}`);
   }
 };
@@ -44,17 +50,23 @@ applyTuning(config, sanitizeTuning(readSettings().tuning));
 
 // Models this computer can run; the rest are left out of the menu.
 const AVAILABLE = MODELS.filter((m) => isAvailable(m, { whisperBin: config.whisper.bin }));
+/** @param {string} id */
 const findAvailable = (id) => AVAILABLE.find((m) => m.id === id);
 
 const transcriber = new Transcriber(config);
+/** @type {Map<string, number>} */
 const progress = new Map(); // model id -> download fraction
+/** @type {Set<(msg: ServerMessage) => void>} */
 const clients = new Set();
+/** @type {Set<Session>} */
 const sessions = new Set();
 
+/** @param {ServerMessage} msg */
 const broadcast = (msg) => {
   for (const send of clients) send(msg);
 };
 
+/** @returns {ModelsMessage} */
 const modelsMessage = () => ({
   type: 'models',
   active: transcriber.model?.id ?? null,
@@ -73,10 +85,13 @@ const modelsMessage = () => ({
   })),
 });
 
+/** @returns {StatusMessage} */
 const statusMessage = () => ({ type: 'status', ...transcriber.status(), language: config.language });
 
+/** @returns {TuningMessage} */
 const tuningMessage = () => ({ type: 'tuning', values: tuningFrom(config), defaults: DEFAULT_TUNING, ranges: TUNING });
 
+/** @param {{ values?: TuningPatch, reset?: boolean }} msg */
 function updateTuning({ values, reset }) {
   applyTuning(config, reset ? DEFAULT_TUNING : sanitizeTuning(values));
   writeSettings({ tuning: reset ? undefined : tuningFrom(config) });
@@ -84,6 +99,7 @@ function updateTuning({ values, reset }) {
   broadcast(tuningMessage());
 }
 
+/** @param {string} id */
 function selectModel(id) {
   if (!findAvailable(id)) return;
   writeSettings({ model: id });
@@ -91,6 +107,7 @@ function selectModel(id) {
   broadcast(modelsMessage());
 }
 
+/** @param {string} id */
 async function install(id) {
   const model = findAvailable(id);
   if (!model || isInstalled(model) || progress.has(id)) return;
@@ -109,7 +126,7 @@ async function install(id) {
     progress.delete(id);
     console.log(`  ✔ downloaded ${model.label}`);
     selectModel(id);
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     progress.delete(id);
     broadcast({ type: 'error', message: `Download of ${model.label} failed: ${err.message}` });
     broadcast(modelsMessage());
@@ -119,12 +136,13 @@ async function install(id) {
 const MB = 1024 * 1024;
 
 const server = http.createServer((req, res) => {
-  const url = new URL(req.url, 'http://localhost');
+  const url = new URL(/** @type {string} */ (req.url), 'http://localhost'); // a request always has one
   // What the server's memory is made of, for the stress tests (#48): V8's heap, the memory V8 tracks outside it (audio
   // buffers), and, from the total, the native rest (an in-process model and its GPU buffers, the voice detectors).
   // Only with DEBUG, which the tests set.
   if (process.env.DEBUG && req.method === 'GET' && url.pathname === '/debug/memory') {
     const { rss, heapTotal, heapUsed, external, arrayBuffers } = process.memoryUsage();
+    /** @param {number} x */
     const mb = (x) => Math.round(x / MB);
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' })
       .end(JSON.stringify({ rss: mb(rss), heapTotal: mb(heapTotal), heapUsed: mb(heapUsed), external: mb(external), arrayBuffers: mb(arrayBuffers) }));
@@ -143,6 +161,7 @@ const server = http.createServer((req, res) => {
 
 // Only this server's own page may connect. Any website open in the browser could otherwise reach ws://localhost,
 // switch to the cloud model and so send the room's audio off the computer. Tools that are not browsers send no Origin.
+/** @param {{ origin: string, req: import('node:http').IncomingMessage }} info */
 const sameOrigin = ({ origin, req }) => {
   if (!origin) return true;
   try {
@@ -157,7 +176,8 @@ const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 1 << 20, veri
 wss.on('connection', (ws, req) => {
   // The page connects to /ws?mics and prefixes every audio frame with its number of mics;
   // other clients (test/stream-wav.js) send plain mono audio.
-  const framed = new URL(req.url, 'http://localhost').searchParams.has('mics');
+  const framed = new URL(/** @type {string} */ (req.url), 'http://localhost').searchParams.has('mics');
+  /** @param {ServerMessage} msg */
   const send = (msg) => {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
   };
@@ -172,7 +192,8 @@ wss.on('connection', (ws, req) => {
   ws.on('message', (data, isBinary) => {
     if (isBinary) {
       // Float32 PCM, 16 kHz. Copy out so the view is 4-byte aligned.
-      const bytes = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength - (data.byteLength % 4));
+      const buf = /** @type {Buffer} */ (data); // ws hands binary frames over as one Buffer
+      const bytes = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength - (buf.byteLength % 4));
       if (!framed) {
         session.audio(new Float32Array(bytes));
         return;
@@ -186,6 +207,7 @@ wss.on('connection', (ws, req) => {
       session.audio(samples.subarray(0, (samples.length / count) * used), used);
       return;
     }
+    /** @type {ClientMessage} */
     let msg;
     try {
       msg = JSON.parse(data.toString());
@@ -210,6 +232,7 @@ wss.on('connection', (ws, req) => {
 
 transcriber.on('state', () => broadcast(statusMessage()));
 
+/** @param {NodeJS.ErrnoException} err */
 const onListenError = (err) => {
   console.error(err.code === 'EADDRINUSE'
     ? `\n✖ Port ${config.port} is already in use. Is the transcriber already running in another terminal?\n  Stop it, or pick another port: PORT=${config.port + 1} npm start\n`
@@ -225,7 +248,7 @@ server.listen(config.port, config.host, async () => {
 
   if (config.vad.engine === 'silero' && !fs.existsSync(config.vad.sileroModel)) {
     console.log('  Downloading Silero VAD (0.6 MB) …');
-    await download(SILERO_VAD.url, path.join(MODELS_DIR, SILERO_VAD.file)).catch((err) => {
+    await download(SILERO_VAD.url, path.join(MODELS_DIR, SILERO_VAD.file)).catch((/** @type {any} */ err) => {
       console.error(`  Could not download Silero VAD, using the loudness detector instead: ${err.message}`);
     });
   }

@@ -235,6 +235,14 @@ and the tests' stand-ins both fit; the cloud engine takes its connection and que
 (`Awaited<ReturnType<…connect>>`), and its two private resolver fields start as no-ops because the checker cannot see
 that a Promise executor runs at once. `clearTimeout(x)` on a `Timeout | null` field became `clearTimeout(x ??
 undefined)`, Node's types taking no null. Full tier: 236 / 0 / 5 / 0.
+
+What happened in N4 (2026-11-06, `ts/2-n4`): `lib/session.js` and `server.js`, with four typedefs for the session's
+records (a mic's channel, a sentence from the moment it goes to the model, a held line, an audio file) and the
+server's messages typed against `types/protocol.ts` end to end: every `send()` is checked against the contract, and
+the page's messages are narrowed by `type` in the switch. Casts where the code knows what the checker cannot (the
+current sentence during its own callbacks, the transcript's name once claimed, the gate when the callers checked);
+`Number.isSafeInteger()` does not narrow, so `resume()` names its count once. `types/vendor.d.ts` declares the
+`parentPort` an Electron utility process has. Full tier: 236 / 0 / 5 / 0.
 `strict`, and the only `any` left are the ones written on purpose with a reason.
 
 ## 6. Phase 3 — the server side becomes `.ts`
@@ -332,7 +340,8 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 | Phase 2 N1 | `ts/2-n1` | done, awaiting merge | 2026-11-06 | ten files; both projects green; standard tier 216 / 0 / 2 / 0 |
 | Phase 2 N2 | `ts/2-n2` | done, awaiting merge | 2026-11-06 | six files; full tier 236 / 0 / 5 / 0 |
 | Phase 2 N3 | `ts/2-n3` | done, awaiting merge | 2026-11-06 | six files; full tier 236 / 0 / 5 / 0 |
-| Phase 2 N4 … N8, B1 … B3 | `ts/2-<batch>` | drafted in the worktree, each waits for its gate | | |
+| Phase 2 N4 | `ts/2-n4` | done, awaiting merge | 2026-11-06 | session and server; full tier 236 / 0 / 5 / 0 |
+| Phase 2 N5 … N8, B1 … B3 | `ts/2-<batch>` | drafted in the worktree, each waits for its gate | | |
 | Phase 3 N1 … N7 | `ts/3-<batch>` | not started | | E1 decides `desktop/main.ts` |
 | Phase 4 | `ts/4-web` | not started | | D2 confirmed? |
 | Phase 5 | `ts/5-tighten` | not started | | |
