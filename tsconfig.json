@@ -18,5 +18,5 @@
     "skipLibCheck": true
   },
   "include": ["server.js", "lib", "scripts", "desktop", "test", "types"],
-  "exclude": ["node_modules", "test/fixtures"]
+  "exclude": ["node_modules", "test/fixtures", "types/page.ts"]
 }

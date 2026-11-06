@@ -175,6 +175,14 @@ Review rules: every `send({ type: … })` in `server.js` and `lib/session.js`, e
 every field read off a message, every entry of `MODELS`, is accounted for; `PROT-*` tests are the second reader.
 Done when `npm run typecheck` still passes (the files are checked but unused) and the owner has read the folder.
 
+What happened (2026-11-06): seven files, `types/config.ts`, `model.ts`, `engine.ts`, `audio.ts`, `protocol.ts`,
+`page.ts` and `test.ts`, next to Phase 0's `vendor.d.ts`. `page.ts` needs the DOM's types, so it belongs to the web
+project alone (`tsconfig.web.json` includes it, `tsconfig.json` excludes it); `CaptionRow` and `StageSnapshot` live in
+`protocol.ts`, where the caption-window channel is, so neither project sees the other's globals. `Model` is a union
+on `engine` over a base whose per-engine fields are optional, so code that reads `model.file ?? model.dir` on any
+model still types. The `final` message is one interface with optional times: its withdrawn and published forms
+share a `type`. Both projects pass with the folder in; nothing imports it yet.
+
 ## 5. Phase 2 — the types into the JavaScript (JSDoc, `// @ts-check`)
 
 The longest phase, in batches from the leaves of the module graph to its roots, so a module is annotated only after
@@ -292,8 +300,8 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 | Step | Branch | Status | Date | Notes |
 |---|---|---|---|---|
 | Plan | `feature/typescript-plan` | written | 2026-11-06 | this document, from the scan of `133a274` |
-| Phase 0 | `ts/0-tooling` | done, awaiting merge | 2026-11-06 | TypeScript 7.0.2; `STATIC-06`; both projects green on the untouched code |
-| Phase 1 | `ts/1-types` | not started | | |
+| Phase 0 | `ts/0-tooling` | done (`9254b4f`), awaiting merge | 2026-11-06 | TypeScript 7.0.2; `STATIC-06`; both projects green on the untouched code |
+| Phase 1 | `ts/1-types` | done, awaiting merge | 2026-11-06 | seven type files; both projects green; nothing imports them yet |
 | Phase 2 N1 … N8, B1 … B3 | `ts/2-<batch>` | not started | | |
 | Phase 3 N1 … N7 | `ts/3-<batch>` | not started | | E1 decides `desktop/main.ts` |
 | Phase 4 | `ts/4-web` | not started | | D2 confirmed? |
