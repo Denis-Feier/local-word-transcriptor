@@ -1,3 +1,4 @@
+// @ts-check
 // Downloads models into models/, where they stay for offline use.
 //   npm run setup                  voice detector + the default model (Canary 1B v2)
 //   npm run setup -- <model-id>    another model (or several, space separated)
@@ -8,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { config, MODELS_DIR, ROOT } from '../lib/config.js';
 import { MODELS, SILERO_VAD, findModel, isInstalled, installModel, modelPath, download } from '../lib/models.js';
 import fs from 'node:fs';
+/** @import { OnProgress } from '../types/model.ts' */
 
 const args = process.argv.slice(2);
 
@@ -20,6 +22,10 @@ if (args.includes('--list')) {
   process.exit(0);
 }
 
+/**
+ * @param {string} label
+ * @returns {OnProgress}
+ */
 const progressBar = (label) => {
   let last = -1;
   return (fraction) => {
@@ -62,7 +68,7 @@ for (const id of ids) {
     try {
       await installModel(model, progressBar(`${model.label} (${model.size})`));
       console.log('');
-    } catch (err) {
+    } catch (/** @type {any} */ err) {
       console.error(`\n✖ ${model.label}: ${err.message}`);
       process.exitCode = 1;
       continue;

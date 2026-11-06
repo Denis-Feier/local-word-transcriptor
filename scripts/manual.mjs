@@ -1,3 +1,4 @@
+// @ts-check
 // Builds the user manual in docs/manual/: screenshots of the page, then one PDF per language from
 // manual.<lang>.html. The page runs against its own server with the UI test's fake microphones
 // (test/ui/preload.cjs) and the synthetic test voices, so it never touches a real microphone, the saved settings
@@ -16,7 +17,12 @@ const DIR = path.join(ROOT, 'docs', 'manual');
 const IMG = path.join(DIR, 'img');
 const LANGS = ['en', 'ro'];
 const MODEL = 'canary-1b-v2'; // the desktop app's default, so the screenshots show what users see
+/** @param {string} lang */
 const pdfName = (lang) => `Live-Transcriber-Manual-${lang.toUpperCase()}.pdf`;
+/**
+ * @param {string} line
+ * @param {number} [fd]
+ */
 const log = (line, fd = 1) => fs.writeSync(fd, `${line}\n`); // console output still buffered is lost at app.exit()
 
 // Device names as a user might see them; ids and voices are the preload's (mic-a is behind "System default").
@@ -33,6 +39,7 @@ const DEVICES = {
 };
 
 if (typeof electron === 'string') {
+  /** @type {NodeJS.ProcessEnv} */
   const env = { ...process.env, NODE_BIN: process.execPath };
   delete env.ELECTRON_RUN_AS_NODE; // set inside VS Code's terminal; it would turn Electron into plain Node
   spawn(electron, [fileURLToPath(import.meta.url), ...process.argv.slice(2)], { stdio: 'inherit', env }).on('exit', (code) => process.exit(code ?? 1));
@@ -45,11 +52,11 @@ if (typeof electron === 'string') {
     try {
       if (!process.argv.includes('--pdf-only')) await screenshots();
       await pdfs();
-    } catch (err) {
+    } catch (/** @type {any} */ err) {
       log(err.stack, 2);
       process.exitCode = 1;
     }
-    app.exit(process.exitCode ?? 0);
+    app.exit(/** @type {number} */ (process.exitCode ?? 0)); // set to 1 above, or unset
   });
 }
 
@@ -65,6 +72,10 @@ async function screenshots() {
   // before opening.
   const voices = scratch('manual-voices');
   const { A, B } = speakers();
+  /**
+   * @param {string} file
+   * @param {Float32Array} samples
+   */
   const voice = (file, samples) => saveWav(path.join(voices, `${file}.wav`), samples);
   voice('a', loadWav(FIXTURE));
   voice('b', B);
@@ -83,7 +94,12 @@ async function screenshots() {
       additionalArguments: [`--ui-speakers=${voices}`],
     },
   });
+  /** @param {string} code */
   const js = (code) => win.webContents.executeJavaScript(code);
+  /**
+   * @param {string} code
+   * @param {number} [ms]
+   */
   const until = async (code, ms = 40000) => {
     const t0 = Date.now();
     while (!(await js(code))) {
@@ -100,11 +116,18 @@ async function screenshots() {
     await js(`document.documentElement.requestFullscreen = () => Promise.reject(new Error('not in the manual')); true`);
     await sleep(300);
   };
+  /**
+   * @param {string} sel
+   * @param {string} value
+   */
   const choose = (sel, value) => js(`(() => { const s = document.querySelector(${JSON.stringify(sel)}); s.value = ${JSON.stringify(value)}; s.dispatchEvent(new Event('change')); })()`);
+  /** @param {string} id */
   const click = (id) => js(`document.getElementById('${id}').click()`);
+  /** @param {number} [mic] */
   const finals = (mic) => `document.querySelectorAll('#transcript .line:not(.partial)${mic ? `[data-mic="${mic}"]` : ''}').length`;
   const live = `document.querySelector('#transcript .line.partial')`;
   // Numbered markers on the controls the manual's list explains: [selector, number, dx, dy from the top-left corner].
+  /** @param {(string | number)[][]} marks */
   const badges = (marks) => js(`(() => {
     for (const [sel, n, dx = -11, dy = -11] of ${JSON.stringify(marks)}) {
       const r = document.querySelector(sel).getBoundingClientRect();
@@ -116,7 +139,12 @@ async function screenshots() {
       document.body.append(b);
     }
   })()`);
-  /** Saves a PNG of the window, or of the area around the elements matching sel (pad px of margin). */
+  /**
+   * Saves a PNG of the window, or of the area around the elements matching sel (pad px of margin).
+   * @param {string} name
+   * @param {string} [sel]
+   * @param {number} [pad]
+   */
   const shot = async (name, sel, pad = 14) => {
     // A page change shows in a capture only after the next paint.
     await js('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');

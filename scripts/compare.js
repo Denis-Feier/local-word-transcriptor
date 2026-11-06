@@ -1,3 +1,4 @@
+// @ts-check
 // Run several models over the same recording and compare their text, speed and (optionally) accuracy.
 //
 //   npm run compare -- transcripts/2026-10-29_21-00-00.wav
@@ -16,8 +17,11 @@ import { decodeWav } from '../lib/wav.js';
 import { resultToText, contextTail } from '../lib/text.js';
 import { wordErrorRate } from '../lib/wer.js';
 import { fmtTime } from '../lib/session.js';
+/** @import { Model } from '../types/model.ts' */
+/** @import { Segment } from '../types/audio.ts' */
 
 const args = process.argv.slice(2);
+/** @param {string} name */
 const option = (name) => {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
@@ -37,7 +41,7 @@ for (const m of models) {
     process.exit(1);
   }
 }
-const reference = option('--ref') ? fs.readFileSync(option('--ref'), 'utf8') : null;
+const reference = option('--ref') ? fs.readFileSync(/** @type {string} */ (option('--ref')), 'utf8') : null;
 
 const { sampleRate, samples } = decodeWav(fs.readFileSync(file));
 if (sampleRate !== 16000) {
@@ -47,6 +51,7 @@ if (sampleRate !== 16000) {
 const audioSec = samples.length / sampleRate;
 
 // 1. Cut the recording into utterances once, exactly like the live app, so every model gets identical input.
+/** @type {Segment[]} */
 const segments = [];
 const segmenter = new Segmenter({ ...config.vad, detector: createDetector(config.vad), onSegment: (s) => segments.push(s) });
 for (let i = 0; i < samples.length; i += 1600) segmenter.push(samples.subarray(i, i + 1600));
@@ -57,6 +62,7 @@ if (!segments.length) process.exit(0);
 // 2. Transcribe with each model.
 const transcriber = new Transcriber(config);
 transcriber.on('state', ({ state, message }) => state === 'loading' && console.log(`  ${message}`));
+/** @type {{ model: Model, text: string, lines: string[], totalMs: number, wer: number | null }[]} */
 const results = [];
 for (const model of models) {
   await transcriber.select(model.id);
@@ -64,6 +70,7 @@ for (const model of models) {
   await transcriber.transcribe(segments[0].samples); // warm-up, not counted
   let text = '';
   let totalMs = 0;
+  /** @type {string[]} */
   const lines = [];
   for (const seg of segments) {
     const prompt = transcriber.supportsPrompt ? (text ? contextTail(text) : config.whisper.initialPrompt) : '';
