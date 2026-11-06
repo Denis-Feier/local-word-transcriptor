@@ -116,8 +116,20 @@ async function install(id) {
   }
 }
 
+const MB = 1024 * 1024;
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
+  // What the server's memory is made of, for the stress tests (#48): V8's heap, the memory V8 tracks outside it (audio
+  // buffers), and, from the total, the native rest (an in-process model and its GPU buffers, the voice detectors).
+  // Only with DEBUG, which the tests set.
+  if (process.env.DEBUG && req.method === 'GET' && url.pathname === '/debug/memory') {
+    const { rss, heapTotal, heapUsed, external, arrayBuffers } = process.memoryUsage();
+    const mb = (x) => Math.round(x / MB);
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' })
+      .end(JSON.stringify({ rss: mb(rss), heapTotal: mb(heapTotal), heapUsed: mb(heapUsed), external: mb(external), arrayBuffers: mb(arrayBuffers) }));
+    return;
+  }
   const entry = STATIC[url.pathname];
   if (req.method !== 'GET' || !entry) {
     res.writeHead(404).end('Not found');

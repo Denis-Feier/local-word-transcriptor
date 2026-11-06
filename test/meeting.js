@@ -412,6 +412,26 @@ const median = (xs) => (xs.length ? [...xs].sort((a, b) => a - b)[Math.floor((xs
 export const quantile = (xs, p) => (xs.length ? [...xs].sort((a, b) => a - b)[Math.floor(p * (xs.length - 1))] : NaN);
 
 /**
+ * Memory after warm-up (#48), from samples [{ at (seconds), value }]: the low point (10th percentile) of the first and
+ * of the last 30 minutes, and the peak. A leak raises the floor memory falls back to; a rise that comes back down (a
+ * model's buffers, a late garbage collection) does not. (A straight line through the samples read such a hump as
+ * growth.) Shorter runs use a third of the time after warm-up for each window.
+ *   growth: last low point − first; perHour: growth per hour between the windows' middles (at least 1 h);
+ *   peakOver: the highest sample above the first window's median; span: hours after warm-up.
+ */
+export function memoryCheck(samples, warmSec) {
+  const s = samples.filter((x) => x.at >= warmSec && Number.isFinite(x.value));
+  if (s.length < 6) return { from: NaN, to: NaN, growth: NaN, perHour: NaN, peak: NaN, peakOver: NaN, span: 0 };
+  const [t0, t1] = [s[0].at, s.at(-1).at];
+  const w = Math.min(1800, (t1 - t0) / 3);
+  const first = s.filter((x) => x.at <= t0 + w).map((x) => x.value);
+  const last = s.filter((x) => x.at >= t1 - w).map((x) => x.value);
+  const [from, to] = [quantile(first, 0.1), quantile(last, 0.1)];
+  const peak = Math.max(...s.map((x) => x.value));
+  return { from, to, growth: to - from, perHour: (to - from) / Math.max(1, (t1 - t0 - w) / 3600), peak, peakOver: peak - median(first), span: (t1 - t0) / 3600 };
+}
+
+/**
  * Compare a server's final lines ({ mic (0-based), start, end, text, ms?, sentSec? }) with the truth (truth()):
  * each line is ok, phantom (nobody spoke) or wrong (another person's speech); pairs of lines are "both" when two mics
  * kept the same words; each utterance is caught or not (§14.3). An ok line is solo when nobody else spoke during it. groups: [{ name, start, end }] in session seconds

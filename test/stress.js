@@ -14,8 +14,8 @@ import { MODELS, isInstalled, isAvailable } from '../lib/models.js';
 import { wordKey } from '../lib/steady.js';
 import { TUNING, sanitizeTuning } from '../lib/tuning.js';
 import { sharedWords } from '../lib/wer.js';
-import { SR, startServer, scratch, sleep, suite } from './helpers.js';
-import { CHUNK, SCRIPTS, Room, contentWords, hoursScript, judge, meeting, meetingFrom, quantile, sessionBlocks, table, truth, voices, windows } from './meeting.js';
+import { SR, serverMemory, startServer, scratch, sleep, suite } from './helpers.js';
+import { CHUNK, SCRIPTS, Room, contentWords, hoursScript, judge, meeting, meetingFrom, memoryCheck, quantile, sessionBlocks, table, truth, voices, windows } from './meeting.js';
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -126,7 +126,8 @@ async function play(server, m, { speed: pace = speed, saveAudio = true, onChunk,
       }
       if (ws.readyState === WebSocket.OPEN) (pinged = Date.now()), ws.ping();
     }, 2000));
-    timers.push(setInterval(() => rss(server.pid).then((mb) => r.memory.push({ sentSec: r.sentSec, mb, wall: Date.now() })).catch(() => {}), 10000));
+    // The server's memory and what it is made of (#48): { mb, heap, external, native }.
+    timers.push(setInterval(() => serverMemory(server).then((mem) => r.memory.push({ sentSec: r.sentSec, ...mem, wall: Date.now() })).catch(() => {}), 10000));
   }
   while (Date.now() < startAt) await sleep(2);
   const events = new Map(m.events.filter((e) => e.type !== 'layout').map((e) => [Math.round(e.t / STEP), e]));
@@ -195,15 +196,19 @@ const voicesFor = async (server, opts) => {
   return v;
 };
 
-/** Memory after warm-up: total growth and the trend in MB per hour of meeting (least squares). */
-function memoryTrend(samples, warmSec) {
-  const s = samples.filter((x) => x.sentSec >= warmSec);
-  if (s.length < 3) return { growth: NaN, perHour: NaN, from: NaN, to: NaN, span: 0 };
-  const xs = s.map((x) => x.sentSec / 3600);
-  const mx = xs.reduce((a, b) => a + b) / xs.length;
-  const my = s.reduce((a, b) => a + b.mb, 0) / s.length;
-  const slope = xs.reduce((sum, x, i) => sum + (x - mx) * (s[i].mb - my), 0) / xs.reduce((sum, x) => sum + (x - mx) ** 2, 0);
-  return { growth: s.at(-1).mb - s[0].mb, perHour: slope, from: s[0].mb, to: s.at(-1).mb, span: xs.at(-1) - xs[0] };
+/**
+ * The server's memory after warm-up, in hours of meeting (#48): its floor may rise ≤ 50 MB, and ≤ 10 MB per hour once
+ * an hour or more is judged; its peak may be ≤ 200 MB above the first 30 minutes. With what the memory is made of at
+ * the peak and at the end, to trace a failure.
+ */
+function serverMemoryCheck(samples, warmSec) {
+  const mem = memoryCheck(samples.map((x) => ({ at: x.sentSec, value: x.mb })), warmSec);
+  const ok = mem.growth <= 50 && (mem.span < 1 || mem.perHour <= 10) && mem.peakOver <= 200;
+  const parts = (x) => (x && Number.isFinite(x.heap) ? ` (heap ${x.heap}, outside the heap ${x.external}, native ${x.native} MB)` : '');
+  const peakAt = samples.find((x) => x.sentSec >= warmSec && x.mb === mem.peak);
+  const detail = `low point ${mem.from} → ${mem.to} MB after warm-up (${mem.growth >= 0 ? '+' : ''}${mem.growth} MB, ${p(mem.perHour, 1)} MB/h over ${p(mem.span, 1)} h); `
+    + `peak ${mem.peak} MB, ${p(mem.peakOver, 0)} MB above the first 30 min${parts(peakAt)}; end ${samples.at(-1)?.mb ?? '—'} MB${parts(samples.at(-1))}`;
+  return { ok, detail };
 }
 
 const lineList = (r) => r.finals.map((f) => ({ id: f.id, mic: f.mic, start: f.start, end: f.end, text: f.text, ms: f.ms, sentSec: f.sentSec }));
@@ -230,7 +235,8 @@ function report(name, title, m, r, extra = '') {
   fs.writeFileSync(path.join(OUT, `${name}.md`), `${md.join('\n')}\n`);
   // Everything judged, for tracing a failure (TESTING.md §10): lines with their verdict, utterances caught or not.
   const plain = ({ clip, ...u }) => u;
-  fs.writeFileSync(path.join(OUT, `${name}.json`), JSON.stringify({ lines: j.lines, utterances: j.utterances.map(plain), events: m.events, dropouts: m.dropouts, blocks: sessionBlocks(m) }));
+  // memory: every sample of the server's memory, with what it is made of (#48).
+  fs.writeFileSync(path.join(OUT, `${name}.json`), JSON.stringify({ lines: j.lines, utterances: j.utterances.map(plain), events: m.events, dropouts: m.dropouts, blocks: sessionBlocks(m), memory: r.memory }));
   console.log(`report: ${path.join(OUT, `${name}.md`)}`);
   return j;
 }
@@ -347,9 +353,7 @@ async function longMeeting(three) {
     const drift = blocks.filter((g) => Number.isFinite(g.offset)).map((g) => ({ name: g.name, d: g.offset - B.R.offset }));
     const keepsUp = B.R2.delayP95 <= 1.25 * B.R.delayP95 + 0.3 && B.R2.modelMs <= 1.25 * B.R.modelMs;
     const keepsDetail = `delay p95 R ${p(B.R.delayP95)} s → R′ ${p(B.R2.delayP95)} s; model ${p(B.R.modelMs, 0)} → ${p(B.R2.modelMs, 0)} ms`;
-    const mem = memoryTrend(r.memory, Math.min(1800, 0.25 * length));
-    const memOk = mem.growth <= 50 && (mem.span < 1 || mem.perHour <= 10);
-    const memDetail = `${mem.from} → ${mem.to} MB after warm-up (+${mem.growth} MB), trend ${p(mem.perHour, 1)} MB/h over ${p(mem.span, 1)} h`;
+    const { ok: memOk, detail: memDetail } = serverMemoryCheck(r.memory, Math.min(1800, 0.25 * length));
     if (three) {
       t.check('STRESS-MIC3-01', 'three mics for 2 hours: lines on the right mic, nothing lost, no phantom lines',
         attribution && caught && j.all.phantom === 0, `wrong+both/lines: ${attrDetail}; ${caughtDetail}; phantom ${j.all.phantom}`);
@@ -365,7 +369,7 @@ async function longMeeting(three) {
     t.check('STRESS-MEET-05', 'no clock drift: every block within 0.1 s of R', drift.every((x) => Math.abs(x.d) <= 0.1), drift.map((x) => `${x.name} ${p(x.d)}`).join(', '));
     t.check('STRESS-MEET-06', 'keeps up: delay and model time in R′ as in R', keepsUp, keepsDetail);
     t.check('STRESS-MEET-07', 'live text to the end: live guesses in R′ ≥ 80 % of R', B.R2.partials >= 0.8 * B.R.partials, `${B.R.partials} → ${B.R2.partials}`);
-    t.check('STRESS-MEET-08', 'server memory flat after warm-up (≤ +50 MB, ≤ 10 MB per hour)', memOk, memDetail);
+    t.check('STRESS-MEET-08', 'server memory after warm-up: its low point rises ≤ 50 MB and ≤ 10 MB per hour, its peak ≤ 200 MB above the first 30 min', memOk, memDetail);
     const files = checkFiles(server.transcripts, r, m.events.filter((e) => e.type === 'clear').length, length);
     t.check('STRESS-MEET-09', 'files: every line in the .txt with hour times, WAVs as long as the audio sent', files.ok, files.detail);
     t.check('STRESS-MEET-10', 'the server answers within 500 ms throughout', probeMax(r) <= 500, `slowest of ${r.probes.length} probes: ${probeMax(r)} ms`);
@@ -596,20 +600,33 @@ async function concurrent() {
   try {
     const sets = await Promise.all([0, 1, 2].map((k) => voices({ people: 3, keep: (i) => i % 3 === k })));
     const bank = sets.map((v) => v.people[0].filter((c) => !c.short).map((c) => c.text));
-    const alone = await play(server, meeting(sets[0], { minutes: { R: short ? 2 : 5 } }), { speed: 4, saveAudio: false });
-    await close(alone.ws);
-    const base = quantile(alone.finals.map((f) => f.sentSec - f.end), 0.95);
     const minutes = short ? 4 : 20;
-    const runs = await Promise.all(sets.map((v, k) => play(server, meeting(v, { minutes: { R: minutes }, seed: k + 1 }), { speed: 4, saveAudio: false })));
+    const meetings = sets.map((v, k) => meeting(v, { minutes: { R: minutes }, seed: k + 1 }));
+    // Each client is compared with its own meeting played alone (#49). Most of the delay p95 is lines said over the
+    // other person, which wait for the other mic's sentence (#6): it depends on the script, so a different or shorter
+    // meeting is no baseline. Solo lines are the part a shared model's queue can slow down.
+    const delays = (m, r) => {
+      const of = (ls) => quantile(ls.map((l) => l.sentSec - l.end), 0.95);
+      return { all: of(r.finals), solo: of(judge(truth(m), lineList(r)).lines.filter((l) => l.solo)) };
+    };
+    await warmUp(server, sets[0]);
+    const alone = [];
+    for (const m of meetings) {
+      const r = await play(server, m, { speed: 4, saveAudio: false });
+      await close(r.ws);
+      alone.push(delays(m, r));
+    }
+    const runs = await Promise.all(meetings.map((m) => play(server, m, { speed: 4, saveAudio: false })));
     await Promise.all(runs.map((r) => close(r.ws)));
     const foreign = runs.map((r, k) => r.finals.filter((f) => {
       const best = (texts) => Math.max(0, ...texts.map((x) => sharedWords(f.text, x).count));
       const own = best(bank[k]);
       return bank.some((texts, o) => o !== k && best(texts) >= 3 && best(texts) > own);
     }).length);
-    const delays = runs.map((r) => quantile(r.finals.map((f) => f.sentSec - f.end), 0.95));
-    t.check('STRESS-CONC-01', `three recording clients at once for ${minutes} min: own lines only, delay ≤ 2× one client's`, foreign.every((n) => n === 0) && delays.every((d) => d <= 2 * base),
-      `other clients' lines: ${foreign.join(', ')}; delay p95 ${delays.map((d) => p(d)).join(', ')} s vs ${p(base)} s alone`);
+    const together = runs.map((r, k) => delays(meetings[k], r));
+    t.check('STRESS-CONC-01', `three recording clients at once for ${minutes} min: own lines only, each one's delay p95 ≤ 2× its own meeting played alone`,
+      foreign.every((n) => n === 0) && together.every((d, k) => d.all <= 2 * alone[k].all),
+      `other clients' lines: ${foreign.join(', ')}; delay p95 alone → together: ${together.map((d, k) => `client ${k + 1} ${p(alone[k].all)} → ${p(d.all)} s (solo ${p(alone[k].solo)} → ${p(d.solo)} s)`).join(', ')}`);
 
     // Two recordings that start within the same second (two tabs, or the desktop app plus a browser tab).
     const c = sets[0].people[0].filter((x) => !x.short);

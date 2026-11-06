@@ -5,14 +5,13 @@
 //
 //   npx electron test/ui/stress.mjs --group page|soak|net [--short] [--soak-minutes 120]   (ELECTRON_RUN_AS_NODE unset)
 import { app, BrowserWindow, session } from 'electron';
-import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../../lib/config.js';
 import { MODELS, isInstalled, isAvailable } from '../../lib/models.js';
 import { TUNING, tuningFrom } from '../../lib/tuning.js';
-import { ROOT, SR, fakeServer, freePort, outOfPlace, saveWav, scratch, silence, sleep, startServer, suite } from '../helpers.js';
-import { SCRIPTS, Room, contentWords, judge, loopOffset, loopTruth, meeting, quantile, table, voices, windows } from '../meeting.js';
+import { ROOT, SR, fakeServer, freePort, outOfPlace, saveWav, scratch, serverMemory, silence, sleep, startServer, suite } from '../helpers.js';
+import { SCRIPTS, Room, contentWords, judge, loopOffset, loopTruth, meeting, memoryCheck, quantile, table, voices, windows } from '../meeting.js';
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -109,16 +108,14 @@ const processMb = (w) => {
   return m ? Math.round(m.memory.workingSetSize / 1024) : NaN;
 };
 
-/** Growth after warm-up and the trend in MB per hour (least squares); samples: [{ sec, mb }]. */
-function trend(samples, warm) {
-  const s = samples.filter((x) => x.sec >= warm && Number.isFinite(x.mb));
-  if (s.length < 3) return { growth: NaN, perHour: NaN, from: NaN, to: NaN };
-  const xs = s.map((x) => x.sec / 3600);
-  const mx = xs.reduce((a, b) => a + b) / xs.length;
-  const my = s.reduce((a, b) => a + b.mb, 0) / s.length;
-  const slope = xs.reduce((sum, x, i) => sum + (x - mx) * (s[i].mb - my), 0) / xs.reduce((sum, x) => sum + (x - mx) ** 2, 0);
-  return { growth: s.at(-1).mb - s[0].mb, perHour: slope, from: s[0].mb, to: s.at(-1).mb };
-}
+/** The nodes of the page's transcript (itself and everything in it) and the lines it shows (#48). */
+const transcriptDom = (w) => js(w, `(() => {
+  const t = document.getElementById('transcript');
+  const walk = document.createTreeWalker(t, NodeFilter.SHOW_ALL);
+  let nodes = 1;
+  while (walk.nextNode()) nodes++;
+  return { transcript: nodes, lines: t.querySelectorAll('.line:not(.partial)').length };
+})()`);
 
 /** Fake mics that play the meeting `m` (a.wav, b.wav); the loop length in seconds. */
 function speakFor(m) {
@@ -305,10 +302,14 @@ async function soak() {
       const error = await js(win, `document.getElementById('error').hidden ? '' : document.getElementById('error').textContent`);
       if (error) banner++, console.log(`  ${p(sec / 60, 0)} min: error banner: ${error}`);
       const page = processMb(win);
-      const heap = (await dt.metrics()).JSHeapUsedSize / 1048576;
-      const srv = await new Promise((resolve) => execFile('ps', ['-o', 'rss=', '-p', String(server.pid)], (e, out) => resolve(Math.round(Number(out) / 1024))));
-      samples.push({ sec, page, heap, server: srv });
-      if (Math.round(sec / 60) % 10 === 0) console.log(`  ${p(sec / 60, 0)} min: page ${page} MB (heap ${p(heap, 0)} MB), server ${srv} MB, ${sockets()[live]?.finals.length ?? 0} lines`);
+      const metrics = await dt.metrics();
+      const heap = metrics.JSHeapUsedSize / 1048576;
+      // #48: the page's own memory (JS heap, DOM nodes: all of them, and the transcript's with its lines) and the
+      // server's, with what it is made of.
+      const dom = await transcriptDom(win);
+      const srv = await serverMemory(server);
+      samples.push({ sec, page, heap, nodes: metrics.Nodes, ...dom, server: srv.mb, serverParts: srv });
+      if (Math.round(sec / 60) % 10 === 0) console.log(`  ${p(sec / 60, 0)} min: page ${page} MB (heap ${p(heap, 0)} MB, ${metrics.Nodes} DOM nodes, ${dom.transcript} in the transcript), server ${srv.mb} MB, ${sockets()[live]?.finals.length ?? 0} lines`);
     }
     // SOAK-05: the caption window shows what the page shows.
     const newest = (await finalTexts(win)).at(-1);
@@ -356,13 +357,27 @@ async function soak() {
     t.check('STRESS-SOAK-03', 'the delay people see: solo lines p95 ≤ 2 s in every 10 minutes, the last no more than 0.5 s above the first; lines over other speech p95 ≤ 10 s',
       p95.every((x) => x <= 2) && p95.at(-1) <= p95[0] + 0.5 && overlapP95.every((x) => x <= 10),
       `solo p95 per 10 min: ${p95.map((x) => p(x, 1)).join(', ')} s; overlapping: ${overlapP95.map((x) => p(x, 1)).join(', ') || '—'} s`);
+    // Every sample, to trace a failure (#48).
+    fs.writeFileSync(path.join(OUT, 'soak.json'), JSON.stringify({ samples }));
     const warm = Math.min(1800, (minutes * 60) / 4);
-    const page = trend(samples.map((s) => ({ sec: s.sec, mb: s.page })), warm);
-    t.check('STRESS-SOAK-04', 'page memory: ≤ 30 MB more per hour after warm-up', minutes < 90 ? page.growth <= 30 : page.perHour <= 30,
-      `page process ${page.from} → ${page.to} MB, trend ${p(page.perHour, 1)} MB/h; JS heap ${p(samples[0]?.heap, 0)} → ${p(samples.at(-1)?.heap, 0)} MB`);
+    const series = (value) => samples.map((s) => ({ at: s.sec, value: value(s) }));
+    // SOAK-04 (#48): judged on what the page's code controls. The process's own memory (its caches, fonts and drawing)
+    // swings by 100 MB and more from minute to minute while the JS heap stays at a few MB, so it only has a ceiling.
+    const heap = memoryCheck(series((s) => s.heap), warm);
+    const beyond = memoryCheck(series((s) => s.nodes - s.transcript), warm); // nodes that are not the transcript's
+    const shown = samples.filter((s) => s.sec >= warm && s.lines > 0);
+    const [perLine0, perLine1] = [shown[0], shown.at(-1)].map((s) => (s ? s.transcript / s.lines : NaN));
+    const pagePeak = Math.max(...samples.map((s) => s.page).filter(Number.isFinite));
+    t.check('STRESS-SOAK-04', 'page memory after warm-up: JS heap low point rises ≤ 10 MB; DOM nodes grow only with the lines shown; the page process ≤ 500 MB',
+      heap.growth <= 10 && beyond.growth <= 1000 && perLine1 <= 1.1 * perLine0 && pagePeak <= 500,
+      `JS heap low point ${p(heap.from, 1)} → ${p(heap.to, 1)} MB; DOM nodes outside the transcript, low point ${p(beyond.from, 0)} → ${p(beyond.to, 0)}; `
+      + `transcript nodes per line ${p(perLine0, 1)} (${shown[0]?.lines ?? '—'} lines) → ${p(perLine1, 1)} (${shown.at(-1)?.lines ?? '—'} lines); page process peak ${p(pagePeak, 0)} MB, end ${samples.at(-1)?.page ?? '—'} MB`);
     t.check('STRESS-SOAK-05', 'the caption window shows the newest line', onCaptions, JSON.stringify(newest?.slice(0, 60)));
-    const srv = trend(samples.map((s) => ({ sec: s.sec, mb: s.server })), warm);
-    t.check('STRESS-SOAK-06', 'server memory flat in real time (≤ +50 MB, ≤ 10 MB per hour)', srv.growth <= 50 && (minutes < 90 || srv.perHour <= 10), `${srv.from} → ${srv.to} MB, trend ${p(srv.perHour, 1)} MB/h`);
+    const srv = memoryCheck(series((s) => s.server), warm);
+    const parts = (s) => (Number.isFinite(s?.serverParts?.heap) ? ` (heap ${s.serverParts.heap}, outside the heap ${s.serverParts.external}, native ${s.serverParts.native} MB)` : '');
+    t.check('STRESS-SOAK-06', 'server memory in real time, as STRESS-MEET-08: low point rises ≤ 50 MB and ≤ 10 MB per hour, peak ≤ 200 MB above the first 30 min',
+      srv.growth <= 50 && (srv.span < 1 || srv.perHour <= 10) && srv.peakOver <= 200,
+      `low point ${srv.from} → ${srv.to} MB (${p(srv.perHour, 1)} MB/h over ${p(srv.span, 1)} h); peak ${srv.peak} MB, ${p(srv.peakOver, 0)} MB above the first 30 min${parts(samples.find((s) => s.sec >= warm && s.server === srv.peak))}; end ${samples.at(-1)?.server ?? '—'} MB${parts(samples.at(-1))}`);
     const txt = fs.readdirSync(server.transcripts).filter((n) => n.endsWith('.txt')).flatMap((n) => fs.readFileSync(path.join(server.transcripts, n), 'utf8').split('\n').filter(Boolean));
     const lastIn = txt.some((l) => l.endsWith(lines.at(-1)?.text ?? '\u0000'));
     const differs = download.findIndex((l, i) => l !== txt[i]);
