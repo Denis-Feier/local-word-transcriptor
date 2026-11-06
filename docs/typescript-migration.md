@@ -216,7 +216,17 @@ local alias, where `strict` could not see what the code knows: `Object.entries(T
 hands an `Error` without `code` (`NodeJS.ErrnoException`). The checker inferred `WavWriter`'s `fd` and the
 segmenter-free modules without help. `Spoken`, which `public/order.js` shares with `lib/session.js`, moved from
 `types/page.ts` (web only) to `types/protocol.ts`, so the Node project can import it. The drafts were written in a
-detached worktree in the scratchpad while the gate run read the main tree; worth repeating for every batch. After N8 every file is checked under
+detached worktree in the scratchpad while the gate run read the main tree; worth repeating for every batch.
+
+What happened in N2 (2026-11-06, `ts/2-n2`): six files. Casts and short aliases as in N1, plus three things a
+comment could not do. `SidecarEngine` now names on itself what its subclasses provide (`cpuFallback = false`,
+`defaultDevice = undefined`, a `command()` that throws, a `deviceFromLog()` that answers null): the checker cannot see
+a subclass's additions through `this`, and these defaults do exactly what their absence did. The crosstalk gate's two
+`+= boolean` counters coerce with `Number()`. The segmenter's timing fields, set by `setTiming()` rather than the
+constructor, carry a declared type, or the checker adds `undefined` to them. `NoiseFloor.forget` compares `.at(-1)`
+with `>=` and relies on undefined comparing false; a `number` cast with a comment keeps that. The models catalogue
+typed as `Model[]` without a change, and so did `Readable.fromWeb(res.body)` once told the two stream types are one.
+Full tier: 236 / 0 / 5 / 0. After N8 every file is checked under
 `strict`, and the only `any` left are the ones written on purpose with a reason.
 
 ## 6. Phase 3 — the server side becomes `.ts`
@@ -312,7 +322,8 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 | Phase 0 | `ts/0-tooling` | done (`9254b4f`), awaiting merge | 2026-11-06 | TypeScript 7.0.2; `STATIC-06`; both projects green on the untouched code |
 | Phase 1 | `ts/1-types` | done, awaiting merge | 2026-11-06 | seven type files; both projects green; nothing imports them yet |
 | Phase 2 N1 | `ts/2-n1` | done, awaiting merge | 2026-11-06 | ten files; both projects green; standard tier 216 / 0 / 2 / 0 |
-| Phase 2 N2 … N8, B1 … B3 | `ts/2-<batch>` | not started | | |
+| Phase 2 N2 | `ts/2-n2` | done, awaiting merge | 2026-11-06 | six files; full tier 236 / 0 / 5 / 0 |
+| Phase 2 N3 … N8, B1 … B3 | `ts/2-<batch>` | not started | | |
 | Phase 3 N1 … N7 | `ts/3-<batch>` | not started | | E1 decides `desktop/main.ts` |
 | Phase 4 | `ts/4-web` | not started | | D2 confirmed? |
 | Phase 5 | `ts/5-tighten` | not started | | |
