@@ -17,5 +17,5 @@
     "erasableSyntaxOnly": true,
     "skipLibCheck": true
   },
-  "include": ["public"]
+  "include": ["public", "types/page.ts"]
 }
