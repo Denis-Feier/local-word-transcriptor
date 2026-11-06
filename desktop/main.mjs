@@ -1,3 +1,4 @@
+// @ts-check
 // Desktop app (Electron): runs the transcription server in the background and shows its page in a window.
 // Users install a .dmg / .exe and never see a terminal. From source: npm run app
 import { app, BrowserWindow, Menu, dialog, screen, session, shell, systemPreferences, utilityProcess } from 'electron';
@@ -34,21 +35,25 @@ const paths = app.isPackaged
 // The user manual (docs/manual/, built by npm run manual) in the system's language, shipped with the app.
 const manualPath = () => path.join(ROOT, 'docs', 'manual', `Live-Transcriber-Manual-${app.getLocale().startsWith('ro') ? 'RO' : 'EN'}.pdf`);
 
+/** @type {Electron.UtilityProcess | null} */
 let server = null;
+/** @type {BrowserWindow | null} */
 let mainWindow = null;
 let quitting = false;
 
+/** @returns {Promise<number>} */
 function freePort() {
   return new Promise((resolve, reject) => {
     const probe = net.createServer();
     probe.on('error', reject);
     probe.listen(0, HOST, () => {
-      const { port } = probe.address();
+      const { port } = /** @type {import('node:net').AddressInfo} */ (probe.address()); // listening on a TCP port
       probe.close(() => resolve(port));
     });
   });
 }
 
+/** Starts server.js as a utility process and resolves with its URL once it answers. @returns {Promise<string>} */
 async function startServer() {
   const port = await freePort();
   fs.mkdirSync(paths.logs, { recursive: true });
@@ -58,7 +63,7 @@ async function startServer() {
   server = utilityProcess.fork(path.join(ROOT, 'server.js'), [], {
     stdio: 'pipe',
     serviceName: 'Live Transcriber server',
-    env: {
+    env: /** @type {Record<string, string>} */ ({
       ...process.env,
       HOST,
       PORT: String(port),
@@ -67,10 +72,10 @@ async function startServer() {
       ENV_FILE: process.env.ENV_FILE ?? paths.env,
       TRANSCRIPTS_DIR: process.env.TRANSCRIPTS_DIR ?? paths.transcripts,
       AUTO_INSTALL: '1', // first run downloads the default model with a progress bar in the page
-    },
+    }),
   });
-  server.stdout.pipe(log);
-  server.stderr.pipe(log);
+  /** @type {NodeJS.ReadableStream} */ (server.stdout).pipe(log); // stdio: 'pipe' gives both
+  /** @type {NodeJS.ReadableStream} */ (server.stderr).pipe(log);
   server.on('exit', (code) => {
     server = null;
     if (!quitting) {
@@ -91,9 +96,12 @@ async function startServer() {
   throw new Error('The transcription engine did not start. See the log in ' + paths.logs);
 }
 
-/** The caption-only window goes to the projector (any display other than the main window's), full screen. */
+/**
+ * The caption-only window goes to the projector (any display other than the main window's), full screen.
+ * @param {string} url
+ */
 function openCaptionWindow(url) {
-  const here = screen.getDisplayMatching(mainWindow.getBounds());
+  const here = screen.getDisplayMatching(/** @type {BrowserWindow} */ (mainWindow).getBounds()); // opened from the main window
   const target = screen.getAllDisplays().find((d) => d.id !== here.id);
   const area = (target ?? here).workArea;
   const win = new BrowserWindow({
@@ -110,6 +118,7 @@ function openCaptionWindow(url) {
   if (target) win.once('ready-to-show', () => win.setFullScreen(true));
 }
 
+/** @param {string} url */
 function createWindow(url) {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -127,18 +136,20 @@ function createWindow(url) {
     else if (/^https?:/.test(target)) shell.openExternal(target);
     return { action: 'deny' };
   });
-  mainWindow.once('ready-to-show', () => !TEST && mainWindow.show());
+  mainWindow.once('ready-to-show', () => !TEST && /** @type {BrowserWindow} */ (mainWindow).show());
   mainWindow.on('closed', () => (mainWindow = null));
   mainWindow.loadURL(url);
 }
 
 function buildMenu() {
+  /** @param {string} dir */
   const openFolder = (dir) => {
     fs.mkdirSync(dir, { recursive: true });
     shell.openPath(dir);
   };
+  /** @type {Electron.MenuItemConstructorOptions[]} */
   const template = [
-    ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
+    ...(process.platform === 'darwin' ? [/** @type {Electron.MenuItemConstructorOptions} */ ({ role: 'appMenu' })] : []),
     {
       label: 'File',
       submenu: [
@@ -185,7 +196,7 @@ app.whenReady().then(async () => {
   buildMenu();
   try {
     createWindow(await startServer());
-  } catch (err) {
+  } catch (/** @type {any} */ err) {
     dialog.showErrorBox('Live Transcriber could not start', err.message);
     app.quit();
   }

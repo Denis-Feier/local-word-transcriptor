@@ -248,6 +248,12 @@ What happened in N5 (2026-11-07, `ts/2-n5`): the benchmark library and the scrip
 written down in `lib/benchmark/suite.js` (stages, a model's result, the run) and read by the report and the runner,
 so the producer and the consumer are checked against each other; `machine.js` describes its `MachineInfo`.
 `median()` says it skips gaps, as it always did. Standard tier: 216 / 0 / 2 / 0; `npm run setup -- --list` runs.
+
+What happened in N6 (2026-11-07, `ts/2-n6`): `desktop/main.mjs`, typed by Electron's own `electron.d.ts`. Three casts:
+the utility process's `env` (a spread of `process.env` loses its index signature), its two output streams (typed as
+possibly absent), and a menu entry inside a conditional spread, which loses its literal type. Standard tier 216 / 0 /
+2 / 0, and the app started once from source in test mode (`LT_TEST=1`, scratch settings): its server reported the model
+ready on the GPU, and it quit cleanly on the signal.
 `strict`, and the only `any` left are the ones written on purpose with a reason.
 
 ## 6. Phase 3 — the server side becomes `.ts`
@@ -347,7 +353,8 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 | Phase 2 N3 | `ts/2-n3` | done, awaiting merge | 2026-11-06 | six files; full tier 236 / 0 / 5 / 0 |
 | Phase 2 N4 | `ts/2-n4` | done, awaiting merge | 2026-11-06 | session and server; full tier 236 / 0 / 5 / 0 |
 | Phase 2 N5 | `ts/2-n5` | done, awaiting merge | 2026-11-07 | benchmark library and scripts; standard tier 216 / 0 / 2 / 0 |
-| Phase 2 N6 … N8, B1 … B3 | `ts/2-<batch>` | drafted in the worktree, each waits for its gate | | |
+| Phase 2 N6 | `ts/2-n6` | done, awaiting merge | 2026-11-07 | the desktop app; standard tier 216 / 0 / 2 / 0; the app started and quit once |
+| Phase 2 N7, N8, B1 … B3 | `ts/2-<batch>` | drafted in the worktree, each waits for its gate | | |
 | Phase 3 N1 … N7 | `ts/3-<batch>` | not started | | E1 decides `desktop/main.ts` |
 | Phase 4 | `ts/4-web` | not started | | D2 confirmed? |
 | Phase 5 | `ts/5-tighten` | not started | | |
