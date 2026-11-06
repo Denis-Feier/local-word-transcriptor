@@ -57,7 +57,7 @@ docker compose down              # stop
 Docker on a Mac cannot use the Apple GPU, so every model runs on the CPU (see *Docker or native?* below).
 Download models from the page's **Model** menu, or all at once with `docker compose run --rm transcriber npm run setup -- --all`.
 
-**Native: fastest, uses the GPU.**
+**Native: fastest, uses the GPU.** Needs Node 22.18 or newer (`brew install node`).
 
 ```bash
 brew install whisper-cpp uv      # whisper.cpp for the Whisper models, uv for the NeMo models' Python
@@ -429,7 +429,8 @@ Any of these can also go in `.env.local` (git ignores it; see `.env.example`), o
 
 `npm test` runs the test plan in [TESTING.md](TESTING.md) (~5 min; `npm run test:quick` ~1 min, `npm run test:full`
 ~15 min with every speech engine). Each run writes a signed report to `test-results/` (the exact moment it started as its id, the computer's hardware and software, one row per test). The plan, the per-merge routine and
-the checklist for testing with real microphones are in TESTING.md.
+the checklist for testing with real microphones are in TESTING.md. `npm run typecheck` runs the TypeScript checker
+alone; every tier runs it as `STATIC-06`. The code is moving to TypeScript step by step: [docs/typescript-migration.md](docs/typescript-migration.md).
 
 ## Testing without a microphone
 

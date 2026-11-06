@@ -1,0 +1,21 @@
+{
+  // The page: public/*.js today, web/*.ts from Phase 4 on (then emitted into public/). No Node types here: the page must
+  // not see process or Buffer. The audio worklet's globals (AudioWorkletProcessor, sampleRate, registerProcessor) come
+  // from @types/audioworklet.
+  "compilerOptions": {
+    "strict": true,
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "es2022",
+    "lib": ["es2024", "dom", "dom.iterable"],
+    "types": ["audioworklet"],
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "skipLibCheck": true
+  },
+  "include": ["public"]
+}

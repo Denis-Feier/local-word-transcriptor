@@ -101,6 +101,12 @@ Branch `ts/0-tooling`. Nothing in `lib/`, `public/` or `server.js` changes.
 
 Done when: `npm run typecheck` passes on the untouched code, `npm run test:quick` passes with `STATIC-06`.
 
+What happened (2026-11-06): `npm install` brought TypeScript **7.0.2**, the native compiler (`tsc` is a small Node
+launcher for a platform binary, so `test/run-all.js` runs it through `process.execPath` as it runs everything else);
+it knows every option above, and both projects passed on the untouched code at the first run, in well under a
+second each. `@types/audioworklet` sits next to `lib: ["dom"]` without a clash. The owner started Phase 0 with the
+recommendations of §2 (D1, D3, D4, D5 in effect; D2 is decided when Phase 4 starts).
+
 ## 4. Phase 1 — the types
 
 Branch `ts/1-types`. A `types/` folder of type-only `.ts` files: the shapes that cross module boundaries, written from
@@ -286,7 +292,7 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 | Step | Branch | Status | Date | Notes |
 |---|---|---|---|---|
 | Plan | `feature/typescript-plan` | written | 2026-11-06 | this document, from the scan of `133a274` |
-| Phase 0 | `ts/0-tooling` | not started | | |
+| Phase 0 | `ts/0-tooling` | done, awaiting merge | 2026-11-06 | TypeScript 7.0.2; `STATIC-06`; both projects green on the untouched code |
 | Phase 1 | `ts/1-types` | not started | | |
 | Phase 2 N1 … N8, B1 … B3 | `ts/2-<batch>` | not started | | |
 | Phase 3 N1 … N7 | `ts/3-<batch>` | not started | | E1 decides `desktop/main.ts` |

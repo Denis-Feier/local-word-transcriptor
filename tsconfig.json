@@ -1,0 +1,22 @@
+{
+  // The server side: server.js, lib/, scripts/, desktop/, test/ and the shared types in types/. Checked only (noEmit):
+  // Node runs .ts files itself, so there is no build (docs/typescript-migration.md, D1). A JavaScript file is checked
+  // once it starts with // @ts-check (Phase 2); erasableSyntaxOnly and .ts import specifiers keep every file loadable
+  // by Node as it is.
+  "compilerOptions": {
+    "strict": true,
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "module": "nodenext",
+    "target": "es2024",
+    "lib": ["es2024"],
+    "types": ["node"],
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "skipLibCheck": true
+  },
+  "include": ["server.js", "lib", "scripts", "desktop", "test", "types"],
+  "exclude": ["node_modules", "test/fixtures"]
+}
