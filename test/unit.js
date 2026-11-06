@@ -1228,7 +1228,7 @@ if (!silero) {
   for (const id of ['UNIT-GATE-01', 'UNIT-GATE-02', 'UNIT-GATE-03', 'UNIT-GATE-04', 'UNIT-GATE-05', 'UNIT-GATE-06', 'UNIT-GATE-07',
     'UNIT-SESS-01', 'UNIT-SESS-02', 'UNIT-SESS-03', 'UNIT-SESS-04', 'UNIT-SESS-05', 'UNIT-SESS-16', 'UNIT-SESS-17', 'UNIT-SESS-18',
     'UNIT-SESS-24', 'UNIT-WAIT-01', 'UNIT-WAIT-02', 'UNIT-WAIT-03', 'UNIT-TAIL-01', 'UNIT-TAIL-02', 'UNIT-TAIL-03',
-    'UNIT-WAIT-04', 'UNIT-WAIT-05']) {
+    'UNIT-WAIT-04', 'UNIT-WAIT-05', 'UNIT-WAIT-06']) {
     t.skip(id, 'crosstalk / two-mic session', `no ${config.vad.sileroModel} (npm run setup)`);
   }
 } else {
@@ -1460,6 +1460,15 @@ if (!silero) {
   reply = w.find((f) => f.mic === 1);
   t.check('UNIT-WAIT-05', 'B says "Bine." in the middle of A\'s sentence while A talks on (pause length 0.5 s): the one-word line comes at once, before A has finished',
     reply?.text === 'Bine.' && reply.at < 8.3 && w.some((f) => f.mic === 0 && f.text === SAID_A), lines(w));
+  // A sentence's last word leaks most often when its speaker goes on with the next sentence in the same breath (0.3 s,
+  // under the pause that ends a line): their line goes on long after the leaked word, which is still their last word
+  // before a pause. It must wait and be dropped (it leaked when the line waited only if the other sentence stopped).
+  const NEXT = 'A fost o experiență frumoasă, deși ploaia ne-a ținut în cabană două zile.';
+  const [talks, hears] = twoMics(concat(silence(1.5), A.subarray(0, Math.round(5.95 * SR)), silence(0.3), B.subarray(Math.round(0.4 * SR), Math.round(4.9 * SR))),
+    silence(12.5), { bleedDb: 12 });
+  w = await timed(louder(hears, ...lastWord, 9), talks, (seg) => (seg.mic === 1 ? `${SENTENCE} ${NEXT}` : 'rare.'));
+  t.check('UNIT-WAIT-06', 'in real time, mic 1 hears A\'s last word 3 dB less clearly, and A goes on 0.3 s later with the next sentence: the one-word line waits and is dropped',
+    w.length === 1 && w[0].mic === 1 && w[0].text === `${SENTENCE} ${NEXT}`, lines(w));
 }
 
 // ---------- voice detectors are reused, not rebuilt (#4) ----------
