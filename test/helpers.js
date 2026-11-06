@@ -1,12 +1,13 @@
 // Shared by the test scripts (see TESTING.md): an isolated server per test, the streaming client,
 // two "speakers" cut from the fixture, a room simulator for two-mic tests, and pass/fail bookkeeping.
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { WebSocketServer } from 'ws';
 import { decodeWav, encodeWav } from '../lib/wav.js';
 
@@ -104,6 +105,22 @@ export async function startServer({ model = process.env.TEST_MODEL ?? 'parakeet-
 }
 
 /** Run test/stream-wav.js against a server; returns its sentences ({ id, mic, start, end, text }), live guesses and exit code. */
+/**
+ * A test server's memory in MB (#48): all of it as the system counts it (`ps`: resident), and what it is made of as the
+ * server reports it (/debug/memory, with DEBUG): V8's heap, the memory V8 tracks outside it (audio buffers), and the
+ * native rest (an in-process model and its GPU buffers, the voice detectors). Only `mb` when the server does not answer.
+ */
+export async function serverMemory(server) {
+  const { stdout } = await promisify(execFile)('ps', ['-o', 'rss=', '-p', String(server.pid)]);
+  const mb = Math.round(Number(stdout) / 1024);
+  try {
+    const m = await (await fetch(`${server.url}/debug/memory`, { signal: AbortSignal.timeout(5000) })).json();
+    return { mb, heap: m.heapTotal, external: m.external, native: mb - m.heapTotal - m.external };
+  } catch {
+    return { mb };
+  }
+}
+
 export function streamWav(port, args, { timeoutMs = 300000 } = {}) {
   return new Promise((resolve) => {
     const child = spawn(NODE, [path.join(ROOT, 'test', 'stream-wav.js'), ...args], { env: { ...process.env, PORT: String(port) } });

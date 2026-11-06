@@ -32,6 +32,7 @@ import { parseArgs } from '../scripts/benchmark-suite.js';
 import { createBacklog, lostNote } from '../public/backlog.js';
 import { spokenOrder } from '../public/order.js';
 import { SR, FIXTURE, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs, loadWav, saveWav } from './helpers.js';
+import { memoryCheck } from './meeting.js';
 
 const t = suite('unit');
 
@@ -1751,6 +1752,26 @@ if (!silero) {
     ['## Accuracy and speed', '## Live text', '## Noise, a quiet speaker', '## Silence and noise alone', '## Models that could not run', model.label, describeMachine(info), 'side by side', 'cannot load'].every((x) => report.includes(x))
       && args.minutes === 120 && args.parallel === 1 && JSON.stringify(args.models) === '["a","b"]' && args.sizes.accuracy === 10 && args.sizes.live === STAGES.live.full && args.label === 'My-Laptop-1' && parseArgs([]).minutes === 60,
     `${report.length} chars; ${JSON.stringify({ minutes: args.minutes, parallel: args.parallel, label: args.label })}`);
+}
+
+// ---------- the stress tier's memory check (#48) ----------
+{
+  // The server in the 3.9-hour meeting of the stress run on c10baf5, one sample per 10 min of meeting: a rise of 165 MB
+  // after the break that comes back down, which a straight line through the samples read as 29 MB per hour.
+  const hump = [276, 271, 291, 278, 292, 322, 298, 325, 358, 317, 344, 422, 392, 431, 435, 436, 397, 413, 414, 389, 372, 350, 296, 284]
+    .map((value, i) => ({ at: (i + 1) * 600 - 10, value }));
+  const h = memoryCheck(hump, 1800);
+  // As long, with ups and downs, over a floor that rises 15 MB per hour.
+  const leak = hump.map(({ at }, i) => ({ at, value: 280 + (15 * at) / 3600 + [0, 30, 10, 60, 20][i % 5] }));
+  const l = memoryCheck(leak, 1800);
+  // 40 minutes after warm-up: each window is a third of it.
+  const short = Array.from({ length: 40 }, (_, i) => ({ at: 600 + i * 60, value: 200 + (i % 7) }));
+  const s = memoryCheck(short, 600);
+  t.check('UNIT-MEM-01', 'the stress tier\'s memory check: a rise that comes back down is not growth, a rising floor is; a short run judges its thirds',
+    h.from === 278 && h.to === 284 && h.peak === 436 && h.peakOver === 144 && h.perHour < 10 && l.growth > 30 && l.perHour > 10
+      && s.span < 1 && s.growth === 0 && memoryCheck(short.slice(0, 5), 600).span === 0,
+    `hump: low point ${h.from} → ${h.to} MB, ${h.perHour.toFixed(1)} MB/h, peak ${h.peakOver} MB above the first 30 min; `
+      + `rising floor: ${l.from.toFixed(0)} → ${l.to.toFixed(0)} MB, ${l.perHour.toFixed(1)} MB/h; short: ${s.growth} MB over ${s.span.toFixed(2)} h`);
 }
 
 fs.rmSync(dir, { recursive: true, force: true });

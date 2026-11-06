@@ -60,6 +60,12 @@ try {
   t.check('PROT-STATIC-02', 'every file in public/ has a route in server.js', unserved.length === 0, unserved.join(', '));
   const [missing, post] = await Promise.all([fetch(`${server.url}/nope.js`), fetch(`${server.url}/`, { method: 'POST' })]);
   t.check('PROT-STATIC-03', 'unknown paths and non-GET requests get 404', missing.status === 404 && post.status === 404);
+  // What the server's memory is made of, for the stress tests (#48): only with DEBUG, which every test server has.
+  const memory = await fetch(`${server.url}/debug/memory`);
+  const mem = memory.status === 200 ? await memory.json() : {};
+  t.check('PROT-MEM-01', 'with DEBUG, /debug/memory says what the server\'s memory is made of, in MB: all of it, V8\'s heap, the memory outside it',
+    ['rss', 'heapTotal', 'heapUsed', 'external', 'arrayBuffers'].every((k) => Number.isInteger(mem[k]) && mem[k] >= 0) && mem.heapUsed <= mem.heapTotal && mem.heapTotal < mem.rss,
+    `${memory.status} ${JSON.stringify(mem)}`);
 
   // ---------- connect ----------
   let c = await connect(server);
