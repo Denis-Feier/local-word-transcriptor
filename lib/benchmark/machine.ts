@@ -6,33 +6,25 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { ROOT } from '../config.ts';
 
-/** @typedef {{ name: string, cores?: number, memory?: string, memoryGb?: number | null, driver?: string }} Gpu */
-/** @typedef {{ name: string, description?: string, kind?: string, memoryGb?: number | null, error?: string }} ComputeDevice  as transcribe.cpp (ggml) sees it */
-/** @typedef {{ source: string, charge: number | null }} Power */
-/** @typedef {{ python: string, nemo_toolkit?: string, torch?: string }} PythonEnv */
-/**
- * Everything about a computer and a copy of the app that a result carries (machineInfo()). Nothing personal.
- * @typedef {{
- *   os: { platform: string, product: string | null, build: string | null, type: string, release: string, version: string, arch: string },
- *   cpu: { model: string, cores: number, speedMhz: number | null },
- *   ramGb: number | null,
- *   gpus: Gpu[],
- *   power: Power | null,
- *   compute: ComputeDevice[],
- *   node: string,
- *   app: { version: string, commit: string | null, branch: string | null, dirty: boolean },
- *   runtimes: { 'transcribe-cpp': string | null, 'sherpa-onnx-node': string | null, electron: string | null, ws: string | null, 'whisper.cpp': string | null, python: PythonEnv | null },
- * }} MachineInfo
- */
+export type Gpu = { name: string; cores?: number; memory?: string; memoryGb?: number | null; driver?: string };
+/** A compute device as transcribe.cpp (ggml) sees it. */
+export type ComputeDevice = { name: string; description?: string; kind?: string; memoryGb?: number | null; error?: string };
+export type Power = { source: string; charge: number | null };
+export type PythonEnv = { python: string; nemo_toolkit?: string; torch?: string };
+/** Everything about a computer and a copy of the app that a result carries (machineInfo()). Nothing personal. */
+export type MachineInfo = {
+  os: { platform: string; product: string | null; build: string | null; type: string; release: string; version: string; arch: string };
+  cpu: { model: string; cores: number; speedMhz: number | null };
+  ramGb: number | null;
+  gpus: Gpu[];
+  power: Power | null;
+  compute: ComputeDevice[];
+  node: string;
+  app: { version: string; commit: string | null; branch: string | null; dirty: boolean };
+  runtimes: { 'transcribe-cpp': string | null; 'sherpa-onnx-node': string | null; electron: string | null; ws: string | null; 'whisper.cpp': string | null; python: PythonEnv | null };
+};
 
-/**
- * @template T
- * @param {string} cmd
- * @param {string[]} args
- * @param {(out: string) => T} parse
- * @returns {T | null}
- */
-function tryRun(cmd, args, parse) {
+function tryRun<T>(cmd: string, args: string[], parse: (out: string) => T): T | null {
   try {
     const out = execFileSync(cmd, args, { encoding: 'utf8', timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
     return parse(out);
@@ -41,21 +33,13 @@ function tryRun(cmd, args, parse) {
   }
 }
 
-/**
- * @param {number} x
- * @param {number} [digits]
- */
-const round = (x, digits = 1) => Math.round(x * 10 ** digits) / 10 ** digits;
-/** @param {number | undefined} bytes */
-const gb = (bytes) => (bytes ? round(bytes / 1024 ** 3) : null);
+const round = (x: number, digits = 1) => Math.round(x * 10 ** digits) / 10 ** digits;
+const gb = (bytes: number | undefined) => (bytes ? round(bytes / 1024 ** 3) : null);
 
-/**
- * Graphics processors the OS reports. Empty when nothing could be read.
- * @returns {Gpu[]}
- */
-export function detectGpus() {
+/** Graphics processors the OS reports. Empty when nothing could be read. */
+export function detectGpus(): Gpu[] {
   if (process.platform === 'darwin') {
-    return tryRun('system_profiler', ['SPDisplaysDataType', '-json'], (out) => (JSON.parse(out).SPDisplaysDataType ?? []).map((/** @type {any} */ g) => ({
+    return tryRun('system_profiler', ['SPDisplaysDataType', '-json'], (out) => (JSON.parse(out).SPDisplaysDataType ?? []).map((g: any) => ({
       name: g.sppci_model ?? g._name,
       cores: g.sppci_cores ? Number(g.sppci_cores) : undefined,
       memory: g.spdisplays_vram ?? g.spdisplays_vram_shared ?? undefined,
@@ -64,7 +48,7 @@ export function detectGpus() {
   if (process.platform === 'win32') {
     const list = tryRun('powershell', ['-NoProfile', '-Command', 'Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM,DriverVersion | ConvertTo-Json -Compress'], (out) => {
       const json = JSON.parse(out.trim());
-      return (Array.isArray(json) ? json : [json]).map((/** @type {any} */ g) => ({ name: g.Name, memoryGb: gb(g.AdapterRAM), driver: g.DriverVersion }));
+      return (Array.isArray(json) ? json : [json]).map((g: any) => ({ name: g.Name, memoryGb: gb(g.AdapterRAM), driver: g.DriverVersion }));
     });
     return list ?? [];
   }
@@ -77,21 +61,17 @@ export function detectGpus() {
   return pci ?? [];
 }
 
-/**
- * The compute devices transcribe.cpp (ggml) sees: the GPU it will use, or only the CPU.
- * @returns {Promise<ComputeDevice[]>}
- */
-export async function computeDevices() {
+/** The compute devices transcribe.cpp (ggml) sees: the GPU it will use, or only the CPU. */
+export async function computeDevices(): Promise<ComputeDevice[]> {
   try {
     const { getAvailableBackendsAsync } = await import('transcribe-cpp');
     return (await getAvailableBackendsAsync()).map((d) => ({ name: d.name, description: d.description, kind: d.kind, memoryGb: gb(d.memoryTotal) }));
-  } catch (/** @type {any} */ err) {
+  } catch (err: any) {
     return [{ name: 'unknown', error: err.message }];
   }
 }
 
-/** @param {string[]} args */
-function git(args) {
+function git(args: string[]) {
   return tryRun('git', ['-C', ROOT, ...args], (out) => out.trim());
 }
 
@@ -112,9 +92,8 @@ function osProduct() {
 /**
  * Where the power comes from, on a Mac: 'battery' or 'AC' and the charge, 0–100; null elsewhere or when unreadable. A
  * laptop on battery runs slower.
- * @returns {Power | null}
  */
-function powerSource() {
+function powerSource(): Power | null {
   if (process.platform !== 'darwin') return null;
   return tryRun('pmset', ['-g', 'batt'], (out) => {
     const source = /'Battery Power'/.test(out) ? 'battery' : /'AC Power'/.test(out) ? 'AC' : null;
@@ -140,9 +119,8 @@ function whisperCpp() {
 /**
  * The Python environment of the NeMo models: its interpreter, and the nemo_toolkit and torch in it (from their dist-info
  * folders, no import).
- * @returns {PythonEnv | null}
  */
-function pythonEnv() {
+function pythonEnv(): PythonEnv | null {
   const venv = path.join(ROOT, 'python', '.venv');
   if (!fs.existsSync(venv)) return null;
   const interpreter = [path.join(venv, 'bin', 'python'), path.join(venv, 'Scripts', 'python.exe')].filter((p) => fs.existsSync(p))
@@ -150,8 +128,7 @@ function pythonEnv() {
   const sites = [path.join(venv, 'Lib', 'site-packages')];
   const lib = path.join(venv, 'lib');
   if (fs.existsSync(lib)) for (const d of fs.readdirSync(lib)) sites.push(path.join(lib, d, 'site-packages'));
-  /** @type {Record<string, string>} */
-  const packages = {};
+  const packages: Record<string, string> = {};
   for (const site of sites.filter((s) => fs.existsSync(s))) {
     for (const entry of fs.readdirSync(site)) {
       const m = entry.match(/^(nemo_toolkit|torch)-([^-]+)\.dist-info$/);
@@ -161,15 +138,11 @@ function pythonEnv() {
   return { python: interpreter, ...packages };
 }
 
-/**
- * Everything about this computer and this copy of the app that a result needs to carry.
- * @returns {Promise<MachineInfo>}
- */
-export async function machineInfo() {
+/** Everything about this computer and this copy of the app that a result needs to carry. */
+export async function machineInfo(): Promise<MachineInfo> {
   const cpus = os.cpus();
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-  /** @param {string} name */
-  const dep = (name) => {
+  const dep = (name: string) => {
     try {
       return JSON.parse(fs.readFileSync(path.join(ROOT, 'node_modules', name, 'package.json'), 'utf8')).version;
     } catch {
@@ -190,12 +163,9 @@ export async function machineInfo() {
   };
 }
 
-/**
- * One line for the report: "macOS 26.7.1 (build 25G241, Darwin 25.6.0, arm64), Apple M5 × 10, 24 GB RAM, GPU Apple M5 (10 cores)".
- * @param {MachineInfo} m
- */
-export function describeMachine(m) {
-  const osName = /** @type {Record<string, string>} */ ({ darwin: 'macOS', win32: 'Windows', linux: 'Linux' })[m.os.platform] ?? m.os.platform;
+/** One line for the report: "macOS 26.7.1 (build 25G241, Darwin 25.6.0, arm64), Apple M5 × 10, 24 GB RAM, GPU Apple M5 (10 cores)". */
+export function describeMachine(m: MachineInfo) {
+  const osName = ({ darwin: 'macOS', win32: 'Windows', linux: 'Linux' } as Record<string, string>)[m.os.platform] ?? m.os.platform;
   const system = m.os.product ?? `${osName} ${m.os.release}`;
   const inside = [m.os.build && `build ${m.os.build}`, m.os.product && `${m.os.type} ${m.os.release}`, m.os.arch].filter(Boolean).join(', ');
   const gpu = m.gpus?.length ? m.gpus.map((g) => `${g.name}${g.cores ? ` (${g.cores} cores)` : g.memoryGb ? ` (${g.memoryGb} GB)` : ''}`).join(', ') : 'none detected';
@@ -203,12 +173,9 @@ export function describeMachine(m) {
   return `${system} (${inside}), ${m.cpu.model.trim()} × ${m.cpu.cores}, ${m.ramGb} GB RAM, GPU ${gpu}${power}`;
 }
 
-/**
- * One line for the report: the app and every runtime it uses, with versions, from machineInfo()'s runtimes.
- * @param {MachineInfo} m
- */
-export function describeSoftware(m) {
-  const rt = /** @type {Partial<MachineInfo['runtimes']>} */ (m.runtimes ?? {}); // results written before the runtimes were recorded have none
+/** One line for the report: the app and every runtime it uses, with versions, from machineInfo()'s runtimes. */
+export function describeSoftware(m: MachineInfo) {
+  const rt = (m.runtimes ?? {}) as Partial<MachineInfo['runtimes']>; // results written before the runtimes were recorded have none
   const py = rt.python;
   return [
     `Live Transcriber ${m.app.version}`, `Node ${m.node}`, rt.electron && `Electron ${rt.electron}`,

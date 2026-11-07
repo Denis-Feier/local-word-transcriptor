@@ -48,7 +48,7 @@ awake?.unref();
 
 // The computer and the software the run used, for the report (nothing personal: no user name, no host name).
 process.env.ENV_FILE ??= os.devNull; // the runner itself never reads the user's .env.local either (TESTING.md §2 rule 9); lib/config.ts loads it on import
-const { machineInfo, describeMachine, describeSoftware } = await import('../lib/benchmark/machine.js');
+const { machineInfo, describeMachine, describeSoftware } = await import('../lib/benchmark/machine.ts');
 const machine = await machineInfo();
 const { MODELS, isInstalled } = await import('../lib/models.ts');
 const installedModels = MODELS.filter((m) => !m.cloud && isInstalled(m)).map((m) => m.id); // the cloud model needs the user's key, which the tests never read

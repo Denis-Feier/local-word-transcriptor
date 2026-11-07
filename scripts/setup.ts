@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { config, MODELS_DIR, ROOT } from '../lib/config.ts';
 import { MODELS, SILERO_VAD, findModel, isInstalled, installModel, modelPath, download } from '../lib/models.ts';
 import fs from 'node:fs';
-/** @import { OnProgress } from '../types/model.ts' */
+import type { OnProgress } from '../types/model.ts';
 
 const args = process.argv.slice(2);
 
@@ -21,11 +21,7 @@ if (args.includes('--list')) {
   process.exit(0);
 }
 
-/**
- * @param {string} label
- * @returns {OnProgress}
- */
-const progressBar = (label) => {
+const progressBar = (label: string): OnProgress => {
   let last = -1;
   return (fraction) => {
     const pct = Math.floor(fraction * 100);
@@ -67,7 +63,7 @@ for (const id of ids) {
     try {
       await installModel(model, progressBar(`${model.label} (${model.size})`));
       console.log('');
-    } catch (/** @type {any} */ err) {
+    } catch (err: any) {
       console.error(`\n✖ ${model.label}: ${err.message}`);
       process.exitCode = 1;
       continue;

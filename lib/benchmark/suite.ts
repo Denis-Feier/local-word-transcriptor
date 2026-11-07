@@ -1,4 +1,4 @@
-// One model through the benchmark suite (scripts/benchmark-suite.js): load time, accuracy and speed on FLEURS
+// One model through the benchmark suite (scripts/benchmark-suite.ts): load time, accuracy and speed on FLEURS
 // Romanian, how steady its live text is (#27), how it copes with noise, a quiet speaker and a mic across the room,
 // long sentences, and silence. Everything runs through the app's own Transcriber, so the numbers are the app's.
 //
@@ -9,78 +9,80 @@ import { resultToText } from '../text.ts';
 import { SAMPLE_RATE } from '../wav.ts';
 import { corpusWer, liveSteadiness, sumSteadiness, median, mean } from './metrics.ts';
 import { withNoise, withGain, inRoom, silence, noiseOnly, joinClips } from './audio.ts';
-import { selectClips, audioSeconds } from './dataset.js';
-/** @import { Model } from '../../types/model.ts' */
-/** @import { Transcriber } from '../transcriber.ts' */
-/** @import { Steadiness } from './metrics.ts' */
-/** @import { Clip } from './dataset.js' */
-/** @import { MachineInfo } from './machine.js' */
+import { selectClips, audioSeconds } from './dataset.ts';
+import type { Model } from '../../types/model.ts';
+import type { Transcriber } from '../transcriber.ts';
+import type { Steadiness } from './metrics.ts';
+import type { Clip } from './dataset.ts';
+import type { MachineInfo } from './machine.ts';
 
 // The shapes of a run's JSON (benchmarks/runs/<name>/run.json), as runModel() writes a model's part and
-// scripts/benchmark-suite.js assembles the run; lib/benchmark/report.js reads them.
-/** @typedef {{ id: string, label: string, apply: (s: Float32Array) => Float32Array }} Condition */
-/** @typedef {{ id: string, label: string, make: () => Float32Array }} SilenceInput */
-/** @typedef {{ accuracy: number, live: number, robustness: number, length: number, silence: number }} StageSizes */
-/** @typedef {{ sizes: StageSizes, estimatedSec: number, fits: boolean }} Plan */
-/** @typedef {{ seconds: number, firstSentenceMs: number, device: string | null, fallback: string | null, rssMb: number, message: string }} LoadInfo */
-/** @typedef {{ seconds: string, clips: number, msPerClip: number | null, speed: number | null }} LengthBucket */
-/**
- * @typedef {{ clips: number, done: number, truncated: boolean, audioSec: number, computeSec: number, werStrict: number, werPlain: number,
- *   werNoDigits: number, clipsNoDigits: number, speed: number | null, msPerClip: number | null, msMedian: number | null, msMax: number | null,
- *   empty: number, byLength: LengthBucket[], perClip: Record<string, { hyp: string, ms: number }> }} AccuracyStage
- */
-/** @typedef {{ at: number, ms: number, text: string }} Guess */
-/** @typedef {{ text: string, ms: number, wait: number }} FinalGuess */
-/**
- * @typedef {{ seconds: number, guesses: Guess[], final: FinalGuess, raw: Steadiness, steady: Steadiness,
- *   firstLive: { raw: number | null, steady: number | null } }} LiveResult  one sentence on the live schedule (liveSentence())
- */
-/**
- * @typedef {{ clips: number, done: number, truncated: boolean, sentences: (LiveResult & { file: string })[], raw: ReturnType<typeof sumSteadiness>,
- *   steady: ReturnType<typeof sumSteadiness>, guessesPerSentence: number | null, firstLiveSec: { raw: number | null, steady: number | null },
- *   finalMs: number | null, werPlain: number }} LiveStage
- */
-/** @typedef {{ label: string, clips: number, werPlain: number, delta: number, msPerClip?: number, empty?: number }} ConditionResult */
-/** @typedef {{ clips: number, truncated: boolean, conditions: Record<string, ConditionResult> }} RobustnessStage */
-/** @typedef {{ target: number, sentences: number, seconds: number, msPerSentence: number, speed: number, werPlain: number, empty: number }} LengthResult */
-/** @typedef {{ truncated: boolean, lengths: LengthResult[] }} LengthStage */
-/** @typedef {{ id: string, label: string, ms: number, words: number, text: string }} SilenceResult */
-/** @typedef {{ truncated: boolean, inputs: SilenceResult[], hallucinated?: number }} SilenceStage */
-/** @typedef {{ accuracy?: AccuracyStage, live?: LiveStage, robustness?: RobustnessStage, length?: LengthStage, silence?: SilenceStage }} Stages */
-/**
- * One model's part of a run: what runModel() returns, or an error with the model's name.
- * @typedef {{ id: string, label: string, engine?: string, startedAt?: string, finishedAt?: string, stages?: Stages, truncated?: boolean,
- *   load?: LoadInfo, plan?: Plan & { ratio: number, budgetSec: number }, seconds?: number, error?: string, pending?: boolean }} ModelResult
- */
-/** A model that ran to its accuracy stage: what the report's tables are made of. @typedef {ModelResult & { load: LoadInfo, stages: Stages & { accuracy: AccuracyStage } }} Measured */
-/**
- * @typedef {{ schema: number, name: string, label: string | null, startedAt: string, finishedAt?: string, seconds?: number, minutes: number,
- *   parallel: number, sizes: Partial<StageSizes>, machine: MachineInfo, dataset: { name: string, clips: number, minutes: number, selection: string[] },
- *   modelIds: string[], models: ModelResult[] }} Run
- */
+// scripts/benchmark-suite.ts assembles the run; lib/benchmark/report.ts reads them.
+export type Condition = { id: string; label: string; apply: (s: Float32Array) => Float32Array };
+export type SilenceInput = { id: string; label: string; make: () => Float32Array };
+export type StageSizes = { accuracy: number; live: number; robustness: number; length: number; silence: number };
+export type Plan = { sizes: StageSizes; estimatedSec: number; fits: boolean };
+export type LoadInfo = { seconds: number; firstSentenceMs: number; device: string | null; fallback: string | null; rssMb: number; message: string };
+export type LengthBucket = { seconds: string; clips: number; msPerClip: number | null; speed: number | null };
+export type AccuracyStage = {
+  clips: number; done: number; truncated: boolean; audioSec: number; computeSec: number; werStrict: number; werPlain: number;
+  werNoDigits: number; clipsNoDigits: number; speed: number | null; msPerClip: number | null; msMedian: number | null; msMax: number | null;
+  empty: number; byLength: LengthBucket[]; perClip: Record<string, { hyp: string; ms: number }>;
+};
+export type Guess = { at: number; ms: number; text: string };
+export type FinalGuess = { text: string; ms: number; wait: number };
+/** One sentence on the live schedule (liveSentence()). */
+export type LiveResult = {
+  seconds: number; guesses: Guess[]; final: FinalGuess; raw: Steadiness; steady: Steadiness;
+  firstLive: { raw: number | null; steady: number | null };
+};
+export type LiveStage = {
+  clips: number; done: number; truncated: boolean; sentences: (LiveResult & { file: string })[]; raw: ReturnType<typeof sumSteadiness>;
+  steady: ReturnType<typeof sumSteadiness>; guessesPerSentence: number | null; firstLiveSec: { raw: number | null; steady: number | null };
+  finalMs: number | null; werPlain: number;
+};
+export type ConditionResult = { label: string; clips: number; werPlain: number; delta: number; msPerClip?: number; empty?: number };
+export type RobustnessStage = { clips: number; truncated: boolean; conditions: Record<string, ConditionResult> };
+export type LengthResult = { target: number; sentences: number; seconds: number; msPerSentence: number; speed: number; werPlain: number; empty: number };
+export type LengthStage = { truncated: boolean; lengths: LengthResult[] };
+export type SilenceResult = { id: string; label: string; ms: number; words: number; text: string };
+export type SilenceStage = { truncated: boolean; inputs: SilenceResult[]; hallucinated?: number };
+export type Stages = { accuracy?: AccuracyStage; live?: LiveStage; robustness?: RobustnessStage; length?: LengthStage; silence?: SilenceStage };
+/** One model's part of a run: what runModel() returns, or an error with the model's name. */
+export type ModelResult = {
+  id: string; label: string; engine?: string; startedAt?: string; finishedAt?: string; stages?: Stages; truncated?: boolean;
+  load?: LoadInfo; plan?: Plan & { ratio: number; budgetSec: number }; seconds?: number; error?: string; pending?: boolean;
+};
+/** A model that ran to its accuracy stage: what the report's tables are made of. */
+export type Measured = ModelResult & { load: LoadInfo; stages: Stages & { accuracy: AccuracyStage } };
+export type Run = {
+  schema: number; name: string; label: string | null; startedAt: string; finishedAt?: string; seconds?: number; minutes: number;
+  parallel: number; sizes: Partial<StageSizes>; machine: MachineInfo; dataset: { name: string; clips: number; minutes: number; selection: string[] };
+  modelIds: string[]; models: ModelResult[];
+};
 
 const MIN_PARTIAL_SEC = 0.6; // as lib/session.ts: the first live guess
 const CHUNK_SEC = 0.1; // the page sends 100 ms of audio at a time
 const WARMUP_CLIPS = 3;
 
-/** The conditions of the robustness stage, each applied to the same clips. @type {Condition[]} */
-export const CONDITIONS = [
+/** The conditions of the robustness stage, each applied to the same clips. */
+export const CONDITIONS: Condition[] = [
   { id: 'noise20', label: 'noise, SNR 20 dB', apply: (s) => withNoise(s, 20) },
   { id: 'noise10', label: 'noise, SNR 10 dB', apply: (s) => withNoise(s, 10) },
   { id: 'quiet', label: 'quiet speaker, −20 dB', apply: (s) => withGain(s, -20) },
   { id: 'room', label: 'mic across the room', apply: (s) => inRoom(s) },
 ];
 
-/** What the silence stage feeds the model: nothing to transcribe, and what it writes anyway is a hallucination. @type {SilenceInput[]} */
-export const SILENCE_INPUTS = [
+/** What the silence stage feeds the model: nothing to transcribe, and what it writes anyway is a hallucination. */
+export const SILENCE_INPUTS: SilenceInput[] = [
   { id: 'silence3', label: '3 s of silence', make: () => silence(3) },
   { id: 'silence10', label: '10 s of silence', make: () => silence(10) },
   { id: 'room-noise', label: '5 s of an empty room (−50 dBFS)', make: () => noiseOnly(5, -50) },
   { id: 'fan-noise', label: '5 s of a fan by the mic (−30 dBFS)', make: () => noiseOnly(5, -30) },
 ];
 
-/** Full stage sizes for the one-hour suite, and the least a stage is shrunk to before it is dropped. @type {Record<keyof StageSizes, { full: number, min: number }>} */
-export const STAGES = {
+/** Full stage sizes for the one-hour suite, and the least a stage is shrunk to before it is dropped. */
+export const STAGES: Record<keyof StageSizes, { full: number; min: number }> = {
   accuracy: { full: 100, min: 20 },
   live: { full: 40, min: 10 },
   robustness: { full: 25, min: 8 },
@@ -93,17 +95,11 @@ export const LENGTHS = [20, 40]; // seconds; 20 s is the app's default longest s
  * How many clips each stage gets within `seconds` of model time, from the model's measured speed (`ratio`: seconds
  * of compute per second of audio). sizes: the full sizes wanted (STAGES, or --clips etc.). When everything fits,
  * the sizes stay; otherwise every stage shrinks in proportion, never below its minimum, and the deadline does the rest.
- * @param {Clip[]} clips
- * @param {number} ratio
- * @param {number} seconds
- * @param {Partial<StageSizes>} [sizes]
- * @returns {Plan}
  */
-export function planStages(clips, ratio, seconds, sizes = {}) {
-  const keys = /** @type {(keyof StageSizes)[]} */ (Object.keys(STAGES));
-  const want = /** @type {StageSizes} */ (Object.fromEntries(keys.map((k) => [k, sizes[k] ?? STAGES[k].full])));
-  /** @param {StageSizes} n */
-  const cost = (n) => {
+export function planStages(clips: Clip[], ratio: number, seconds: number, sizes: Partial<StageSizes> = {}): Plan {
+  const keys = Object.keys(STAGES) as (keyof StageSizes)[];
+  const want = Object.fromEntries(keys.map((k) => [k, sizes[k] ?? STAGES[k].full])) as StageSizes;
+  const cost = (n: StageSizes) => {
     const acc = selectClips(clips, n.accuracy);
     const live = selectClips(acc, n.live);
     const robust = selectClips(acc, n.robustness);
@@ -119,7 +115,7 @@ export function planStages(clips, ratio, seconds, sizes = {}) {
   const full = cost(want);
   if (full <= seconds) return { sizes: want, estimatedSec: full, fits: true };
   const f = Math.max(0.05, seconds / full);
-  const shrunk = /** @type {StageSizes} */ (Object.fromEntries(keys.map((k) => [k, Math.max(Math.min(STAGES[k].min, want[k]), Math.floor(want[k] * f))])));
+  const shrunk = Object.fromEntries(keys.map((k) => [k, Math.max(Math.min(STAGES[k].min, want[k]), Math.floor(want[k] * f))])) as StageSizes;
   return { sizes: shrunk, estimatedSec: cost(shrunk), fits: false };
 }
 
@@ -127,17 +123,15 @@ export function planStages(clips, ratio, seconds, sizes = {}) {
  * Runs `model` through every stage. clips: the sorted FLEURS clips (loadClips); load(clip) -> Float32Array samples.
  * deadline: epoch ms after which stages stop; budgetSec: the model time the plan may use. log(line) reports progress.
  * Returns the model's result object, as written to the run's JSON.
- * @param {{ model: Model, transcriber: Transcriber, clips: Clip[], load: (clip: Clip) => Float32Array, deadline?: number, budgetSec?: number,
- *   sizes?: Partial<StageSizes>, partialEverySec?: number, log?: (line: string) => void }} opts
- * @returns {Promise<ModelResult>}
  */
-export async function runModel({ model, transcriber, clips, load, deadline = Infinity, budgetSec = Infinity, sizes = {}, partialEverySec = 0.5, log = () => {} }) {
-  /** @type {ModelResult & { stages: Stages }} */
-  const result = { id: model.id, label: model.label, engine: model.engine, startedAt: new Date().toISOString(), stages: {}, truncated: false };
+export async function runModel({ model, transcriber, clips, load, deadline = Infinity, budgetSec = Infinity, sizes = {}, partialEverySec = 0.5, log = () => {} }: {
+  model: Model; transcriber: Transcriber; clips: Clip[]; load: (clip: Clip) => Float32Array; deadline?: number; budgetSec?: number;
+  sizes?: Partial<StageSizes>; partialEverySec?: number; log?: (line: string) => void;
+}): Promise<ModelResult> {
+  const result: ModelResult & { stages: Stages } = { id: model.id, label: model.label, engine: model.engine, startedAt: new Date().toISOString(), stages: {}, truncated: false };
   const t0 = Date.now();
   const past = () => Date.now() >= deadline;
-  /** @param {Float32Array} samples */
-  const transcribe = async (samples) => {
+  const transcribe = async (samples: Float32Array) => {
     const r = await transcriber.transcribe(samples, { prompt: '', fallback: true });
     return { text: resultToText(r), ms: r.ms };
   };
@@ -174,10 +168,9 @@ export async function runModel({ model, transcriber, clips, load, deadline = Inf
 
   // 2. Accuracy and speed on the FLEURS selection.
   const accClips = selectClips(clips, plan.sizes.accuracy);
-  /** @type {Record<string, { hyp: string, ms: number }>} */
-  const hyps = {}; // file -> { hyp, ms }
+  const hyps: Record<string, { hyp: string; ms: number }> = {}; // file -> { hyp, ms }
   {
-    const stage = /** @type {AccuracyStage} */ ({ clips: accClips.length, done: 0, truncated: false }); // the scores follow
+    const stage = { clips: accClips.length, done: 0, truncated: false } as AccuracyStage; // the scores follow
     for (const clip of accClips) {
       if (past()) {
         stage.truncated = true;
@@ -222,7 +215,7 @@ export async function runModel({ model, transcriber, clips, load, deadline = Inf
   // 3. Live text (#27): each sentence replayed on the app's live-guess schedule, on a simulated clock.
   {
     const liveClips = selectClips(accClips, plan.sizes.live);
-    const stage = /** @type {LiveStage} */ ({ clips: liveClips.length, done: 0, truncated: false, sentences: /** @type {LiveStage['sentences']} */ ([]) }); // the scores follow
+    const stage = { clips: liveClips.length, done: 0, truncated: false, sentences: [] as LiveStage['sentences'] } as LiveStage; // the scores follow
     for (const clip of liveClips) {
       if (past()) {
         stage.truncated = true;
@@ -232,15 +225,14 @@ export async function runModel({ model, transcriber, clips, load, deadline = Inf
       stage.done++;
     }
     const s = stage.sentences;
-    /** @param {'raw' | 'steady'} key */
-    const steadiness = (key) => sumSteadiness(s.map((x) => x[key]));
+    const steadiness = (key: 'raw' | 'steady') => sumSteadiness(s.map((x) => x[key]));
     Object.assign(stage, {
       raw: steadiness('raw'),
       steady: steadiness('steady'),
       guessesPerSentence: mean(s.map((x) => x.guesses.length)),
       firstLiveSec: { raw: median(s.map((x) => x.firstLive.raw)), steady: median(s.map((x) => x.firstLive.steady)) },
       finalMs: median(s.map((x) => x.final.ms + 1000 * x.final.wait)),
-      werPlain: corpusWer(s.map((x) => ({ ref: /** @type {Clip} */ (liveClips.find((c) => c.file === x.file)).ref, hyp: x.final.text })), { diacritics: false }).wer, // every sentence came from liveClips
+      werPlain: corpusWer(s.map((x) => ({ ref: (liveClips.find((c) => c.file === x.file) as Clip).ref, hyp: x.final.text })), { diacritics: false }).wer, // every sentence came from liveClips
     });
     result.stages.live = stage;
     result.truncated ||= stage.truncated;
@@ -250,13 +242,11 @@ export async function runModel({ model, transcriber, clips, load, deadline = Inf
   // 4. Robustness: the same clips clean (from the accuracy stage) and under each condition.
   {
     const robustClips = selectClips(accClips, plan.sizes.robustness).filter((c) => c.file in hyps);
-    /** @type {RobustnessStage} */
-    const stage = { clips: robustClips.length, truncated: false, conditions: {} };
+    const stage: RobustnessStage = { clips: robustClips.length, truncated: false, conditions: {} };
     const clean = corpusWer(robustClips.map((c) => ({ ref: c.ref, hyp: hyps[c.file].hyp })), { diacritics: false });
     stage.conditions.clean = { label: 'clean', clips: robustClips.length, werPlain: clean.wer, delta: 0 };
     for (const cond of CONDITIONS) {
-      /** @type {{ ref: string, hyp: string }[]} */
-      const pairs = [];
+      const pairs: { ref: string; hyp: string }[] = [];
       let ms = 0;
       for (const clip of robustClips) {
         if (past()) {
@@ -279,16 +269,13 @@ export async function runModel({ model, transcriber, clips, load, deadline = Inf
 
   // 5. Long sentences: clips joined into 20 s and 40 s stretches of speech.
   {
-    /** @type {LengthStage} */
-    const stage = { truncated: false, lengths: [] };
+    const stage: LengthStage = { truncated: false, lengths: [] };
     const pool = [...accClips];
     for (const target of LENGTHS) {
-      /** @type {{ seconds: number, parts: number, ms: number, werPlain: number, words: number, empty: boolean }[]} */
-      const rows = [];
+      const rows: { seconds: number; parts: number; ms: number; werPlain: number; words: number; empty: boolean }[] = [];
       for (let i = 0; i < plan.sizes.length && !past(); i++) {
-        /** @type {Clip[]} */
-        const parts = [];
-        while (audioSeconds(parts) < target - 2 && pool.length) parts.push(/** @type {Clip} */ (pool.shift()));
+        const parts: Clip[] = [];
+        while (audioSeconds(parts) < target - 2 && pool.length) parts.push(pool.shift() as Clip);
         if (!parts.length) break;
         const samples = joinClips(parts.map(load));
         const r = await transcribe(samples);
@@ -297,7 +284,7 @@ export async function runModel({ model, transcriber, clips, load, deadline = Inf
       }
       if (past() && rows.length < plan.sizes.length) stage.truncated = true;
       if (!rows.length) continue;
-      const avg = /** @param {(r: { seconds: number, ms: number, werPlain: number }) => number} pick */ (pick) => /** @type {number} */ (mean(rows.map(pick))); // rows is not empty here
+      const avg = (pick: (r: { seconds: number; ms: number; werPlain: number }) => number) => mean(rows.map(pick)) as number; // rows is not empty here
       stage.lengths.push({ target, sentences: rows.length, seconds: avg((r) => r.seconds), msPerSentence: Math.round(avg((r) => r.ms)), speed: avg((r) => r.seconds) / (avg((r) => r.ms) / 1000), werPlain: avg((r) => r.werPlain), empty: rows.filter((r) => r.empty).length });
     }
     result.stages.length = stage;
@@ -307,8 +294,7 @@ export async function runModel({ model, transcriber, clips, load, deadline = Inf
 
   // 6. Silence and noise alone: anything written is invented.
   {
-    /** @type {SilenceStage} */
-    const stage = { truncated: false, inputs: [] };
+    const stage: SilenceStage = { truncated: false, inputs: [] };
     for (const input of SILENCE_INPUTS) {
       if (past()) {
         stage.truncated = true;
@@ -333,15 +319,10 @@ export async function runModel({ model, transcriber, clips, load, deadline = Inf
  * 0.6 s of speech, then every max(partialEverySec, 2 × the model's average time), only while the model is free, each
  * guess on the audio so far; the final on the whole sentence once it ends, after any guess still running.
  * Returns the guesses, the texts shown raw and with Steady live text, their steadiness and timing.
- * @param {Transcriber} transcriber
- * @param {Float32Array} samples
- * @param {{ partialEverySec?: number }} [opts]
- * @returns {Promise<LiveResult>}
  */
-export async function liveSentence(transcriber, samples, { partialEverySec = 0.5 } = {}) {
+export async function liveSentence(transcriber: Transcriber, samples: Float32Array, { partialEverySec = 0.5 }: { partialEverySec?: number } = {}): Promise<LiveResult> {
   const seconds = samples.length / SAMPLE_RATE;
-  /** @type {Guess[]} */
-  const guesses = [];
+  const guesses: Guess[] = [];
   let lastPartialAt = 0;
   let busyUntil = 0;
   for (;;) {
@@ -360,8 +341,7 @@ export async function liveSentence(transcriber, samples, { partialEverySec = 0.5
   // What the page showed: raw, every non-empty guess as the model wrote it; steady, only the words two guesses agree on.
   const raw = guesses.filter((g) => g.text).map((g) => ({ shownAt: g.at + g.ms / 1000, text: g.text }));
   const steadyText = new SteadyText();
-  /** @type {{ shownAt: number, text: string }[]} */
-  const steady = [];
+  const steady: { shownAt: number; text: string }[] = [];
   for (const g of guesses) {
     if (!g.text) continue;
     const text = steadyText.update(g.text);

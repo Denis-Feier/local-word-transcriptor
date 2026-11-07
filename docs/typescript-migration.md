@@ -360,6 +360,20 @@ asked for: `node server.ts` reaches its ready line in 64 ms, `node server.js` di
 the types' comments, `public/order.js`'s comment, `lib/benchmark/suite.js`'s and the user-manual skill's `git log`
 paths.
 
+What happened in N5 (2026-11-07, `ts/3-n5`): the four benchmark modules, the four scripts and `scripts/manual.mjs`,
+which is `scripts/manual.ts` now: it starts itself again inside Electron, and Electron 45 took the `.ts` entry (that
+settles E1, §10). The run's JSON shapes (`suite.ts`'s twenty-four `@typedef`s), `machine.ts`'s five, `dataset.ts`'s
+`Clip`, `report.ts`'s `ReportRun` and the suite script's `Opts` are exported types, as the tests import some of them.
+`benchmark-suite.ts` names its own file twice (the worker it spawns, and the guard that runs `main()` only when it is
+the entry), both say `.ts`. `package.json`'s five scripts run `node scripts/<name>.ts`. One importer the `from`
+pattern missed: `test/run-all.js` loads `lib/benchmark/machine` with a dynamic `import()`, which tsc resolves to the
+`.ts` source either way, so only running the file shows the stale specifier; the landing scripts now rewrite that
+form too. Smoke, each script run once: `setup.ts --list` lists the models, `compare.ts` without a file prints its usage, `benchmark.ts --models no-such` refuses the
+model before touching the dataset, `benchmark-suite.ts --report benchmarks/runs/2026-11-02_20-09_mac-m5` rewrote that run's
+`report.md` byte for byte, and `manual.ts --pdf-only` built both PDFs inside Electron (restored afterwards: the
+manual is not part of this batch). The `.js` mentions followed in README's file table, TESTING.md §5, the suite's and the
+metrics' header comments and the user-manual skill.
+
 ## 7. Phase 4 — the page becomes `.ts`
 
 Branch `ts/4-web`. `public/*.js` move to `web/*.ts` (`git mv`, so history follows), keep `web/order.ts` as the one
@@ -407,7 +421,7 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 
 | # | Risk / check | Status | Handling |
 |---|---|---|---|
-| E1 | A `.ts` file as package.json's `"main"` entry | **open**; a `.ts` module imported by the Electron 45 main process and a `.ts` utility process both run (verified 2026-11-06) | N6 tries `"main": "desktop/main.ts"`; if Electron does not take it, `desktop/main.mjs` shrinks to a one-line bootstrap, `import './main.ts';`, and the typed code lives in `desktop/main.ts`. `server.ts` as the utility process works either way |
+| E1 | A `.ts` file as package.json's `"main"` entry | **confirmed** (2026-11-07, N5): Electron 45 ran `scripts/manual.ts` as its entry script (`electron scripts/manual.ts` built the manual's PDFs); a `.ts` module imported by its main process and a `.ts` utility process had run on 2026-11-06 | N6 tries `"main": "desktop/main.ts"`; if Electron does not take it, `desktop/main.mjs` shrinks to a one-line bootstrap, `import './main.ts';`, and the typed code lives in `desktop/main.ts`. `server.ts` as the utility process works either way |
 | E2 | `node --check` cannot parse `.ts` | verified | `STATIC-01` keeps `node --check` for `.js/.mjs/.cjs`; `.ts` is parsed by `tsc` (`STATIC-06`) |
 | E3 | Node refuses non-erasable syntax (`enum`, `namespace`, parameter properties) | verified | `erasableSyntaxOnly` in both tsconfigs: the checker refuses it before Node does; string-literal unions instead of enums |
 | E4 | A `.js` specifier left behind after a rename | will happen | the module fails to load, every suite that imports it fails at once; `allowImportingTsExtensions` plus `tsc` report it before that |
@@ -440,6 +454,7 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 | Phase 3 N2 | `ts/3-n2` | done, awaiting merge | 2026-11-07 | the detectors, the segmenter, the crosstalk gate, the catalogue, the converter and the sidecar base; full tier 236 / 0 / 5 / 0 (`test-results/2026-11-07-17-15-20_65c785f/`) |
 | Phase 3 N3 | `ts/3-n3` | done, awaiting merge | 2026-11-07 | the five engines and the transcriber; full tier 236 / 0 / 5 / 0 (`test-results/2026-11-07-17-30-35_76f3524/`) |
 | Phase 3 N4 | `ts/3-n4` | done, awaiting merge | 2026-11-07 | the session and the server entry (`node server.ts`); full tier 176 / 1 / 5 / 0, the one failure the UI suite's teardown hang (TESTING.md §12), then the UI suite alone 60 / 0 / 0 / 0 |
-| Phase 3 N5 … N7 | `ts/3-<batch>` | not started | | E1 decides `desktop/main.ts` |
+| Phase 3 N5 | `ts/3-n5` | done, awaiting merge | 2026-11-07 | the benchmark library, the scripts and the manual script; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-18-25-33_e30b57b/`); each script smoked |
+| Phase 3 N6, N7 | `ts/3-<batch>` | not started | | E1 confirmed: `desktop/main.ts` |
 | Phase 4 | `ts/4-web` | not started | | D2 confirmed? |
 | Phase 5 | `ts/5-tighten` | not started | | |

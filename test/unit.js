@@ -24,11 +24,11 @@ import { config, ROOT } from '../lib/config.ts';
 import { MODELS, findModel } from '../lib/models.ts';
 import { liveSteadiness, sumSteadiness } from '../lib/benchmark/metrics.ts';
 import { withNoise, withGain, inRoom, silence as benchSilence, joinClips, rms, db } from '../lib/benchmark/audio.ts';
-import { machineInfo, describeMachine } from '../lib/benchmark/machine.js';
-import { loadClips, selectClips, clipSamples } from '../lib/benchmark/dataset.js';
-import { runModel, planStages, STAGES, CONDITIONS, SILENCE_INPUTS } from '../lib/benchmark/suite.js';
-import { renderReport } from '../lib/benchmark/report.js';
-import { parseArgs } from '../scripts/benchmark-suite.js';
+import { machineInfo, describeMachine } from '../lib/benchmark/machine.ts';
+import { loadClips, selectClips, clipSamples } from '../lib/benchmark/dataset.ts';
+import { runModel, planStages, STAGES, CONDITIONS, SILENCE_INPUTS } from '../lib/benchmark/suite.ts';
+import { renderReport } from '../lib/benchmark/report.ts';
+import { parseArgs } from '../scripts/benchmark-suite.ts';
 import { createBacklog, lostNote } from '../public/backlog.js';
 import { spokenOrder } from '../public/order.js';
 import { SR, FIXTURE, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs, loadWav, saveWav } from './helpers.js';
@@ -1624,7 +1624,7 @@ if (!silero) {
     `detectors ${given ? 'given back' : 'kept'}; ${thrown ? `audio after close threw ${thrown.message}; ` : ''}WAVs ${before.map((s) => `${s} s`).join(', ')} at close, ${after.map((s) => `${s} s`).join(', ')} after 1 s more audio`);
 }
 
-// ---------- the benchmark suite (scripts/benchmark-suite.js): its scores, audio, plan and a whole run on a stand-in ----------
+// ---------- the benchmark suite (scripts/benchmark-suite.ts): its scores, audio, plan and a whole run on a stand-in ----------
 {
   // UNIT-BENCH-01: steadiness of a live line, the way Canary revises it (as UNIT-STEADY-01's guesses).
   const shown = ['Azi vorbim', 'Astăzi vorbim despre', 'Astăzi vorbim despre model', 'Astăzi vorbim despre modelele noi'];

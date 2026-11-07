@@ -20,41 +20,30 @@ import { spawn } from 'node:child_process';
 import { config, ROOT } from '../lib/config.ts';
 import { MODELS, findModel, isInstalled, isAvailable, installModel } from '../lib/models.ts';
 import { Transcriber } from '../lib/transcriber.ts';
-import { machineInfo } from '../lib/benchmark/machine.js';
-import { ensureDataset, loadClips, clipSamples, selectClips, audioSeconds, FLEURS_DIR } from '../lib/benchmark/dataset.js';
-import { runModel, STAGES } from '../lib/benchmark/suite.js';
-import { renderReport } from '../lib/benchmark/report.js';
-/** @import { Model } from '../types/model.ts' */
-/** @import { ModelResult, Run } from '../lib/benchmark/suite.js' */
+import { machineInfo } from '../lib/benchmark/machine.ts';
+import { ensureDataset, loadClips, clipSamples, selectClips, audioSeconds, FLEURS_DIR } from '../lib/benchmark/dataset.ts';
+import { runModel, STAGES } from '../lib/benchmark/suite.ts';
+import { renderReport } from '../lib/benchmark/report.ts';
+import type { Model } from '../types/model.ts';
+import type { ModelResult, Run } from '../lib/benchmark/suite.ts';
 
-/**
- * The command line as the run understands it (parseArgs).
- * @typedef {{ minutes: number, parallel: number, sizes: { accuracy: number, live: number, robustness: number }, models: string[] | undefined,
- *   label: string | undefined, name: string | undefined, install: boolean, fresh: boolean, report: string | undefined, worker: boolean,
- *   out: string | undefined, deadline: number, budgetSec: number }} Opts
- */
+/** The command line as the run understands it (parseArgs). */
+export type Opts = {
+  minutes: number; parallel: number; sizes: { accuracy: number; live: number; robustness: number }; models: string[] | undefined;
+  label: string | undefined; name: string | undefined; install: boolean; fresh: boolean; report: string | undefined; worker: boolean;
+  out: string | undefined; deadline: number; budgetSec: number;
+};
 
 const MAX_MINUTES = 120;
 const RUNS = path.join(ROOT, 'benchmarks', 'runs');
 
-/**
- * The command line as the run understands it; exported for the tests.
- * @param {string[]} argv
- * @returns {Opts}
- */
-export function parseArgs(argv) {
-  /** @param {string} name */
-  const option = (name) => {
+/** The command line as the run understands it; exported for the tests. */
+export function parseArgs(argv: string[]): Opts {
+  const option = (name: string) => {
     const i = argv.indexOf(name);
     return i >= 0 ? argv[i + 1] : undefined;
   };
-  /**
-   * @param {string} name
-   * @param {number} fallback
-   * @param {number} [min]
-   * @param {number} [max]
-   */
-  const int = (name, fallback, min = 1, max = Infinity) => {
+  const int = (name: string, fallback: number, min = 1, max = Infinity) => {
     const v = option(name);
     if (v === undefined) return fallback;
     const n = Math.floor(Number(v));
@@ -79,30 +68,21 @@ export function parseArgs(argv) {
 }
 
 const stamp = () => new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '-');
-/**
- * @param {string} file
- * @param {unknown} data
- */
-const writeJson = (file, data) => fs.writeFileSync(file, JSON.stringify(data, null, 1));
+const writeJson = (file: string, data: unknown) => fs.writeFileSync(file, JSON.stringify(data, null, 1));
 
-/**
- * One model, in this process: writes <out>/models/<id>.json. Started by the orchestrator below (or by a test).
- * @param {Opts} opts
- */
-export async function worker(opts) {
-  const model = /** @type {Model} */ (findModel(/** @type {string[]} */ (opts.models)[0])); // the orchestrator names one installed model
-  const out = /** @type {string} */ (opts.out); // and where to write
+/** One model, in this process: writes <out>/models/<id>.json. Started by the orchestrator below (or by a test). */
+export async function worker(opts: Opts) {
+  const model = findModel((opts.models as string[])[0]) as Model; // the orchestrator names one installed model
+  const out = opts.out as string; // and where to write
   const clips = loadClips(FLEURS_DIR);
   const transcriber = new Transcriber(config);
-  /** @param {string} line */
-  const log = (line) => console.log(line);
-  /** @type {ModelResult} */
-  let result;
+  const log = (line: string) => console.log(line);
+  let result: ModelResult;
   try {
     result = await runModel({
       model, transcriber, clips, load: (c) => clipSamples(c, FLEURS_DIR), deadline: opts.deadline, budgetSec: opts.budgetSec, sizes: opts.sizes, partialEverySec: config.partialEverySec, log,
     });
-  } catch (/** @type {any} */ err) {
+  } catch (err: any) {
     result = { id: model.id, label: model.label, engine: model.engine, error: err.message, finishedAt: new Date().toISOString() };
     console.error(`✖ ${model.label}: ${err.message}`);
   }
@@ -112,12 +92,8 @@ export async function worker(opts) {
   return result;
 }
 
-/**
- * Writes run.json and report.md from the models' files.
- * @param {string} out
- * @param {Run} run
- */
-function assemble(out, run) {
+/** Writes run.json and report.md from the models' files. */
+function assemble(out: string, run: Run) {
   const dir = path.join(out, 'models');
   run.models = run.modelIds.map((id) => {
     const file = path.join(dir, `${id}.json`);
@@ -146,7 +122,7 @@ async function main() {
       console.log(`↓ ${m.label} (${m.downloadSize ?? m.size})…`);
       try {
         await installModel(m, () => {});
-      } catch (/** @type {any} */ err) {
+      } catch (err: any) {
         console.error(`  could not install ${m.id}: ${err.message}`);
       }
     }
@@ -171,8 +147,7 @@ async function main() {
   fs.mkdirSync(path.join(out, 'models'), { recursive: true });
   if (opts.fresh) for (const m of models) fs.rmSync(path.join(out, 'models', `${m.id}.json`), { force: true });
   const machine = await machineInfo();
-  /** @type {Run} */
-  const run = {
+  const run: Run = {
     schema: 1,
     name,
     label: opts.label ?? null,
@@ -197,10 +172,10 @@ async function main() {
   const deadline = t0 + opts.minutes * 60000;
   const queue = [...todo];
   let running = 0;
-  await /** @type {Promise<void>} */ (new Promise((resolve) => {
+  await new Promise<void>((resolve) => {
     const next = () => {
       while (running < opts.parallel && queue.length) {
-        const model = /** @type {Model} */ (queue.shift()); // the loop runs while the queue has one
+        const model = queue.shift() as Model; // the loop runs while the queue has one
         const rounds = Math.ceil((queue.length + 1 + running) / opts.parallel);
         const budgetSec = Math.max(60, (deadline - Date.now()) / 1000 / rounds);
         running++;
@@ -213,7 +188,7 @@ async function main() {
       if (!running && !queue.length) resolve();
     };
     next();
-  }));
+  });
   run.seconds = (Date.now() - t0) / 1000;
   run.finishedAt = new Date().toISOString();
   assemble(out, run);
@@ -222,29 +197,19 @@ async function main() {
   console.log(`Results: ${path.relative(ROOT, out)}/  (report.md, run.json)\nSend that folder back, as a GitHub issue or pull request, to add this computer to the comparison.\n`);
 }
 
-/**
- * @param {Model} model
- * @param {string} out
- * @param {{ deadline: number, budgetSec: number, sizes: Opts['sizes'], tag: boolean }} opts
- * @returns {Promise<void>}
- */
-function startWorker(model, out, { deadline, budgetSec, sizes, tag }) {
+function startWorker(model: Model, out: string, { deadline, budgetSec, sizes, tag }: { deadline: number; budgetSec: number; sizes: Opts['sizes']; tag: boolean }): Promise<void> {
   return new Promise((resolve) => {
-    const args = [path.join(ROOT, 'scripts', 'benchmark-suite.js'), '--worker', '--models', model.id, '--out', out, '--deadline', String(deadline), '--budget', String(budgetSec),
+    const args = [path.join(ROOT, 'scripts', 'benchmark-suite.ts'), '--worker', '--models', model.id, '--out', out, '--deadline', String(deadline), '--budget', String(budgetSec),
       '--clips', String(sizes.accuracy), '--live', String(sizes.live), '--robust', String(sizes.robustness)];
     const log = fs.createWriteStream(path.join(out, 'models', `${model.id}.log`));
     const child = spawn(process.execPath, args, { cwd: ROOT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
     const prefix = tag ? `[${model.id}] ` : '';
-    /**
-     * @param {NodeJS.ReadableStream} stream
-     * @param {NodeJS.WritableStream} to
-     */
-    const relay = (stream, to) => {
+    const relay = (stream: NodeJS.ReadableStream, to: NodeJS.WritableStream) => {
       let pending = '';
       stream.on('data', (d) => {
         log.write(d);
         const lines = (pending + d).split('\n');
-        pending = /** @type {string} */ (lines.pop()); // split() gives at least one piece
+        pending = lines.pop() as string; // split() gives at least one piece
         for (const l of lines) if (l.trim()) to.write(`${prefix}${l}\n`);
       });
     };
@@ -261,7 +226,7 @@ function startWorker(model, out, { deadline, budgetSec, sizes, tag }) {
   });
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(ROOT, 'scripts', 'benchmark-suite.js')) {
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(ROOT, 'scripts', 'benchmark-suite.ts')) {
   main().catch((err) => {
     console.error(`✖ ${err.message}`);
     process.exit(1);

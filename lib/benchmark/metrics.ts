@@ -1,4 +1,4 @@
-// Scores for the benchmark suite (scripts/benchmark-suite.js): word error rate over a set of clips, and how steady
+// Scores for the benchmark suite (scripts/benchmark-suite.ts): word error rate over a set of clips, and how steady
 // a model's live text is (#27), from the sequence of texts the page would have shown.
 import { editDistance, words } from '../wer.ts';
 import { wordKey } from '../steady.ts';

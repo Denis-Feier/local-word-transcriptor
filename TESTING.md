@@ -132,7 +132,7 @@ B ~2.5 h alone); measured: the 4-hour meeting 30 min at 8×, `PAGE` 5 min, the f
 
 | File | Role |
 |---|---|
-| `test/run-all.js` | Runs the tiers, the static checks (`STATIC-*`) and writes the signed report: `summary.md` and `run.json`, with the exact start moment as the run's id, the computer's hardware and software (`lib/benchmark/machine.js`, shared with the benchmark suite), the models installed and one row per test |
+| `test/run-all.js` | Runs the tiers, the static checks (`STATIC-*`) and writes the signed report: `summary.md` and `run.json`, with the exact start moment as the run's id, the computer's hardware and software (`lib/benchmark/machine.ts`, shared with the benchmark suite), the models installed and one row per test |
 | `test/helpers.js` | Isolated server per test (`startServer`; `maxFileBlocks` caps its files with `ulimit -f`, like a full disk), streaming client (`streamWav`), test speakers, two-mic room simulator (`twoMics`), a stand-in for ElevenLabs' realtime speech-to-text that records every connection (`fakeElevenLabs`), a stand-in for `server.ts` that serves the page and sends it whatever a test wants (`fakeServer`; `UI-TX-06`, `STRESS-PAGE-*`), how many lines of one list are out of order against another (`outOfPlace`), result bookkeeping (`suite`) |
 | `test/unit.js` | Logic without a speech model (`UNIT-*`) |
 | `test/protocol.js` | The server as clients use it (`PROT-*`) |
@@ -166,7 +166,7 @@ each mic the page opens with its auto-gain request (`window.__mics`). An output 
 (`setSinkId({ type: 'none' })`), so a test run never makes sound on this computer. `window.__speakerLevel()` measures
 what it would have played. Clipboard and downloads are captured. Chromium's own test microphones
 (`--use-fake-device-for-media-stream`) are silent in this Electron build, so they cannot replace this.
-`scripts/manual.mjs` reuses `preload.cjs` (with its own device names, through `sessionStorage.__fake`) for the user
+`scripts/manual.ts` reuses `preload.cjs` (with its own device names, through `sessionStorage.__fake`) for the user
 manual's screenshots; after changing the preload, run `npm run manual` to check that it still works.
 
 **Statuses.** ✔ pass, ✖ fail, ◌ known limit (expected to fail today; a pass prints a reminder to promote it),

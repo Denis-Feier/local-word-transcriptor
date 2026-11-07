@@ -1,30 +1,20 @@
 // The Markdown report of a benchmark run (benchmarks/runs/<name>/report.md), from its run.json.
-import { describeMachine } from './machine.js';
-import { CONDITIONS, LENGTHS } from './suite.js';
-/** @import { LiveStage, Measured, ModelResult, Run } from './suite.js' */
+import { describeMachine } from './machine.ts';
+import { CONDITIONS, LENGTHS } from './suite.ts';
+import type { LiveStage, Measured, ModelResult, Run } from './suite.ts';
 
-/** What the report needs of a run: its header, its machine and its models. @typedef {Pick<Run, 'name' | 'startedAt' | 'minutes' | 'parallel' | 'machine'> & { dataset: { clips: number }, models?: ModelResult[], seconds?: number }} ReportRun */
+/** What the report needs of a run: its header, its machine and its models. */
+export type ReportRun = Pick<Run, 'name' | 'startedAt' | 'minutes' | 'parallel' | 'machine'> & { dataset: { clips: number }; models?: ModelResult[]; seconds?: number };
 
-/**
- * @param {number | null | undefined} x
- * @param {number} [d]
- */
-const pct = (x, d = 2) => (x == null || Number.isNaN(x) ? '—' : `${x.toFixed(d)} %`);
-/**
- * @param {number | null | undefined} x
- * @param {number} [d]
- */
-const num = (x, d = 0) => (x == null || Number.isNaN(x) ? '—' : x.toFixed(d));
-/** @param {{ truncated?: boolean }} m */
-const flag = (m) => (m.truncated ? ' ⏱' : '');
+const pct = (x: number | null | undefined, d = 2) => (x == null || Number.isNaN(x) ? '—' : `${x.toFixed(d)} %`);
+const num = (x: number | null | undefined, d = 0) => (x == null || Number.isNaN(x) ? '—' : x.toFixed(d));
+const flag = (m: { truncated?: boolean }) => (m.truncated ? ' ⏱' : '');
 
-/** @param {ReportRun} run */
-export function renderReport(run) {
+export function renderReport(run: ReportRun) {
   const models = run.models ?? [];
-  const ok = /** @type {Measured[]} */ (models.filter((m) => !m.error && m.stages?.accuracy));
+  const ok = models.filter((m) => !m.error && m.stages?.accuracy) as Measured[];
   const failed = models.filter((m) => m.error);
-  /** @type {string[]} */
-  const lines = [];
+  const lines: string[] = [];
   lines.push(`# Benchmark: ${run.name}`, '');
   lines.push(`Measured on ${run.startedAt.slice(0, 10)} with Live Transcriber ${run.machine.app.version} (${run.machine.app.commit ?? '?'}${run.machine.app.dirty ? ', uncommitted changes' : ''}).`);
   lines.push('', `**Computer:** ${describeMachine(run.machine)}; Node ${run.machine.node}.`);
@@ -51,7 +41,7 @@ export function renderReport(run) {
   }
 
   // 2. Live text.
-  const live = /** @type {(Measured & { stages: { live: LiveStage } })[]} */ (ok.filter((m) => m.stages.live?.sentences?.length));
+  const live = ok.filter((m) => m.stages.live?.sentences?.length) as (Measured & { stages: { live: LiveStage } })[];
   if (live.length) {
     lines.push('', '## Live text: how much it rewrites itself (#27)', '');
     lines.push('Each sentence replayed on the app\'s live-guess schedule (first guess at 0.6 s, then every 0.5 s or twice the model\'s own time, while it is free). *Erasure*: words shown and then taken back, per word of the final line (0 = never). *Coverage*: words of the final line already on screen when it arrived. *Raw*: the model\'s guesses as written; *steady*: with Steady live text (the default).', '');
@@ -64,7 +54,7 @@ export function renderReport(run) {
   }
 
   // 3. Robustness.
-  const robust = /** @type {(Measured & { stages: { robustness: NonNullable<Measured['stages']['robustness']> } })[]} */ (ok.filter((m) => m.stages.robustness?.conditions));
+  const robust = ok.filter((m) => m.stages.robustness?.conditions) as (Measured & { stages: { robustness: NonNullable<Measured['stages']['robustness']> } })[];
   if (robust.length) {
     lines.push('', '## Noise, a quiet speaker, a mic across the room', '');
     lines.push('Word error rate (diacritics ignored) on the same clips, clean and with each condition added; in brackets the change against clean.', '');
@@ -72,8 +62,7 @@ export function renderReport(run) {
     lines.push(`|---|---|---|${CONDITIONS.map(() => '---').join('|')}|`);
     for (const m of robust) {
       const r = m.stages.robustness;
-      /** @param {string} id */
-      const cell = (id) => {
+      const cell = (id: string) => {
         const c = r.conditions[id];
         return c ? `${pct(c.werPlain, 1)} (${c.delta >= 0 ? '+' : ''}${num(c.delta, 1)})${c.empty ? `, ${c.empty} empty` : ''}` : '—';
       };
@@ -82,7 +71,7 @@ export function renderReport(run) {
   }
 
   // 4. Silence.
-  const quiet = /** @type {(Measured & { stages: { silence: NonNullable<Measured['stages']['silence']> } })[]} */ (ok.filter((m) => m.stages.silence?.inputs?.length));
+  const quiet = ok.filter((m) => m.stages.silence?.inputs?.length) as (Measured & { stages: { silence: NonNullable<Measured['stages']['silence']> } })[];
   if (quiet.length) {
     lines.push('', '## Silence and noise alone', '');
     lines.push('Nothing is said; every word written is invented (a hallucination). The app drops some known ones; these are what is left.', '');

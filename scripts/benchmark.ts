@@ -1,6 +1,6 @@
 // Scores the models on the whole FLEURS Romanian test set: 883 recorded sentences with checked transcripts
 // (Google, CC-BY-4.0). Downloads the set (~500 MB) into benchmarks/data the first time. The one-hour, shareable
-// benchmark of everything (accuracy, live text, noise, long sentences, silence) is scripts/benchmark-suite.js.
+// benchmark of everything (accuracy, live text, noise, long sentences, silence) is scripts/benchmark-suite.ts.
 //
 //   npm run benchmark                                  every downloaded model
 //   npm run benchmark -- --models canary-1b-v2,jackrabbit-110m-ro --limit 200
@@ -12,16 +12,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config, ROOT } from '../lib/config.ts';
 import { MODELS, findModel, isInstalled } from '../lib/models.ts';
-import { ensureDataset, FLEURS_DIR as DATA } from '../lib/benchmark/dataset.js';
+import { ensureDataset, FLEURS_DIR as DATA } from '../lib/benchmark/dataset.ts';
 import { Transcriber } from '../lib/transcriber.ts';
 import { decodeWav } from '../lib/wav.ts';
 import { resultToText } from '../lib/text.ts';
 import { editDistance, words } from '../lib/wer.ts';
-/** @import { Model } from '../types/model.ts' */
+import type { Model } from '../types/model.ts';
 
 const args = process.argv.slice(2);
-/** @param {string} name */
-const option = (name) => {
+const option = (name: string) => {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
 };
@@ -57,8 +56,7 @@ for (const model of models) {
     console.error(`  ✖ ${model.label}: ${transcriber.message}`);
     continue;
   }
-  /** @param {{ file: string }} c */
-  const load = (c) => decodeWav(fs.readFileSync(path.join(DATA, 'test', c.file))).samples;
+  const load = (c: { file: string }) => decodeWav(fs.readFileSync(path.join(DATA, 'test', c.file))).samples;
   await transcriber.transcribe(load(todo[0])); // warm-up, not timed
   const t0 = Date.now();
   for (const [i, clip] of todo.entries()) {
@@ -77,16 +75,14 @@ for (const model of models) {
 await transcriber.shutdown();
 
 // 2. Score: corpus-level WER (all errors / all reference words), with and without diacritics.
-/** @type {{ model: Model, strict: number, plain: number, speed: number, perClip: number }[]} */
-const rows = [];
+const rows: { model: Model; strict: number; plain: number; speed: number; perClip: number }[] = [];
 for (const model of models) {
   const cacheFile = path.join(RESULTS, `${model.id}.json`);
   if (!fs.existsSync(cacheFile)) continue;
   const { hyps, ms } = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
   const scored = clips.filter((c) => c.file in hyps);
   if (scored.length < clips.length) continue;
-  /** @param {boolean} diacritics */
-  const tally = (diacritics) => {
+  const tally = (diacritics: boolean) => {
     let errors = 0;
     let total = 0;
     for (const c of scored) {
