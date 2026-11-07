@@ -501,5 +501,6 @@ server keep reading `public/`. Nothing changes for `npm start`, Docker or CI: th
 | Phase 3 N6 | `ts/3-n6` | merged | 2026-11-07 | `desktop/main.ts` is the app's `"main"`; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-18-31-03_8fe032c/`); the app started and quit once (`electron .` from source, `LT_TEST=1`) |
 | Phase 3 N7 | `ts/3-n7` | merged | 2026-11-07 | the eleven test files; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-18-36-31_e42855e/`), run by `node test/run-all.ts`. **Phase 3 complete.** |
 | Phase 3 | `main` | merged, `085236f` | 2026-11-07 | eight fast-forwards (`ts/3-n1` … `ts/3-n7`, `fix/ui-teardown` between N4 and N5); full tier on `main` 236 / 0 / 5 / 0 in 12 min 12 s (TESTING.md §12) |
-| Phase 4 | `ts/4-web` | done, awaiting merge | 2026-11-07 | `web/*.ts` emitted into the committed `public/*.js` (`npm run build:web`, `STATIC-07`); the three projects green; standard tier 217 / 0 / 2 / 0 (`test-results/2026-11-07-19-12-45_4180608/`; the one check more is `STATIC-07`). **Phase 4 complete.** |
+| Phase 4 | `ts/4-web` | merged | 2026-11-07 | `web/*.ts` emitted into the committed `public/*.js` (`npm run build:web`, `STATIC-07`); the three projects green; standard tier 217 / 0 / 2 / 0 (`test-results/2026-11-07-19-12-45_4180608/`; the one check more is `STATIC-07`). **Phase 4 complete.** |
+| Phase 4 | `main` | merged, `c8b4c78` | 2026-11-07 | two fast-forwards (`ts/4-web`); full tier on `main` 237 / 0 / 5 / 0 in 12 min 5 s (TESTING.md §12) |
 | Phase 5 | `ts/5-tighten` | not started | | |
