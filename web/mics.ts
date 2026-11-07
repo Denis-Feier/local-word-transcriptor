@@ -1,7 +1,29 @@
 // Microphones: lists the computer's audio inputs and records several of them at once.
 // How a mic is connected (built-in, USB, jack, Bluetooth) doesn't matter: any input the browser lists can be used.
 // All mics feed one AudioContext and one worklet, so every chunk holds the same moment from each mic.
-import type { Capture, CaptureOptions, Inputs, MicFeed, MicProcessing, MicSlot } from '../types/page.ts';
+import type { Capture, MicFeed, MicSlot } from '../types/page.ts';
+
+/** The browser's noiseSuppression and autoGainControl for one use of a mic. */
+export interface MicProcessing {
+  noiseSuppression: boolean;
+  autoGainControl: boolean;
+}
+
+export interface CaptureOptions {
+  noiseSuppression: boolean;
+  /** Per mic. */
+  muted: boolean[];
+  /** Each ~100 ms chunk (see pcm-worklet.ts): a Uint32 mic count, then each mic's 1600 samples. */
+  onChunk(buffer: ArrayBuffer): void;
+  /** A mic disconnected or came back. */
+  onChange(): void;
+}
+
+/** listInputs(): the audio inputs and the one behind "System default". */
+export interface Inputs {
+  inputs: MediaDeviceInfo[];
+  defaultId: string;
+}
 
 /**
  * Audio inputs, minus "default" and "communications", which repeat a real mic under another name.

@@ -1,6 +1,5 @@
 // What lib/transcriber.ts needs from a speech engine, and what it gives the session. Phase 1 of
 // docs/typescript-migration.md: written from the engines in lib/engines/ and the transcriber as they are.
-import type { Model } from './model.ts';
 
 export interface TranscribeOptions {
   /** The end of the transcript so far (or the initial prompt), for engines that take one. */
@@ -45,17 +44,6 @@ export interface StreamingSentence {
   readonly result: Promise<TranscribeResult>;
 }
 
-/** What a session needs from the transcriber (lib/session.ts): the Transcriber, or a test's stand-in. */
-export interface TranscriberLike {
-  readonly supportsPrompt: boolean;
-  /** Moving average of inference time; null before the first sentence. */
-  avgMs: number | null;
-  /** A throwaway live guess, only while the model is idle; null otherwise. */
-  tryTranscribe(samples: Float32Array, opts?: TranscribeOptions): Promise<TranscribeResult> | null;
-  transcribe(samples: Float32Array, opts?: TranscribeOptions): Promise<TimedResult>;
-  stream?(opts?: StreamOptions): SessionStream | null;
-}
-
 /** The transcriber's handle on a streamed sentence, as lib/session.ts uses it (Transcriber.stream()). */
 export interface SessionStream {
   push(samples: Float32Array): void;
@@ -93,24 +81,6 @@ export interface SidecarCommand {
   env?: Record<string, string>;
 }
 
-/** The answer of a POST to a sidecar process. */
-export interface SidecarResponse {
-  ok: boolean;
-  status: number;
-  text: string;
-}
-
-/** What a SidecarEngine subclass provides. */
-export interface SidecarHooks {
-  /** Start again on the CPU when the GPU start fails. */
-  cpuFallback?: boolean;
-  /** The device when the process says nothing about it. */
-  defaultDevice?: string;
-  command(port: number, opts: { cpu?: boolean }): SidecarCommand;
-  /** The device named in a log line, or null when the line says nothing about it. */
-  deviceFromLog?(line: string): string | null;
-}
-
 /** Called once when an engine's process dies, before the request it was serving fails (#45). */
 export type OnCrash = (message: string) => void;
 
@@ -125,11 +95,3 @@ export interface TranscriberStatus {
   device: string | null;
   fallback: string | null;
 }
-
-/** The transcriber's events: 'state' carries its status. */
-export interface TranscriberEvents {
-  state: [status: TranscriberStatus];
-}
-
-/** Transcriber.createEngine: a test stands in a fake engine by replacing it. */
-export type CreateEngine = (model: Model, onCrash: OnCrash) => Engine;

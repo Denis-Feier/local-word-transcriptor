@@ -115,12 +115,5 @@ export interface ElevenLabsModel extends ModelBase {
 
 export type Model = TranscribeCppModel | WhisperCppModel | PythonNemoModel | AppleSpeechModel | ElevenLabsModel;
 
-/** The voice detector's model file (lib/models.ts SILERO_VAD). */
-export interface SileroVadFile {
-  label: string;
-  url: string;
-  file: string;
-}
-
 /** Download progress, 0..1. */
 export type OnProgress = (fraction: number) => void;

@@ -4,8 +4,52 @@ import { listInputs, openCapture } from './mics.js';
 import { canChooseOutput, listOutputs, openSpeaker } from './speaker.js';
 import { createBacklog, lostNote } from './backlog.js';
 import { spokenOrder } from './order.js';
-import type { CaptionRow, ClientMessage, ModelInfo, ServerMessage, StageSnapshot } from '../types/protocol.ts';
-import type { Capture, EngineView, Line, MicPick, MicSlot, SettingsPanel, Speaker, SpeakerPick, Stage, Store } from '../types/page.ts';
+import type { CaptionMessage, CaptionRow, ClientMessage, ModelInfo, ServerMessage, Spoken, StageSnapshot } from '../types/protocol.ts';
+import type { Capture, MicSlot, SettingsPanel, Speaker, Stage } from '../types/page.ts';
+import type { TranscriberState } from '../types/engine.ts';
+
+/** A chosen mic, in order (Mic 1, Mic 2, …); id '' is the system default. Remembered without its mute. */
+export interface MicPick {
+  id: string;
+  /** The device's name, to find it again if its id changes (a re-paired Bluetooth device). */
+  label: string;
+  muted?: boolean;
+}
+
+/** The chosen output; id '' is the system default. */
+export interface SpeakerPick {
+  id: string;
+  label: string;
+}
+
+/** One line of the transcript as the page keeps it (the `lines` map), live or final. */
+export interface Line extends Spoken {
+  el: HTMLElement;
+  connection: number;
+  text: string;
+  end?: number;
+  mic: number;
+  /** Shows its mic's name and colour (several mics). */
+  labeled: boolean;
+  final: boolean;
+  /** The other mics spoken at the same time as this line. */
+  with?: Set<number>;
+}
+
+/** The page's view of the server's transcriber: the last status message, or the connecting placeholder. */
+export interface EngineView {
+  state: TranscriberState;
+  message: string;
+  model: string | null;
+  device?: string | null;
+  fallback?: string | null;
+}
+
+/** The page's wrapper over localStorage: JSON values, a fallback when there is none or storage is blocked. */
+export interface Store {
+  get<T>(key: string, fallback: T): T;
+  set(key: string, value: unknown): void;
+}
 
 /** a final line knows when it ended */
 type FinalLine = Line & { end: number };
@@ -887,7 +931,7 @@ function initMain() {
   if ('BroadcastChannel' in window) {
     // Captions go out only while a caption window listens: each one says hello when it opens and goodbye when it closes.
     channel = new BroadcastChannel(CHANNEL);
-    channel.onmessage = ({ data }) => {
+    channel.onmessage = ({ data }: MessageEvent<CaptionMessage>) => {
       if (data?.type === 'hello') {
         captionWindows.add(data.id);
         publish();
@@ -954,7 +998,7 @@ function initDisplay() {
   channel = new BroadcastChannel(CHANNEL);
   const id = Math.random().toString(36).slice(2); // the main window sends captions while any caption window is open
   const hello = () => channel?.postMessage({ type: 'hello', id });
-  channel.onmessage = (e) => {
+  channel.onmessage = (e: MessageEvent<CaptionMessage>) => {
     if (e.data?.type === 'snapshot') stage.update(e.data);
     else if (e.data?.type === 'bye') stage.update({ ...empty, waiting: true });
     else if (e.data?.type === 'here') hello(); // the main window was reloaded

@@ -1,6 +1,28 @@
 import { SAMPLE_RATE, concatFloat32 } from './wav.ts';
 import { FRAME } from './vad.ts';
-import type { CurrentSegment, Detector, Frame, Segment, SegmentTiming, SegmenterOptions } from '../types/audio.ts';
+import type { CurrentSegment, Detector, Frame, Segment } from '../types/audio.ts';
+
+/** The timing of a sentence; the live settings change it mid-session (Segmenter.setTiming). */
+export interface SegmentTiming {
+  silenceMs: number;
+  preRollMs: number;
+  minSpeechMs: number;
+  maxSegmentSec: number;
+}
+
+export interface SegmenterOptions extends SegmentTiming {
+  detector: Detector;
+  onSpeechStart?(id: number): void;
+  onSegment?(segment: Segment): void;
+  /** Too little speech: a click or a cough. */
+  onDiscard?(id: number): void;
+  /** A mic added mid-session starts at the session's current frame. */
+  startFrame?: number;
+  /** Audio not yet cut into frames, carried over from the previous layout. */
+  leftover?: Float32Array;
+  /** Several mics share one id sequence. */
+  newId?(): number;
+}
 
 const FRAME_MS = (FRAME / SAMPLE_RATE) * 1000; // 32 ms
 const KEEP_TAIL_FRAMES = 6; // keep ~200 ms of trailing silence so the last word isn't clipped

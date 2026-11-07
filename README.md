@@ -57,7 +57,8 @@ docker compose down              # stop
 Docker on a Mac cannot use the Apple GPU, so every model runs on the CPU (see *Docker or native?* below).
 Download models from the page's **Model** menu, or all at once with `docker compose run --rm transcriber npm run setup -- --all`.
 
-**Native: fastest, uses the GPU.** Needs Node 22.18 or newer (`brew install node`).
+**Native: fastest, uses the GPU.** Needs Node 22.18 or newer (`brew install node`). The code is TypeScript that Node
+runs as it is (type stripping is built in from 22.18 on), so there is no build step.
 
 ```bash
 brew install whisper-cpp uv      # whisper.cpp for the Whisper models, uv for the NeMo models' Python
@@ -394,6 +395,7 @@ where macOS decides. In Docker there is no GPU, so everything runs on the CPU th
 | `desktop/main.ts` | The desktop app (Electron): starts the server in the background, opens its page, sends the caption window to the projector, data folders per user |
 | `docs/manual/` | The user manual: `manual.en.html` / `manual.ro.html` (the text), `manual.css`, `img/` (screenshots) and the PDFs built from them |
 | `scripts/manual.ts` | Builds the manual (`npm run manual`): screenshots of the page with the UI test's fake microphones, then a PDF per language; `--pdf-only` skips the screenshots |
+| `types/` | The contracts shared between modules, imported as types only: the WebSocket protocol (`protocol.ts`), the model catalogue (`model.ts`), the configuration (`config.ts`), the engine interface (`engine.ts`), the audio shapes (`audio.ts`), the page's (`page.ts`) and the tests' (`test.ts`) |
 | `test/smoke.ts` | End-to-end check on any OS: server, automatic model download, transcription of `test/fixtures/ro.wav` (one mic and two) |
 | `test/run-all.ts` | Runs the whole test plan (`TESTING.md`): logic, server, two-mic conversations, the page in Electron; `npm test` |
 | `.github/workflows/desktop.yml` | Builds and tests the Mac and Windows installers on GitHub; publishes them on version tags |
@@ -432,7 +434,7 @@ Any of these can also go in `.env.local` (git ignores it; see `.env.example`), o
 ~15 min with every speech engine). Each run writes a signed report to `test-results/` (the exact moment it started as its id, the computer's hardware and software, one row per test). The plan, the per-merge routine and
 the checklist for testing with real microphones are in TESTING.md. `npm run typecheck` runs the TypeScript checker
 alone; every tier runs it as `STATIC-06`. The page's sources are `web/*.ts`: after editing them, `npm run build:web` emits them into `public/`
-(`npm run watch:web` does it on every save), and `STATIC-07` fails while `public/` is stale. The code is moving to TypeScript step by step: [docs/typescript-migration.md](docs/typescript-migration.md).
+(`npm run watch:web` does it on every save), and `STATIC-07` fails while `public/` is stale. How the code became TypeScript, and the decisions behind the setup: [docs/typescript-migration.md](docs/typescript-migration.md).
 
 ## Testing without a microphone
 

@@ -33,6 +33,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Types and the page (tsc on the three projects; public/ is a fresh emit of web/)
+        run: npm run typecheck && node scripts/build-web.ts --check
       - name: Smoke test (voice detector + speech engine on this OS)
         run: node test/smoke.ts
       - name: Build installer

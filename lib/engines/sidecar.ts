@@ -1,7 +1,14 @@
 import { spawn } from 'node:child_process';
 import net from 'node:net';
 import type { ChildProcess } from 'node:child_process';
-import type { OnCrash, SidecarCommand, SidecarResponse } from '../../types/engine.ts';
+import type { OnCrash, SidecarCommand } from '../../types/engine.ts';
+
+/** The answer of a POST to a sidecar process. */
+export interface SidecarResponse {
+  ok: boolean;
+  status: number;
+  text: string;
+}
 
 export const HOST = '127.0.0.1';
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

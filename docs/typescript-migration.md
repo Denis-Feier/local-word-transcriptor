@@ -445,6 +445,30 @@ server keep reading `public/`. Nothing changes for `npm start`, Docker or CI: th
   section (the `test:full` triggers name `.js` files nowhere, so only this plan's pointer changes);
 - `.github/workflows/desktop.yml` gets `npm run typecheck` before the smoke test, so a type error cannot reach a tag.
 
+What happened (2026-11-07, `ts/5-tighten`): `allowJs`/`checkJs` left `tsconfig.json` (and so the test project), nothing
+JavaScript being included any more; `test/ui/preload.cjs` stays excluded (D6). Of the two stricter flags, measured on the
+three projects: `noUncheckedIndexedAccess` would raise 146 errors on the server side, 311 in the tests and 48 in the page
+(nearly every array and record index), `exactOptionalPropertyTypes` 14 sites (12 on the server side, mostly an option
+object built with a property that may be `undefined`, such as `{ onCrash }` into a `{ onCrash?: OnCrash }` parameter;
+one in `test/unit.ts`, one in `web/mics.ts`). Neither is on: the first is not worth five hundred edits; the second is
+left for its own small pull request, as the plan says. The shapes one module alone used moved into it, 25 of them, by
+one rule: imported by one module and named by no other shared type. `lib/wav.ts` got `WavWriterOptions` and `DecodedWav`; `lib/segmenter.ts`
+`SegmentTiming` and `SegmenterOptions`; `web/backlog.ts` `Backlog` and `BacklogTaken` (whose re-export from `page.ts`
+nothing used); `lib/session.ts` `TranscriberLike`; `lib/engines/sidecar.ts` `SidecarResponse`; `lib/models.ts`
+`SileroVadFile`; `web/stage.ts` `StageHooks`; `web/settings.ts` `SettingsHooks`; `web/mics.ts` `MicProcessing`,
+`CaptureOptions` and `Inputs`; `web/speaker.ts` `SpeakerOptions`; `web/app.ts` `MicPick`, `SpeakerPick`, `Line`,
+`EngineView` and `Store`; `test/helpers.ts` `ServerMemory`, `FakeElevenLabsOptions`, `FakeServerOptions` and
+`TwoMicsOptions`; `test/run-all.ts` `RunResult`. Each keeps its doc comment and stays exported. `types/` keeps the
+contracts between modules: `protocol`, `model`, `config`, `engine` (`Engine` itself, `SidecarCommand`, `OnCrash`, the
+transcriber's shapes), `audio` (frames, sentences, detectors, noise floors), `page` (`Stage`, `SettingsPanel`,
+`MicSlot`, `MicFeed`, `Capture`, `Speaker`, `Theme`, `StagePrefs`) and `test`. Five types nothing named went:
+`SidecarHooks`, `TranscriberEvents`, `CreateEngine`, `ServerMessageType`, `ClientMessageType`; two that nothing named
+are used now: `CaptionMessage` types the two `BroadcastChannel` handlers in `web/app.ts`, `SuiteResult` the suite
+file `run-all.ts` reads. The desktop workflow runs `npm run typecheck` and `node scripts/build-web.ts --check` before
+the smoke test on both runners; for the Windows one `STATIC-07` compares after turning CRLF into LF. README (`types/`
+row, no build step), CLAUDE.md (a standing "TypeScript" section in place of the migration one) and TESTING.md §13
+follow. No emitted page file changed. **The migration is complete**; this document stays as the record of its decisions.
+
 ## 9. Rules for every step
 
 1. Branch off `main` first (`ts/<phase>-<batch>`); commit, merge and push only when the owner asks.
@@ -503,4 +527,4 @@ server keep reading `public/`. Nothing changes for `npm start`, Docker or CI: th
 | Phase 3 | `main` | merged, `085236f` | 2026-11-07 | eight fast-forwards (`ts/3-n1` … `ts/3-n7`, `fix/ui-teardown` between N4 and N5); full tier on `main` 236 / 0 / 5 / 0 in 12 min 12 s (TESTING.md §12) |
 | Phase 4 | `ts/4-web` | merged | 2026-11-07 | `web/*.ts` emitted into the committed `public/*.js` (`npm run build:web`, `STATIC-07`); the three projects green; standard tier 217 / 0 / 2 / 0 (`test-results/2026-11-07-19-12-45_4180608/`; the one check more is `STATIC-07`). **Phase 4 complete.** |
 | Phase 4 | `main` | merged, `c8b4c78` | 2026-11-07 | two fast-forwards (`ts/4-web`); full tier on `main` 237 / 0 / 5 / 0 in 12 min 5 s (TESTING.md §12) |
-| Phase 5 | `ts/5-tighten` | not started | | |
+| Phase 5 | `ts/5-tighten` | done, awaiting merge | 2026-11-07 | `allowJs`/`checkJs` gone, 25 single-use types moved into their modules, 5 dead ones removed, CI type-checks; the three projects green; standard tier 217 / 0 / 2 / 0 (`test-results/2026-11-07-19-43-22_e41a8c6/`). **Phase 5 complete: the migration is done.** |

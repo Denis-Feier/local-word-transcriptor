@@ -33,7 +33,7 @@ export function emitWeb(): Map<string, string> {
 export function staleWebFiles(emitted: Map<string, string> = emitWeb()): string[] {
   const read = (name: string) => {
     try {
-      return fs.readFileSync(path.join(ROOT, 'public', name), 'utf8');
+      return fs.readFileSync(path.join(ROOT, 'public', name), 'utf8').replace(/\r\n/g, '\n'); // a Windows checkout may have CRLF
     } catch {
       return null;
     }

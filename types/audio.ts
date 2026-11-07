@@ -1,5 +1,6 @@
-// The audio pipeline's shapes: frames, sentences, detectors, the crosstalk gate's noise floors and WAV files
-// (lib/vad.ts, lib/segmenter.js, lib/crosstalk.ts, lib/wav.js). Phase 1 of docs/typescript-migration.md.
+// The audio pipeline's shapes shared between modules: frames, sentences, detectors and the crosstalk gate's noise
+// floors (lib/vad.ts, lib/segmenter.ts, lib/crosstalk.ts, lib/session.ts). Phase 1 of docs/typescript-migration.md; the
+// shapes one module alone uses live in that module since Phase 5.
 
 /** One detector frame (512 samples, 32 ms at 16 kHz) as Segmenter.analyze() returns it and CrosstalkGate.push() reads it. */
 export interface Frame {
@@ -47,28 +48,6 @@ export interface Detector {
   release?(): void;
 }
 
-/** The timing of a sentence; the live settings change it mid-session (Segmenter.setTiming). */
-export interface SegmentTiming {
-  silenceMs: number;
-  preRollMs: number;
-  minSpeechMs: number;
-  maxSegmentSec: number;
-}
-
-export interface SegmenterOptions extends SegmentTiming {
-  detector: Detector;
-  onSpeechStart?(id: number): void;
-  onSegment?(segment: Segment): void;
-  /** Too little speech: a click or a cough. */
-  onDiscard?(id: number): void;
-  /** A mic added mid-session starts at the session's current frame. */
-  startFrame?: number;
-  /** Audio not yet cut into frames, carried over from the previous layout. */
-  leftover?: Float32Array;
-  /** Several mics share one id sequence. */
-  newId?(): number;
-}
-
 /**
  * A mic's background noise as the crosstalk gate learned it (lib/crosstalk.ts NoiseFloor), kept when the mics change
  * and across a reconnect (#44).
@@ -79,33 +58,4 @@ export interface NoiseFloor {
   readonly learned: boolean;
   push(level: number, index: number): void;
   forget(index: number): void;
-}
-
-/** What WavWriter takes besides the file. */
-export interface WavWriterOptions {
-  sampleRate?: number;
-  /** Carry on an existing file after its last whole sample (the page reconnected, #10). */
-  resume?: boolean;
-}
-
-/** decodeWav(): a mono WAV's samples as floats. */
-export interface DecodedWav {
-  sampleRate: number;
-  samples: Float32Array;
-}
-
-// ---------- the page's audio backlog (web/backlog.ts; here, not in page.ts, because the unit tests import it) ----------
-
-export interface BacklogTaken {
-  /** Oldest first. */
-  chunks: ArrayBuffer[];
-  dropped: number;
-}
-
-/** createBacklog(): audio kept while the server is unreachable (#11). */
-export interface Backlog {
-  push(chunk: ArrayBuffer): void;
-  readonly dropped: number;
-  /** Everything kept and how many chunks were dropped; empties the backlog. */
-  take(): BacklogTaken;
 }

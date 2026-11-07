@@ -1,7 +1,16 @@
 // Projector view: the last few sentences in large type, centred, plus the sentence being spoken.
 // Used by the main page (Projector button) and by the caption-only window (/?display).
 
-import type { Stage, StageHooks, StagePrefs, StageSnapshot, Theme } from '../types/page.ts';
+import type { Stage, StagePrefs, Theme } from '../types/page.ts';
+import type { StageSnapshot } from '../types/protocol.ts';
+
+/** Omitted hooks hide their buttons. */
+export interface StageHooks {
+  /** Start / Stop. */
+  onToggle?(): void;
+  onSettings?(): void;
+  onClose?(): void;
+}
 
 const PREFS_KEY = 'stage';
 const DEFAULTS: StagePrefs = { size: 4.5, lines: 3, theme: 'dark' }; // size in % of the screen width

@@ -141,8 +141,6 @@ export type ServerMessage =
   | BehindMessage
   | ServerOptionsMessage;
 
-export type ServerMessageType = ServerMessage['type'];
-
 // ---------- page → server ----------
 
 /** The page's options for this connection; sent on connect and when a box is ticked. */
@@ -199,8 +197,6 @@ export type ClientMessage =
   | SelectMessage
   | InstallMessage
   | TuningChangeMessage;
-
-export type ClientMessageType = ClientMessage['type'];
 
 // ---------- shared by the server and the page ----------
 

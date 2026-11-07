@@ -1,10 +1,16 @@
 // Settings panel: speech detection (applied live on the server, shared by all windows) and
 // projector display (stored in this browser).
 import { SIZE, THEMES, loadPrefs } from './stage.js';
-import type { SettingsHooks, SettingsPanel, Theme } from '../types/page.ts';
+import type { SettingsPanel, StagePrefs, Theme } from '../types/page.ts';
 import type { TuningKey, TuningRanges } from '../types/config.ts';
-import type { TuningMessage } from '../types/protocol.ts';
+import type { ClientMessage, TuningMessage } from '../types/protocol.ts';
 import type { DetectorName } from '../types/audio.ts';
+
+export interface SettingsHooks {
+  send(msg: ClientMessage): void;
+  onDisplayPrefs(patch: Partial<StagePrefs>): void;
+  onOpenDisplay(): void;
+}
 
 /** one slider */
 type Field = { key: TuningKey, label: string, format: (v: number) => string, hint: string };

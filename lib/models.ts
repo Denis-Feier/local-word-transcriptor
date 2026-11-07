@@ -7,7 +7,14 @@ import { pipeline } from 'node:stream/promises';
 import { MODELS_DIR, ROOT, config } from './config.ts';
 import { convertHfWhisper } from './convert-whisper.ts';
 import { ensurePythonEnv, pythonReady } from './python-env.ts';
-import type { Model, ModelFile, OnProgress, SileroVadFile, WhisperConvert } from '../types/model.ts';
+import type { Model, ModelFile, OnProgress, WhisperConvert } from '../types/model.ts';
+
+/** The voice detector's model file (lib/models.ts SILERO_VAD). */
+export interface SileroVadFile {
+  label: string;
+  url: string;
+  file: string;
+}
 
 const HF_WHISPER = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/';
 const HF = 'https://huggingface.co/';

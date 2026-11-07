@@ -1,7 +1,19 @@
 // Audio recorded while the server is unreachable, kept until it is back. An outage longer than the limit keeps the
 // newest audio and drops the oldest, so the page catches up on what is being said now, and says how much was lost (#11).
 
-import type { Backlog, BacklogTaken } from '../types/audio.ts';
+export interface BacklogTaken {
+  /** Oldest first. */
+  chunks: ArrayBuffer[];
+  dropped: number;
+}
+
+/** createBacklog(): audio kept while the server is unreachable (#11). */
+export interface Backlog {
+  push(chunk: ArrayBuffer): void;
+  readonly dropped: number;
+  /** Everything kept and how many chunks were dropped; empties the backlog. */
+  take(): BacklogTaken;
+}
 
 export const CHUNK_SEC = 0.1; // pcm-worklet.ts sends 1600 samples at 16 kHz per chunk
 

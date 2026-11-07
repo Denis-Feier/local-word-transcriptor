@@ -1,5 +1,5 @@
-// What test/helpers.ts hands the test suites. Phase 1 of docs/typescript-migration.md.
-import type { ServerMessage } from './protocol.ts';
+// What test/helpers.ts hands the test suites, as far as several of them use it. Phase 1 of docs/typescript-migration.md;
+// the shapes one file alone uses live in that file since Phase 5.
 
 export interface StartServerOptions {
   /** The model to start with; null starts without MODEL (the saved or default one). */
@@ -24,14 +24,6 @@ export interface TestServer {
   transcripts: string;
   settingsFile: string;
   stop(): Promise<void>;
-}
-
-/** serverMemory(): MB, as the system counts it and as the server reports its parts (#48). */
-export interface ServerMemory {
-  mb: number;
-  heap?: number;
-  external?: number;
-  native?: number;
 }
 
 /** One final line as test/stream-wav.ts prints it. */
@@ -71,16 +63,6 @@ export interface FakeConnection {
   closed: boolean;
 }
 
-export interface FakeElevenLabsOptions {
-  key?: string;
-  /** The text that answers a commit. */
-  text?(c: FakeConnection): string;
-  /** The live text that answers each chunk; null for none. */
-  partial?(c: FakeConnection): string | null;
-  /** A server error type to answer the commit with instead, e.g. 'quota_exceeded'; null for none. */
-  fail?(c: FakeConnection): string | null;
-}
-
 /** fakeElevenLabs(). */
 export interface FakeElevenLabs {
   url: string;
@@ -89,27 +71,12 @@ export interface FakeElevenLabs {
   close(): Promise<unknown>;
 }
 
-export interface FakeServerOptions {
-  /** Sent to the page after the ready status, before the mics limit. */
-  greet?: ServerMessage[];
-}
-
 /** fakeServer(): serves the page and sends it whatever a test wants. */
 export interface FakeServer {
   url: string;
   /** To the newest connection; anything a test wants the page to get, a real message or not. */
   send(msg: object): void;
   close(): Promise<unknown>;
-}
-
-export interface TwoMicsOptions {
-  bleedDb?: number;
-  lagMs?: number;
-  gain2Db?: number;
-  /** dBFS. */
-  noise1?: number;
-  noise2?: number;
-  seed?: number;
 }
 
 export type CaseStatus = 'pass' | 'fail' | 'known' | 'skip';
@@ -132,12 +99,4 @@ export interface Suite {
 export interface SuiteResult {
   name: string;
   cases: TestCase[];
-}
-
-/** One suite's outcome in run-all.ts. */
-export interface RunResult {
-  suite: string;
-  cases: TestCase[];
-  seconds: number;
-  code: number | null;
 }

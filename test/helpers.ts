@@ -10,7 +10,41 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { WebSocketServer } from 'ws';
 import { decodeWav, encodeWav } from '../lib/wav.ts';
-import type { FakeConnection, FakeElevenLabs, FakeElevenLabsOptions, FakeServer, FakeServerOptions, ServerMemory, StartServerOptions, StreamResult, Suite, TestCase, TestServer, TwoMicsOptions } from '../types/test.ts';
+import type { FakeConnection, FakeElevenLabs, FakeServer, StartServerOptions, StreamResult, Suite, TestCase, TestServer } from '../types/test.ts';
+import type { ServerMessage } from '../types/protocol.ts';
+
+/** serverMemory(): MB, as the system counts it and as the server reports its parts (#48). */
+export interface ServerMemory {
+  mb: number;
+  heap?: number;
+  external?: number;
+  native?: number;
+}
+
+export interface FakeElevenLabsOptions {
+  key?: string;
+  /** The text that answers a commit. */
+  text?(c: FakeConnection): string;
+  /** The live text that answers each chunk; null for none. */
+  partial?(c: FakeConnection): string | null;
+  /** A server error type to answer the commit with instead, e.g. 'quota_exceeded'; null for none. */
+  fail?(c: FakeConnection): string | null;
+}
+
+export interface FakeServerOptions {
+  /** Sent to the page after the ready status, before the mics limit. */
+  greet?: ServerMessage[];
+}
+
+export interface TwoMicsOptions {
+  bleedDb?: number;
+  lagMs?: number;
+  gain2Db?: number;
+  /** dBFS. */
+  noise1?: number;
+  noise2?: number;
+  seed?: number;
+}
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const SR = 16000;

@@ -14,7 +14,15 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { ROOT } from './helpers.ts';
 import { staleWebFiles } from '../scripts/build-web.ts';
-import type { RunResult, TestCase } from '../types/test.ts';
+import type { SuiteResult, TestCase } from '../types/test.ts';
+
+/** One suite's outcome in run-all.ts. */
+export interface RunResult {
+  suite: string;
+  cases: TestCase[];
+  seconds: number;
+  code: number | null;
+}
 
 const require = createRequire(import.meta.url);
 const args = process.argv.slice(2);
@@ -80,7 +88,7 @@ function run(name: string, cmd: string, cmdArgs: string[], { minutes, env = {}, 
       const seconds = Math.round((Date.now() - t0) / 1000);
       let cases: TestCase[] = [];
       try {
-        cases = JSON.parse(fs.readFileSync(resultFile, 'utf8')).cases;
+        cases = (JSON.parse(fs.readFileSync(resultFile, 'utf8')) as SuiteResult).cases;
       } catch {
         // smoke.ts reports by exit code only; a crashed suite reports nothing
       }

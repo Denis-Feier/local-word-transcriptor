@@ -2,7 +2,16 @@
 // Any output the computer lists can be used: its own speakers, a jack, USB or Bluetooth speaker, a projector's HDMI
 // sound. Separate from the transcription: its own streams of the mics, at full quality and with the least delay.
 import { feedMics, openMics } from './mics.js';
-import type { Speaker, SpeakerOptions } from '../types/page.ts';
+import type { Speaker } from '../types/page.ts';
+
+export interface SpeakerOptions {
+  /** The output; '' is the system default. */
+  sinkId: string;
+  /** 0–1. */
+  volume: number;
+  muted: boolean[];
+  onChange(): void;
+}
 
 /** Whether a page may pick the output (Chromium, the desktop app). Elsewhere only the system default plays. */
 export const canChooseOutput = typeof AudioContext !== 'undefined' && 'setSinkId' in AudioContext.prototype;

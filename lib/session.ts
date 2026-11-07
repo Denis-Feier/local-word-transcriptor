@@ -11,7 +11,18 @@ import { spokenOrder } from '../web/order.ts';
 import type { Config } from '../types/config.ts';
 import type { ServerMessage } from '../types/protocol.ts';
 import type { CurrentSegment, Frame, NoiseFloor, Segment } from '../types/audio.ts';
-import type { SessionStream, TranscriberLike } from '../types/engine.ts';
+import type { SessionStream, StreamOptions, TimedResult, TranscribeOptions, TranscribeResult } from '../types/engine.ts';
+
+/** What a session needs from the transcriber: the Transcriber, or a test's stand-in. */
+export interface TranscriberLike {
+  readonly supportsPrompt: boolean;
+  /** Moving average of inference time; null before the first sentence. */
+  avgMs: number | null;
+  /** A throwaway live guess, only while the model is idle; null otherwise. */
+  tryTranscribe(samples: Float32Array, opts?: TranscribeOptions): Promise<TranscribeResult> | null;
+  transcribe(samples: Float32Array, opts?: TranscribeOptions): Promise<TimedResult>;
+  stream?(opts?: StreamOptions): SessionStream | null;
+}
 
 /**
  * One mic's channel: its segmenter, the timing of its live guesses, and the sentence a streaming model is hearing

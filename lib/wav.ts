@@ -1,5 +1,17 @@
 import fs from 'node:fs';
-import type { DecodedWav, WavWriterOptions } from '../types/audio.ts';
+
+/** What WavWriter takes besides the file. */
+export interface WavWriterOptions {
+  sampleRate?: number;
+  /** Carry on an existing file after its last whole sample (the page reconnected, #10). */
+  resume?: boolean;
+}
+
+/** decodeWav(): a mono WAV's samples as floats. */
+export interface DecodedWav {
+  sampleRate: number;
+  samples: Float32Array;
+}
 
 export const SAMPLE_RATE = 16000;
 
