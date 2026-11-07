@@ -390,7 +390,7 @@ where macOS decides. In Docker there is no GPU, so everything runs on the CPU th
 | `scripts/benchmark.ts` | Scores models on the whole FLEURS Romanian test set (`npm run benchmark`) |
 | `scripts/benchmark-suite.ts`, `lib/benchmark/` | The shareable one-hour benchmark (`npm run benchmark:suite`): accuracy, speed, live-text steadiness, noise, long sentences, silence, exported with the computer's description |
 | `Dockerfile`, `docker-compose.yml` | The Docker image and how it is started |
-| `desktop/main.mjs` | The desktop app (Electron): starts the server in the background, opens its page, sends the caption window to the projector, data folders per user |
+| `desktop/main.ts` | The desktop app (Electron): starts the server in the background, opens its page, sends the caption window to the projector, data folders per user |
 | `docs/manual/` | The user manual: `manual.en.html` / `manual.ro.html` (the text), `manual.css`, `img/` (screenshots) and the PDFs built from them |
 | `scripts/manual.ts` | Builds the manual (`npm run manual`): screenshots of the page with the UI test's fake microphones, then a PDF per language; `--pdf-only` skips the screenshots |
 | `test/smoke.js` | End-to-end check on any OS: server, automatic model download, transcription of `test/fixtures/ro.wav` (one mic and two) |

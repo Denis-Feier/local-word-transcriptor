@@ -5,7 +5,7 @@
   "description": "Live Romanian speech-to-text from your laptop mic, fully local",
   "type": "module",
   "private": true,
-  "main": "desktop/main.mjs",
+  "main": "desktop/main.ts",
   "scripts": {
     "setup": "node scripts/setup.ts",
     "start": "node server.ts",
@@ -57,7 +57,7 @@
       "server.ts",
       "lib/**",
       "public/**",
-      "desktop/main.mjs",
+      "desktop/main.ts",
       "docs/manual/*.pdf",
       "!**/*.md",
       "!node_modules/@elevenlabs/elevenlabs-js/dist/**"

@@ -196,7 +196,7 @@ screenshots or logs; `hardware` = a person with real devices (§9); `planned` = 
 | Id | Checks | Pass when | How |
 |---|---|---|---|
 | `STATIC-01` | Syntax of every `.js/.mjs/.cjs` in `lib/ public/ scripts/ desktop/ test/` (the `.ts` files are parsed by `STATIC-06`'s tsc, as `node --check` cannot read them) | `node --check` succeeds for all | auto |
-| `STATIC-02` | Installer contents (`package.json` → `build.files`) | includes `server.ts`, `lib/**`, `public/**`, `desktop/main.mjs` | auto |
+| `STATIC-02` | Installer contents (`package.json` → `build.files`) | includes `server.ts`, `lib/**`, `public/**`, `desktop/main.ts` | auto |
 | `STATIC-03` | This plan and the tests agree | every test id in `test/` appears in §7, every `auto` row exists in `test/` | auto |
 | `STATIC-04` | Page files are served | every file in `public/` is in `server.ts`'s list (a missing one breaks the page with no error) | auto |
 | `STATIC-05` | User manual is current and packaged | `docs/manual/manual.json` has `package.json`'s version (a version bump needs `npm run manual` / the user-manual skill), both PDFs exist, `build.files` includes `docs/manual/*.pdf` | auto |

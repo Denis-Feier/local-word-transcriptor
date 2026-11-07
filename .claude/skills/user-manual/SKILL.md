@@ -36,8 +36,8 @@ cannot be prepared without it.
 3. **What changed for users** since the text last changed:
    ```bash
    since=$(git log -1 --format=%H -- docs/manual/manual.en.html)
-   git log --oneline $since..HEAD -- public desktop/main.mjs lib/tuning.ts lib/config.ts lib/models.ts server.ts package.json .github/release-notes.md README.md
-   git diff $since..HEAD -- public desktop/main.mjs lib/tuning.ts lib/config.ts lib/models.ts
+   git log --oneline $since..HEAD -- public desktop/main.ts lib/tuning.ts lib/config.ts lib/models.ts server.ts package.json .github/release-notes.md README.md
+   git diff $since..HEAD -- public desktop/main.ts lib/tuning.ts lib/config.ts lib/models.ts
    ```
    Look for anything a user can see or do: new, renamed or removed controls, labels, hints, menu items, keys,
    defaults, ranges, warnings, behaviours, supported systems, install or first-start steps, models in the desktop
@@ -49,17 +49,17 @@ cannot be prepared without it.
      control is new or looks different, then `npm run manual`.
 5. **Check every fact against the code**, not against memory:
    - labels and tooltips: `public/index.html`; setting names and hints: `FIELDS` in `public/settings.js`;
-     projector keys and colour names: `public/stage.js`; menus: `buildMenu()` in `desktop/main.mjs`;
+     projector keys and colour names: `public/stage.js`; menus: `buildMenu()` in `desktop/main.ts`;
    - defaults: `lib/config.ts`; slider ranges: `TUNING` in `lib/tuning.ts` (every recommended value must lie inside
      its range); first start and systems: `.github/release-notes.md`.
    - Every `<b class="ui">` label must appear in the UI exactly as written. A quick check:
      ```bash
-     grep -o '<b class="ui">[^<]*' docs/manual/manual.en.html | sed 's/.*">//' | sort -u | while read -r l; do grep -rqF "$l" public desktop/main.mjs || echo "not in the UI: $l"; done
+     grep -o '<b class="ui">[^<]*' docs/manual/manual.en.html | sed 's/.*">//' | sort -u | while read -r l; do grep -rqF "$l" public desktop/main.ts || echo "not in the UI: $l"; done
      ```
 6. **Build:** `npm run manual` (about 40 s; needs `models/canary-1b-v2-Q8_0.gguf`, `npm run setup` downloads it).
    It starts its own server on a free port, so a running copy of the app is not touched.
 7. **Review the output visually** (checklist below). Fix and rebuild until it passes.
-8. **Test:** `npm run test:quick` (`STATIC-05` must pass). If `scripts/manual.ts`, `desktop/main.mjs` or anything
+8. **Test:** `npm run test:quick` (`STATIC-05` must pass). If `scripts/manual.ts`, `desktop/main.ts` or anything
    else beyond the manual changed, follow CLAUDE.md and TESTING.md §3 for the branch (`npm test`, plan updates).
 9. **Commit** both HTML files, `manual.css`, `img/`, both PDFs and `manual.json` together, e.g. "Update the user
    manual for 1.2.0". Merge, push and tag only when the user asks.

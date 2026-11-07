@@ -374,6 +374,15 @@ model before touching the dataset, `benchmark-suite.ts --report benchmarks/runs/
 manual is not part of this batch). The `.js` mentions followed in README's file table, TESTING.md §5, the suite's and the
 metrics' header comments and the user-manual skill.
 
+What happened in N6 (2026-11-07, `ts/3-n6`): `desktop/main.ts`, and `package.json`'s `"main"` and `build.files` point
+at it, as E1 allows (§10): Electron 45 loads a `.ts` entry itself, so the one-line bootstrap the plan kept in reserve
+was not needed. Sixteen tags became eleven annotations and casts; `env` is `{ ... } as Record<string, string>` since
+`process.env`'s values may be undefined. The static check `STATIC-02` expects `desktop/main.ts` in the installers'
+files. Started from source with `LT_TEST=1` (hidden window, no microphone prompt): Electron loaded `desktop/main.ts` as its
+entry, forked `server.ts` as the utility process, the server's log said `Parakeet Romanian 110M ready on GPU (Metal)`
+within a second, and the app quit on SIGTERM within a second. The `.js` mentions
+followed in README's file table, TESTING.md §7.1, `types/vendor.d.ts`'s comment and the user-manual skill.
+
 ## 7. Phase 4 — the page becomes `.ts`
 
 Branch `ts/4-web`. `public/*.js` move to `web/*.ts` (`git mv`, so history follows), keep `web/order.ts` as the one
@@ -455,6 +464,7 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 | Phase 3 N3 | `ts/3-n3` | done, awaiting merge | 2026-11-07 | the five engines and the transcriber; full tier 236 / 0 / 5 / 0 (`test-results/2026-11-07-17-30-35_76f3524/`) |
 | Phase 3 N4 | `ts/3-n4` | done, awaiting merge | 2026-11-07 | the session and the server entry (`node server.ts`); full tier 176 / 1 / 5 / 0, the one failure the UI suite's teardown hang (TESTING.md §12), then the UI suite alone 60 / 0 / 0 / 0 |
 | Phase 3 N5 | `ts/3-n5` | done, awaiting merge | 2026-11-07 | the benchmark library, the scripts and the manual script; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-18-25-33_e30b57b/`); each script smoked |
-| Phase 3 N6, N7 | `ts/3-<batch>` | not started | | E1 confirmed: `desktop/main.ts` |
+| Phase 3 N6 | `ts/3-n6` | done, awaiting merge | 2026-11-07 | `desktop/main.ts` is the app's `"main"`; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-18-31-03_8fe032c/`); the app started and quit once (`electron .` from source, `LT_TEST=1`) |
+| Phase 3 N7 | `ts/3-n7` | not started | | the tests |
 | Phase 4 | `ts/4-web` | not started | | D2 confirmed? |
 | Phase 5 | `ts/5-tighten` | not started | | |

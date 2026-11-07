@@ -143,7 +143,7 @@ function staticChecks() {
 
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   const packaged = pkg.build.files;
-  check('STATIC-02', 'the installers include server.ts, lib/ and public/', ['server.ts', 'lib/**', 'public/**', 'desktop/main.mjs'].every((p) => packaged.includes(p)), packaged.join(' '));
+  check('STATIC-02', 'the installers include server.ts, lib/ and public/', ['server.ts', 'lib/**', 'public/**', 'desktop/main.ts'].every((p) => packaged.includes(p)), packaged.join(' '));
 
   // A new version needs its manual rebuilt (npm run manual, or the user-manual skill) before it is tagged.
   /** @type {{ version?: string }} */

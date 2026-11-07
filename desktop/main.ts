@@ -34,26 +34,23 @@ const paths = app.isPackaged
 // The user manual (docs/manual/, built by npm run manual) in the system's language, shipped with the app.
 const manualPath = () => path.join(ROOT, 'docs', 'manual', `Live-Transcriber-Manual-${app.getLocale().startsWith('ro') ? 'RO' : 'EN'}.pdf`);
 
-/** @type {Electron.UtilityProcess | null} */
-let server = null;
-/** @type {BrowserWindow | null} */
-let mainWindow = null;
+let server: Electron.UtilityProcess | null = null;
+let mainWindow: BrowserWindow | null = null;
 let quitting = false;
 
-/** @returns {Promise<number>} */
-function freePort() {
+function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const probe = net.createServer();
     probe.on('error', reject);
     probe.listen(0, HOST, () => {
-      const { port } = /** @type {import('node:net').AddressInfo} */ (probe.address()); // listening on a TCP port
+      const { port } = probe.address() as net.AddressInfo; // listening on a TCP port
       probe.close(() => resolve(port));
     });
   });
 }
 
-/** Starts server.ts as a utility process and resolves with its URL once it answers. @returns {Promise<string>} */
-async function startServer() {
+/** Starts server.ts as a utility process and resolves with its URL once it answers. */
+async function startServer(): Promise<string> {
   const port = await freePort();
   fs.mkdirSync(paths.logs, { recursive: true });
   const log = fs.createWriteStream(path.join(paths.logs, 'server.log'), { flags: 'a' });
@@ -62,7 +59,7 @@ async function startServer() {
   server = utilityProcess.fork(path.join(ROOT, 'server.ts'), [], {
     stdio: 'pipe',
     serviceName: 'Live Transcriber server',
-    env: /** @type {Record<string, string>} */ ({
+    env: {
       ...process.env,
       HOST,
       PORT: String(port),
@@ -71,10 +68,10 @@ async function startServer() {
       ENV_FILE: process.env.ENV_FILE ?? paths.env,
       TRANSCRIPTS_DIR: process.env.TRANSCRIPTS_DIR ?? paths.transcripts,
       AUTO_INSTALL: '1', // first run downloads the default model with a progress bar in the page
-    }),
+    } as Record<string, string>,
   });
-  /** @type {NodeJS.ReadableStream} */ (server.stdout).pipe(log); // stdio: 'pipe' gives both
-  /** @type {NodeJS.ReadableStream} */ (server.stderr).pipe(log);
+  (server.stdout as NodeJS.ReadableStream).pipe(log); // stdio: 'pipe' gives both
+  (server.stderr as NodeJS.ReadableStream).pipe(log);
   server.on('exit', (code) => {
     server = null;
     if (!quitting) {
@@ -95,12 +92,9 @@ async function startServer() {
   throw new Error('The transcription engine did not start. See the log in ' + paths.logs);
 }
 
-/**
- * The caption-only window goes to the projector (any display other than the main window's), full screen.
- * @param {string} url
- */
-function openCaptionWindow(url) {
-  const here = screen.getDisplayMatching(/** @type {BrowserWindow} */ (mainWindow).getBounds()); // opened from the main window
+/** The caption-only window goes to the projector (any display other than the main window's), full screen. */
+function openCaptionWindow(url: string) {
+  const here = screen.getDisplayMatching((mainWindow as BrowserWindow).getBounds()); // opened from the main window
   const target = screen.getAllDisplays().find((d) => d.id !== here.id);
   const area = (target ?? here).workArea;
   const win = new BrowserWindow({
@@ -117,8 +111,7 @@ function openCaptionWindow(url) {
   if (target) win.once('ready-to-show', () => win.setFullScreen(true));
 }
 
-/** @param {string} url */
-function createWindow(url) {
+function createWindow(url: string) {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 840,
@@ -135,20 +128,18 @@ function createWindow(url) {
     else if (/^https?:/.test(target)) shell.openExternal(target);
     return { action: 'deny' };
   });
-  mainWindow.once('ready-to-show', () => !TEST && /** @type {BrowserWindow} */ (mainWindow).show());
+  mainWindow.once('ready-to-show', () => !TEST && (mainWindow as BrowserWindow).show());
   mainWindow.on('closed', () => (mainWindow = null));
   mainWindow.loadURL(url);
 }
 
 function buildMenu() {
-  /** @param {string} dir */
-  const openFolder = (dir) => {
+  const openFolder = (dir: string) => {
     fs.mkdirSync(dir, { recursive: true });
     shell.openPath(dir);
   };
-  /** @type {Electron.MenuItemConstructorOptions[]} */
-  const template = [
-    ...(process.platform === 'darwin' ? [/** @type {Electron.MenuItemConstructorOptions} */ ({ role: 'appMenu' })] : []),
+  const template: Electron.MenuItemConstructorOptions[] = [
+    ...(process.platform === 'darwin' ? [{ role: 'appMenu' } as Electron.MenuItemConstructorOptions] : []),
     {
       label: 'File',
       submenu: [
@@ -195,7 +186,7 @@ app.whenReady().then(async () => {
   buildMenu();
   try {
     createWindow(await startServer());
-  } catch (/** @type {any} */ err) {
+  } catch (err: any) {
     dialog.showErrorBox('Live Transcriber could not start', err.message);
     app.quit();
   }
