@@ -1,8 +1,7 @@
 // Speech-detection settings that can be changed live from the page's Settings panel.
 // The ranges here are the single source of truth: the page builds its sliders from them.
-/** @import { Config, Tuning, TuningKey, TuningRange, TuningRanges } from '../types/config.ts' */
+import type { Config, Tuning, TuningKey, TuningRange, TuningRanges } from '../types/config.ts';
 
-/** @satisfies {TuningRanges} */
 export const TUNING = {
   vadThreshold: { min: 0.1, max: 0.9, step: 0.05 },
   silenceMs: { min: 300, max: 3000, step: 100 },
@@ -10,13 +9,9 @@ export const TUNING = {
   maxSegmentSec: { min: 5, max: 28, step: 1 },
   partialEverySec: { min: 0.3, max: 2, step: 0.1 },
   crosstalkDb: { min: 3, max: 20, step: 1 },
-};
+} satisfies TuningRanges;
 
-/**
- * @param {Config} config
- * @returns {Tuning}
- */
-export const tuningFrom = (config) => ({
+export const tuningFrom = (config: Config): Tuning => ({
   vadThreshold: config.vad.sileroThreshold,
   silenceMs: config.vad.silenceMs,
   minSpeechMs: config.vad.minSpeechMs,
@@ -25,15 +20,10 @@ export const tuningFrom = (config) => ({
   crosstalkDb: config.crosstalkDb,
 });
 
-/**
- * Clamp to range and snap to step; unknown keys and non-numbers are dropped.
- * @param {Record<string, unknown>} [values]
- * @returns {Partial<Tuning>}
- */
-export function sanitizeTuning(values = {}) {
-  /** @type {Partial<Tuning>} */
-  const out = {};
-  for (const [key, { min, max, step }] of /** @type {[TuningKey, TuningRange][]} */ (Object.entries(TUNING))) {
+/** Clamp to range and snap to step; unknown keys and non-numbers are dropped. */
+export function sanitizeTuning(values: Record<string, unknown> = {}): Partial<Tuning> {
+  const out: Partial<Tuning> = {};
+  for (const [key, { min, max, step }] of Object.entries(TUNING) as [TuningKey, TuningRange][]) {
     const v = Number(values?.[key]);
     if (values?.[key] === undefined || !Number.isFinite(v)) continue;
     out[key] = Number((Math.round(Math.min(max, Math.max(min, v)) / step) * step).toFixed(3));
@@ -41,12 +31,8 @@ export function sanitizeTuning(values = {}) {
   return out;
 }
 
-/**
- * Write tuning values into the shared config that sessions read.
- * @param {Config} config
- * @param {Partial<Tuning>} t
- */
-export function applyTuning(config, t) {
+/** Write tuning values into the shared config that sessions read. */
+export function applyTuning(config: Config, t: Partial<Tuning>) {
   if (t.vadThreshold !== undefined) config.vad.sileroThreshold = t.vadThreshold;
   if (t.silenceMs !== undefined) config.vad.silenceMs = t.silenceMs;
   if (t.minSpeechMs !== undefined) config.vad.minSpeechMs = t.minSpeechMs;

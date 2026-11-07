@@ -375,7 +375,7 @@ where macOS decides. In Docker there is no GPU, so everything runs on the CPU th
 | `public/backlog.js` | The audio kept while the server is unreachable: the newest 5 minutes, and what a longer outage lost |
 | `public/order.js` | The order of the lines, the order they were spoken in: one rule for the page, Copy, Download and the saved `.txt` |
 | `public/stage.js` | Projector view: large centred captions, display preferences, full screen; also the caption window (`/?display`) |
-| `public/settings.js` | Settings panel: live speech-detection sliders (`lib/tuning.js` on the server) and projector display options |
+| `public/settings.js` | Settings panel: live speech-detection sliders (`lib/tuning.ts` on the server) and projector display options |
 | `server.js` | Static files, WebSocket (only from its own page), model downloads and switching |
 | `lib/vad.js` | Speech detectors: Silero (neural, default) and a loudness fallback |
 | `lib/segmenter.js` | Turns detector frames into utterances: pre-roll, pause timeout, splits monologues longer than 20 s at the quietest point |
@@ -385,7 +385,7 @@ where macOS decides. In Docker there is no GPU, so everything runs on the CPU th
 | `lib/engines/*.js` | One adapter per runtime: whisper.cpp, transcribe.cpp, Python/NeMo, Apple speech, ElevenLabs (`elevenlabs.js`: a realtime connection per sentence). `sidecar.js` is the shared logic for models served by a separate process |
 | `python/nemo_server.py` | Small local HTTP server that runs NeMo models (Jackrabbit, the UPB FastConformer) for the Node app; its environment lives in `python/.venv` |
 | `lib/models.js` | Model catalogue, download, unpack, and conversion of Whisper fine-tunes (`lib/convert-whisper.js`) |
-| `lib/text.js` | Fixes ş/ţ → ș/ț, removes `[Muzică]` tags, drops Whisper's known silence hallucinations ("Mulțumim pentru vizionare!") |
+| `lib/text.ts` | Fixes ş/ţ → ș/ț, removes `[Muzică]` tags, drops Whisper's known silence hallucinations ("Mulțumim pentru vizionare!") |
 | `scripts/compare.js` | Runs several models over one of your recordings and reports speed and WER |
 | `scripts/benchmark.js` | Scores models on the whole FLEURS Romanian test set (`npm run benchmark`) |
 | `scripts/benchmark-suite.js`, `lib/benchmark/` | The shareable one-hour benchmark (`npm run benchmark:suite`): accuracy, speed, live-text steadiness, noise, long sentences, silence, exported with the computer's description |

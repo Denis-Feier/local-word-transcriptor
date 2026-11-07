@@ -312,6 +312,21 @@ Check in N1 of this phase, once, that `node server.ts` starts no slower than `no
 import loads the stripper; expected well under 100 ms against a model load of seconds), and that a thrown error's
 stack trace still names the right line.
 
+What happened in N1 (2026-11-07, `ts/3-n1`): nine files renamed (`git mv`, so `git log --follow` keeps their
+history), their JSDoc turned into inline types and deleted where it only repeated one: `import type` for the shared
+shapes, parameter and return types, class fields declared (`WavWriter`'s four), `satisfies TuningRanges` on `TUNING`,
+`export type Steadiness` in `metrics.ts` instead of a `@typedef`, `err: any` in the catches. One local changed
+shape: `WavWriter`'s resume path kept a `fd` variable that was `undefined` until the file opened; it is now typed
+`number | undefined` and assigned once, so `this.fd` is a plain `number`. Twenty-five importers were repointed
+(`server.js`, `lib/`, `scripts/`, `test/`; a `perl` substitution, then a grep for any `.js` specifier left), and the
+`.js` mentions in README, TESTING.md §7, `types/config.ts`'s comments and the user-manual skill followed.
+`public/order.js` stays JavaScript until Phase 4: the page loads it unbuilt, so it cannot become `.ts` on its own.
+The checks the plan asked for: importing `lib/session.js` (which pulls in the nine) takes ~24 ms against ~4 ms
+before, the stripper's one-time load, well under the 100 ms budget and nothing against a model load of seconds;
+`node server.ts` itself is measured in N4, when the entry moves. A thrown error's stack trace names the `.ts` line
+(`lib/tuning.ts:36:44`, checked against the source). `node --check` cannot parse `.ts`, so `STATIC-01` keeps
+parsing the `.js` files and `STATIC-06` (tsc) is the syntax check for `.ts` until N7 extends the walk.
+
 ## 7. Phase 4 — the page becomes `.ts`
 
 Branch `ts/4-web`. `public/*.js` move to `web/*.ts` (`git mv`, so history follows), keep `web/order.ts` as the one
@@ -376,17 +391,19 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 | Step | Branch | Status | Date | Notes |
 |---|---|---|---|---|
 | Plan | `feature/typescript-plan` | written | 2026-11-06 | this document, from the scan of `133a274` |
-| Phase 0 | `ts/0-tooling` | done (`9254b4f`), awaiting merge | 2026-11-06 | TypeScript 7.0.2; `STATIC-06`; both projects green on the untouched code |
-| Phase 1 | `ts/1-types` | done, awaiting merge | 2026-11-06 | seven type files; both projects green; nothing imports them yet |
-| Phase 2 N1 | `ts/2-n1` | done, awaiting merge | 2026-11-06 | ten files; both projects green; standard tier 216 / 0 / 2 / 0 |
-| Phase 2 N2 | `ts/2-n2` | done, awaiting merge | 2026-11-06 | six files; full tier 236 / 0 / 5 / 0 |
-| Phase 2 N3 | `ts/2-n3` | done, awaiting merge | 2026-11-06 | six files; full tier 236 / 0 / 5 / 0 |
-| Phase 2 N4 | `ts/2-n4` | done, awaiting merge | 2026-11-06 | session and server; full tier 236 / 0 / 5 / 0 |
-| Phase 2 N5 | `ts/2-n5` | done, awaiting merge | 2026-11-07 | benchmark library and scripts; standard tier 216 / 0 / 2 / 0 |
-| Phase 2 N6 | `ts/2-n6` | done, awaiting merge | 2026-11-07 | the desktop app; standard tier 216 / 0 / 2 / 0; the app started and quit once |
-| Phase 2 N7 | `ts/2-n7` | done, awaiting merge | 2026-11-07 | the test suites, in their own project; standard tier  |
-| Phase 2 B1, B2, B3 | `ts/2-b1`, `ts/2-b2`, `ts/2-b3` | done, awaiting merge | 2026-11-07 | the page; one standard tier on the tip: 216 / 0 / 2 / 0 |
-| Phase 2 N8 | `ts/2-n8` | done, awaiting merge | 2026-11-07 | `checkJs` on everywhere, no pragmas; quick tier 149 / 0 / 1 / 0. **Phase 2 complete.** |
-| Phase 3 N1 … N7 | `ts/3-<batch>` | not started | | E1 decides `desktop/main.ts` |
+| Phase 0 | `ts/0-tooling` | merged (`9254b4f`) | 2026-11-06 | TypeScript 7.0.2; `STATIC-06`; both projects green on the untouched code |
+| Phase 1 | `ts/1-types` | merged | 2026-11-06 | seven type files; both projects green; nothing imports them yet |
+| Phase 2 N1 | `ts/2-n1` | merged | 2026-11-06 | ten files; both projects green; standard tier 216 / 0 / 2 / 0 |
+| Phase 2 N2 | `ts/2-n2` | merged | 2026-11-06 | six files; full tier 236 / 0 / 5 / 0 |
+| Phase 2 N3 | `ts/2-n3` | merged | 2026-11-06 | six files; full tier 236 / 0 / 5 / 0 |
+| Phase 2 N4 | `ts/2-n4` | merged | 2026-11-06 | session and server; full tier 236 / 0 / 5 / 0 |
+| Phase 2 N5 | `ts/2-n5` | merged | 2026-11-07 | benchmark library and scripts; standard tier 216 / 0 / 2 / 0 |
+| Phase 2 N6 | `ts/2-n6` | merged | 2026-11-07 | the desktop app; standard tier 216 / 0 / 2 / 0; the app started and quit once |
+| Phase 2 N7 | `ts/2-n7` | merged | 2026-11-07 | the test suites, in their own project; standard tier 156 / 1 / 2 / 0, the one failure the UI suite's teardown hang (TESTING.md §12); the next run on the same test code passed |
+| Phase 2 B1, B2, B3 | `ts/2-b1`, `ts/2-b2`, `ts/2-b3` | merged | 2026-11-07 | the page; one standard tier on the tip: 216 / 0 / 2 / 0 |
+| Phase 2 N8 | `ts/2-n8` | merged | 2026-11-07 | `checkJs` on everywhere, no pragmas; quick tier 149 / 0 / 1 / 0. **Phase 2 complete.** |
+| Phases 0–2 | `main` | merged, `1541a37` | 2026-11-07 | twelve fast-forwards (`ts/0-tooling` … `ts/2-n8`); full tier on `main` 236 / 0 / 5 / 0 (TESTING.md §12) |
+| Phase 3 N1 | `ts/3-n1` | done, awaiting merge | 2026-11-07 | nine leaf modules are `.ts`; the three projects green; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-17-05-16_204bd99/`) |
+| Phase 3 N2 … N7 | `ts/3-<batch>` | not started | | E1 decides `desktop/main.ts` |
 | Phase 4 | `ts/4-web` | not started | | D2 confirmed? |
 | Phase 5 | `ts/5-tighten` | not started | | |

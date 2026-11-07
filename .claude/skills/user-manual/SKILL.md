@@ -36,8 +36,8 @@ cannot be prepared without it.
 3. **What changed for users** since the text last changed:
    ```bash
    since=$(git log -1 --format=%H -- docs/manual/manual.en.html)
-   git log --oneline $since..HEAD -- public desktop/main.mjs lib/tuning.js lib/config.js lib/models.js server.js package.json .github/release-notes.md README.md
-   git diff $since..HEAD -- public desktop/main.mjs lib/tuning.js lib/config.js lib/models.js
+   git log --oneline $since..HEAD -- public desktop/main.mjs lib/tuning.ts lib/config.ts lib/models.js server.js package.json .github/release-notes.md README.md
+   git diff $since..HEAD -- public desktop/main.mjs lib/tuning.ts lib/config.ts lib/models.js
    ```
    Look for anything a user can see or do: new, renamed or removed controls, labels, hints, menu items, keys,
    defaults, ranges, warnings, behaviours, supported systems, install or first-start steps, models in the desktop
@@ -50,7 +50,7 @@ cannot be prepared without it.
 5. **Check every fact against the code**, not against memory:
    - labels and tooltips: `public/index.html`; setting names and hints: `FIELDS` in `public/settings.js`;
      projector keys and colour names: `public/stage.js`; menus: `buildMenu()` in `desktop/main.mjs`;
-   - defaults: `lib/config.js`; slider ranges: `TUNING` in `lib/tuning.js` (every recommended value must lie inside
+   - defaults: `lib/config.ts`; slider ranges: `TUNING` in `lib/tuning.ts` (every recommended value must lie inside
      its range); first start and systems: `.github/release-notes.md`.
    - Every `<b class="ui">` label must appear in the UI exactly as written. A quick check:
      ```bash

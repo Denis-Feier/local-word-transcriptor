@@ -7,9 +7,9 @@
 import { app, BrowserWindow, session } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import { config } from '../../lib/config.js';
+import { config } from '../../lib/config.ts';
 import { MODELS, isInstalled, isAvailable } from '../../lib/models.js';
-import { TUNING, tuningFrom } from '../../lib/tuning.js';
+import { TUNING, tuningFrom } from '../../lib/tuning.ts';
 import { ROOT, SR, fakeServer, freePort, outOfPlace, saveWav, scratch, serverMemory, silence, sleep, startServer, suite } from '../helpers.js';
 import { SCRIPTS, Room, contentWords, judge, loopOffset, loopTruth, meeting, memoryCheck, quantile, table, voices, windows } from '../meeting.js';
 

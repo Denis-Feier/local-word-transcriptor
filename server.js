@@ -2,11 +2,11 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { WebSocketServer } from 'ws';
-import { config, ROOT, MODELS_DIR } from './lib/config.js';
+import { config, ROOT, MODELS_DIR } from './lib/config.ts';
 import { MODELS, SILERO_VAD, isInstalled, isAvailable, installModel, download } from './lib/models.js';
 import { Transcriber } from './lib/transcriber.js';
 import { Session } from './lib/session.js';
-import { TUNING, tuningFrom, sanitizeTuning, applyTuning } from './lib/tuning.js';
+import { TUNING, tuningFrom, sanitizeTuning, applyTuning } from './lib/tuning.ts';
 /** @import { Settings, TuningPatch } from './types/config.ts' */
 /** @import { ClientMessage, ModelsMessage, ServerMessage, StatusMessage, TuningMessage } from './types/protocol.ts' */
 

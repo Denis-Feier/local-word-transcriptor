@@ -7,8 +7,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { decodeWav } from '../lib/wav.js';
-import { sharedWords, wordErrorRate, words } from '../lib/wer.js';
+import { decodeWav } from '../lib/wav.ts';
+import { sharedWords, wordErrorRate, words } from '../lib/wer.ts';
 import { ROOT, SR, FIXTURE, loadWav, room } from './helpers.js';
 
 export const CHUNK = 1600; // 100 ms, as the page sends it

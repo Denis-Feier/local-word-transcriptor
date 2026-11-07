@@ -1,19 +1,13 @@
 // Scores for the benchmark suite (scripts/benchmark-suite.js): word error rate over a set of clips, and how steady
 // a model's live text is (#27), from the sequence of texts the page would have shown.
-import { editDistance, words } from '../wer.js';
-import { wordKey } from '../steady.js';
+import { editDistance, words } from '../wer.ts';
+import { wordKey } from '../steady.ts';
 
-/**
- * How steady one sentence's live text was (liveSteadiness).
- * @typedef {{ erased: number, rewrites: number, updates: number, covered: number, finalWords: number }} Steadiness
- */
+/** How steady one sentence's live text was (liveSteadiness). */
+export type Steadiness = { erased: number; rewrites: number; updates: number; covered: number; finalWords: number };
 
-/**
- * Corpus-level word error rate in percent: all errors / all reference words.
- * @param {{ ref: string, hyp?: string | null }[]} pairs
- * @param {{ diacritics?: boolean }} [opts]
- */
-export function corpusWer(pairs, { diacritics = true } = {}) {
+/** Corpus-level word error rate in percent: all errors / all reference words. */
+export function corpusWer(pairs: { ref: string; hyp?: string | null }[], { diacritics = true }: { diacritics?: boolean } = {}) {
   let errors = 0;
   let total = 0;
   for (const { ref, hyp } of pairs) {
@@ -24,30 +18,18 @@ export function corpusWer(pairs, { diacritics = true } = {}) {
   return { errors, total, wer: total ? (100 * errors) / total : 0 };
 }
 
-/**
- * A text as the words the page compares: lower case, letters and digits only; empty words dropped.
- * @param {string | null | undefined} text
- */
-export const keys = (text) => String(text ?? '').split(/\s+/).map(wordKey).filter(Boolean);
+/** A text as the words the page compares: lower case, letters and digits only; empty words dropped. */
+export const keys = (text: string | null | undefined) => String(text ?? '').split(/\s+/).map(wordKey).filter(Boolean);
 
-/**
- * @param {string[]} a
- * @param {string[]} b
- */
-function commonPrefix(a, b) {
+function commonPrefix(a: string[], b: string[]) {
   let n = 0;
   while (n < a.length && n < b.length && a[n] === b[n]) n++;
   return n;
 }
 
-/**
- * Length of the longest common subsequence of two word lists.
- * @param {string[]} a
- * @param {string[]} b
- */
-export function lcs(a, b) {
-  /** @type {number[]} */
-  let prev = new Array(b.length + 1).fill(0);
+/** Length of the longest common subsequence of two word lists. */
+export function lcs(a: string[], b: string[]) {
+  let prev: number[] = new Array(b.length + 1).fill(0);
   for (let i = 1; i <= a.length; i++) {
     const cur = [0];
     for (let j = 1; j <= b.length; j++) cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
@@ -67,17 +49,13 @@ export function lcs(a, b) {
  *   updates    displays + the final
  *   covered    words of the final that were on screen when it arrived (the longest common subsequence)
  *   finalWords words in the final
- * @param {string[]} displays
- * @param {string} final
- * @returns {Steadiness}
  */
-export function liveSteadiness(displays, final) {
+export function liveSteadiness(displays: string[], final: string): Steadiness {
   const seq = [...displays.map(keys), keys(final)];
-  const finalKeys = /** @type {string[]} */ (seq.at(-1)); // seq always has the final
+  const finalKeys = seq.at(-1) as string[]; // seq always has the final
   let erased = 0;
   let rewrites = 0;
-  /** @type {string[]} */
-  let prev = [];
+  let prev: string[] = [];
   for (const cur of seq) {
     const kept = commonPrefix(prev, cur);
     const back = prev.length - kept;
@@ -95,11 +73,9 @@ export function liveSteadiness(displays, final) {
  *   normalizedErasure  words taken back per word of final text (0 = never rewrites)
  *   rewriteShare       share of updates that took a word back
  *   coverage           share of the final's words that were on screen before the final arrived
- * @param {Steadiness[]} items
  */
-export function sumSteadiness(items) {
-  /** @param {keyof Steadiness} key */
-  const sum = (key) => items.reduce((n, x) => n + x[key], 0);
+export function sumSteadiness(items: Steadiness[]) {
+  const sum = (key: keyof Steadiness) => items.reduce((n, x) => n + x[key], 0);
   const finalWords = sum('finalWords');
   const updates = sum('updates');
   return {
@@ -110,17 +86,12 @@ export function sumSteadiness(items) {
   };
 }
 
-/**
- * The middle value; gaps (null, undefined, NaN) are left out, and an empty list gives null.
- * @param {(number | null | undefined)[]} values
- * @returns {number | null}
- */
-export function median(values) {
-  const v = /** @type {number[]} */ ([...values].filter((x) => Number.isFinite(x))).sort((a, b) => a - b); // isFinite drops the gaps
+/** The middle value; gaps (null, undefined, NaN) are left out, and an empty list gives null. */
+export function median(values: (number | null | undefined)[]): number | null {
+  const v = ([...values].filter((x) => Number.isFinite(x)) as number[]).sort((a, b) => a - b); // isFinite drops the gaps
   if (!v.length) return null;
   const mid = Math.floor(v.length / 2);
   return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
 }
 
-/** @param {number[]} values */
-export const mean = (values) => (values.length ? values.reduce((a, b) => a + b, 0) / values.length : null);
+export const mean = (values: number[]) => (values.length ? values.reduce((a, b) => a + b, 0) / values.length : null);

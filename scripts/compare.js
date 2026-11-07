@@ -7,14 +7,14 @@
 // With --ref (the correct transcript as plain text) it also prints the word error rate (WER).
 import fs from 'node:fs';
 import path from 'node:path';
-import { config } from '../lib/config.js';
+import { config } from '../lib/config.ts';
 import { MODELS, findModel, isInstalled } from '../lib/models.js';
 import { Transcriber } from '../lib/transcriber.js';
 import { Segmenter } from '../lib/segmenter.js';
 import { createDetector } from '../lib/vad.js';
-import { decodeWav } from '../lib/wav.js';
-import { resultToText, contextTail } from '../lib/text.js';
-import { wordErrorRate } from '../lib/wer.js';
+import { decodeWav } from '../lib/wav.ts';
+import { resultToText, contextTail } from '../lib/text.ts';
+import { wordErrorRate } from '../lib/wer.ts';
 import { fmtTime } from '../lib/session.js';
 /** @import { Model } from '../types/model.ts' */
 /** @import { Segment } from '../types/audio.ts' */

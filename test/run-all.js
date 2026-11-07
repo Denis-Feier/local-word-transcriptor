@@ -47,7 +47,7 @@ const awake = process.platform === 'darwin' ? spawn('caffeinate', ['-dis', '-w',
 awake?.unref();
 
 // The computer and the software the run used, for the report (nothing personal: no user name, no host name).
-process.env.ENV_FILE ??= os.devNull; // the runner itself never reads the user's .env.local either (TESTING.md §2 rule 9); lib/config.js loads it on import
+process.env.ENV_FILE ??= os.devNull; // the runner itself never reads the user's .env.local either (TESTING.md §2 rule 9); lib/config.ts loads it on import
 const { machineInfo, describeMachine, describeSoftware } = await import('../lib/benchmark/machine.js');
 const machine = await machineInfo();
 const { MODELS, isInstalled } = await import('../lib/models.js');

@@ -11,11 +11,11 @@ import { promisify } from 'node:util';
 import WebSocket from 'ws';
 /** @import { Model } from '../types/model.ts' */
 /** @import { TestServer } from '../types/test.ts' */
-import { config } from '../lib/config.js';
+import { config } from '../lib/config.ts';
 import { MODELS, isInstalled, isAvailable } from '../lib/models.js';
-import { wordKey } from '../lib/steady.js';
-import { TUNING, sanitizeTuning } from '../lib/tuning.js';
-import { sharedWords } from '../lib/wer.js';
+import { wordKey } from '../lib/steady.ts';
+import { TUNING, sanitizeTuning } from '../lib/tuning.ts';
+import { sharedWords } from '../lib/wer.ts';
 import { SR, serverMemory, startServer, scratch, sleep, suite } from './helpers.js';
 import { CHUNK, SCRIPTS, Room, contentWords, hoursScript, judge, meeting, meetingFrom, memoryCheck, quantile, sessionBlocks, table, truth, voices, windows } from './meeting.js';
 

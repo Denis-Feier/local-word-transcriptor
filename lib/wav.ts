@@ -1,14 +1,9 @@
 import fs from 'node:fs';
-/** @import { DecodedWav, WavWriterOptions } from '../types/audio.ts' */
+import type { DecodedWav, WavWriterOptions } from '../types/audio.ts';
 
 export const SAMPLE_RATE = 16000;
 
-/**
- * @param {Buffer} buf
- * @param {number} dataBytes
- * @param {number} sampleRate
- */
-function writeHeader(buf, dataBytes, sampleRate) {
+function writeHeader(buf: Buffer, dataBytes: number, sampleRate: number) {
   buf.write('RIFF', 0, 'ascii');
   buf.writeUInt32LE(36 + dataBytes, 4);
   buf.write('WAVE', 8, 'ascii');
@@ -24,24 +19,15 @@ function writeHeader(buf, dataBytes, sampleRate) {
   buf.writeUInt32LE(dataBytes, 40);
 }
 
-/**
- * @param {Buffer} buf
- * @param {Float32Array} samples
- * @param {number} offset
- */
-function writePcm16(buf, samples, offset) {
+function writePcm16(buf: Buffer, samples: Float32Array, offset: number) {
   for (let i = 0; i < samples.length; i++) {
     const s = Math.max(-1, Math.min(1, samples[i]));
     buf.writeInt16LE(Math.round(s * 32767), offset + i * 2);
   }
 }
 
-/**
- * Float32 mono samples (-1..1) -> 16-bit PCM WAV file buffer.
- * @param {Float32Array} samples
- * @param {number} [sampleRate]
- */
-export function encodeWav(samples, sampleRate = SAMPLE_RATE) {
+/** Float32 mono samples (-1..1) -> 16-bit PCM WAV file buffer. */
+export function encodeWav(samples: Float32Array, sampleRate = SAMPLE_RATE) {
   const buf = Buffer.alloc(44 + samples.length * 2);
   writeHeader(buf, samples.length * 2, sampleRate);
   writePcm16(buf, samples, 44);
@@ -54,22 +40,25 @@ export function encodeWav(samples, sampleRate = SAMPLE_RATE) {
  * #10) an existing file is carried on instead: the new audio goes after its last whole sample.
  */
 export class WavWriter {
-  /**
-   * @param {string} file
-   * @param {WavWriterOptions} [opts]
-   */
-  constructor(file, { sampleRate = SAMPLE_RATE, resume = false } = {}) {
+  sampleRate: number;
+  dataBytes: number;
+  header: Buffer;
+  fd: number;
+
+  constructor(file: string, { sampleRate = SAMPLE_RATE, resume = false }: WavWriterOptions = {}) {
     this.sampleRate = sampleRate;
     this.dataBytes = 0;
     this.header = Buffer.alloc(44);
+    let fd: number | undefined; // the existing file to carry on, with resume
     if (resume) {
       try {
-        this.fd = fs.openSync(file, 'r+');
-      } catch (/** @type {any} */ err) {
+        fd = fs.openSync(file, 'r+');
+      } catch (err: any) {
         if (err.code !== 'ENOENT') throw err;
       }
     }
-    if (this.fd !== undefined) {
+    if (fd !== undefined) {
+      this.fd = fd;
       // The size, not the header: a server killed between a chunk and its header leaves the samples in the file.
       const size = fs.fstatSync(this.fd).size;
       this.dataBytes = Math.max(0, size - 44 - ((size - 44) % 2));
@@ -96,9 +85,8 @@ export class WavWriter {
   /**
    * Throws when the disk is full or the drive is gone. The file then keeps every whole sample that was written, with a
    * header that says so, and appending carries on from there once there is room again.
-   * @param {Float32Array} samples
    */
-  append(samples) {
+  append(samples: Float32Array) {
     const buf = Buffer.alloc(samples.length * 2);
     writePcm16(buf, samples, 0);
     let written = 0;
@@ -125,18 +113,13 @@ export class WavWriter {
   }
 }
 
-/**
- * Mono WAV buffer (16-bit PCM or 32-bit float) -> Float32 samples. Used by the test and benchmark tools.
- * @param {Buffer} buf
- * @returns {DecodedWav}
- */
-export function decodeWav(buf) {
+/** Mono WAV buffer (16-bit PCM or 32-bit float) -> Float32 samples. Used by the test and benchmark tools. */
+export function decodeWav(buf: Buffer): DecodedWav {
   if (buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WAVE') {
     throw new Error('Not a WAV file');
   }
   let offset = 12;
-  /** @type {{ float: boolean, channels: number, sampleRate: number, bits: number } | null} */
-  let format = null;
+  let format: { float: boolean; channels: number; sampleRate: number; bits: number } | null = null;
   while (offset + 8 <= buf.length) {
     const id = buf.toString('ascii', offset, offset + 4);
     const size = buf.readUInt32LE(offset + 4);
@@ -168,8 +151,7 @@ export function decodeWav(buf) {
   throw new Error('WAV file has no data chunk');
 }
 
-/** @param {Float32Array[]} chunks */
-export function concatFloat32(chunks) {
+export function concatFloat32(chunks: Float32Array[]) {
   let length = 0;
   for (const c of chunks) length += c.length;
   const out = new Float32Array(length);

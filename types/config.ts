@@ -1,5 +1,5 @@
-// The server's configuration (lib/config.js builds it from the environment) and the live speech-detection settings
-// (lib/tuning.js). Phase 1 of docs/typescript-migration.md: written from what the code does today.
+// The server's configuration (lib/config.ts builds it from the environment) and the live speech-detection settings
+// (lib/tuning.ts). Phase 1 of docs/typescript-migration.md: written from what the code does today.
 
 /** Voice-detection settings: the two detectors' thresholds and the timing of a sentence. */
 export interface VadConfig {
@@ -39,7 +39,7 @@ export interface ElevenLabsConfig {
   baseUrl: string | undefined;
 }
 
-/** `config` in lib/config.js. Sessions read the live values (vad, partialEverySec, crosstalkDb) on every use. */
+/** `config` in lib/config.ts. Sessions read the live values (vad, partialEverySec, crosstalkDb) on every use. */
 export interface Config {
   host: string;
   port: number;
@@ -65,7 +65,7 @@ export interface Config {
   crosstalkDb: number;
 }
 
-/** The six settings the page's Settings panel changes live (lib/tuning.js TUNING). */
+/** The six settings the page's Settings panel changes live (lib/tuning.ts TUNING). */
 export type TuningKey = 'vadThreshold' | 'silenceMs' | 'minSpeechMs' | 'maxSegmentSec' | 'partialEverySec' | 'crosstalkDb';
 
 /** The current (or default) value of every live setting. */

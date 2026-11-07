@@ -7,7 +7,7 @@
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { sharedWords, wordErrorRate } from '../lib/wer.js';
+import { sharedWords, wordErrorRate } from '../lib/wer.ts';
 import { SR, startServer, streamWav, speakers, loadWav, saveWav, silence, concat, twoMics, scratch, suite } from './helpers.js';
 /** @import { StreamResult } from '../types/test.ts' */
 

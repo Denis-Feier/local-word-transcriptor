@@ -8,16 +8,12 @@ const HALLUCINATIONS = [
   /amara\.org/i,
 ];
 
-/** @param {string} text */
-export function isHallucination(text) {
+export function isHallucination(text: string) {
   return HALLUCINATIONS.some((re) => re.test(text));
 }
 
-/**
- * Clean one Whisper text chunk: correct Romanian diacritics, drop sound tags.
- * @param {string} text
- */
-export function normalize(text) {
+/** Clean one Whisper text chunk: correct Romanian diacritics, drop sound tags. */
+export function normalize(text: string) {
   return text
     // Romanian uses comma-below ș/ț; Whisper sometimes emits the cedilla forms ş/ţ.
     .replace(/ş/g, 'ș').replace(/Ş/g, 'Ș').replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț')
@@ -33,21 +29,16 @@ export function normalize(text) {
 /**
  * Turn a model result into clean text. Known hallucinations are dropped sentence by sentence,
  * so real speech in the same utterance survives ("…două zile. Mulțumim pentru vizionare!").
- * @param {{ text: string }} result
  */
-export function resultToText({ text }) {
+export function resultToText({ text }: { text: string }) {
   return normalize(text)
     .split(/(?<=[.!?…])\s+/)
     .filter((sentence) => sentence && !isHallucination(sentence))
     .join(' ');
 }
 
-/**
- * Last ~maxChars of the transcript, cut on a word boundary, to use as the decoder prompt.
- * @param {string} text
- * @param {number} [maxChars]
- */
-export function contextTail(text, maxChars = 200) {
+/** Last ~maxChars of the transcript, cut on a word boundary, to use as the decoder prompt. */
+export function contextTail(text: string, maxChars = 200) {
   if (text.length <= maxChars) return text;
   const tail = text.slice(-maxChars);
   const space = tail.indexOf(' ');

@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
-/** @import { Config } from '../types/config.ts' */
+import type { Config } from '../types/config.ts';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // API keys (and any variable below) can live in .env.local, which git ignores; see .env.example. Real environment
@@ -11,14 +11,9 @@ dotenv.config({ path: process.env.ENV_FILE ?? path.join(ROOT, '.env.local'), qui
 export const MODELS_DIR = process.env.MODELS_DIR ?? path.join(ROOT, 'models');
 
 const env = process.env;
-/**
- * @param {string | undefined} value
- * @param {number} fallback
- */
-const num = (value, fallback) => (value === undefined || value === '' ? fallback : Number(value));
+const num = (value: string | undefined, fallback: number) => (value === undefined || value === '' ? fallback : Number(value));
 
-/** @type {Config} */
-export const config = {
+export const config: Config = {
   host: env.HOST ?? '127.0.0.1',
   port: num(env.PORT, 3000),
   publicPort: num(env.PUBLIC_PORT, num(env.PORT, 3000)), // the port people open (differs inside Docker)

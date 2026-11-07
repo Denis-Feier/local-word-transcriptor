@@ -15,7 +15,7 @@
 //   afconvert -f WAVE -d LEI16@16000 -c 1 /tmp/ro.aiff /tmp/ro.wav
 import fs from 'node:fs';
 import WebSocket from 'ws';
-import { decodeWav } from '../lib/wav.js';
+import { decodeWav } from '../lib/wav.ts';
 /** @import { FinalMessage, ServerMessage } from '../types/protocol.ts' */
 
 const args = process.argv.slice(2);

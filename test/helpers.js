@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { WebSocketServer } from 'ws';
-import { decodeWav, encodeWav } from '../lib/wav.js';
+import { decodeWav, encodeWav } from '../lib/wav.ts';
 /** @import { FakeConnection, FakeElevenLabs, FakeElevenLabsOptions, FakeServer, FakeServerOptions, ServerMemory, StartServerOptions, StreamResult, Suite, TestCase, TestServer, TwoMicsOptions } from '../types/test.ts' */
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');

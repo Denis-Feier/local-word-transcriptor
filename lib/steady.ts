@@ -11,26 +11,22 @@
  */
 
 /** A word as compared: lower case, letters and digits only. */
-/** @param {string} word */
-export const wordKey = (word) => word.normalize('NFC').toLocaleLowerCase('ro').replace(/[^\p{L}\p{N}]+/gu, '');
+export const wordKey = (word: string) => word.normalize('NFC').toLocaleLowerCase('ro').replace(/[^\p{L}\p{N}]+/gu, '');
 
 const TRAILING = /[.,;:!?…]+$/u;
 const ANCHOR = 2; // how far (in words) the last word shown may have moved in a new guess
 
 export class SteadyText {
+  prev: string[];
+  shown: string[];
+
   constructor() {
-    /** @type {string[]} */
     this.prev = []; // the previous guess, as words
-    /** @type {string[]} */
     this.shown = []; // the words on screen, in the form first shown
   }
 
-  /**
-   * A new guess of the whole sentence so far. Returns the text to show, or null when the screen stays as it is.
-   * @param {string} text
-   * @returns {string | null}
-   */
-  update(text) {
+  /** A new guess of the whole sentence so far. Returns the text to show, or null when the screen stays as it is. */
+  update(text: string): string | null {
     const words = text.split(/\s+/).filter(Boolean);
     const prev = this.prev;
     this.prev = words;
@@ -50,9 +46,8 @@ export class SteadyText {
   /**
    * Where the words not shown yet begin in a guess: after the last word shown. A guess may have merged, split or
    * added a word earlier on, so the last word shown is looked for near its place, nearest first. -1: not found.
-   * @param {string[]} words
    */
-  #after(words) {
+  #after(words: string[]) {
     const n = this.shown.length;
     if (!n) return 0;
     const last = wordKey(this.shown[n - 1]);

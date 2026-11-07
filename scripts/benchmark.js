@@ -10,13 +10,13 @@
 // so an interrupted run resumes where it stopped. The report goes to benchmarks/results/<name>.md.
 import fs from 'node:fs';
 import path from 'node:path';
-import { config, ROOT } from '../lib/config.js';
+import { config, ROOT } from '../lib/config.ts';
 import { MODELS, findModel, isInstalled } from '../lib/models.js';
 import { ensureDataset, FLEURS_DIR as DATA } from '../lib/benchmark/dataset.js';
 import { Transcriber } from '../lib/transcriber.js';
-import { decodeWav } from '../lib/wav.js';
-import { resultToText } from '../lib/text.js';
-import { editDistance, words } from '../lib/wer.js';
+import { decodeWav } from '../lib/wav.ts';
+import { resultToText } from '../lib/text.ts';
+import { editDistance, words } from '../lib/wer.ts';
 /** @import { Model } from '../types/model.ts' */
 
 const args = process.argv.slice(2);
