@@ -621,8 +621,12 @@ app.whenReady().then(async () => {
   } catch (/** @type {any} */ err) {
     t.check('UI-RUN', 'the UI run finished', false, err.stack);
   } finally {
+    // Each step named, so a hang here (TESTING.md §12, twice in 2026-11) says where it is.
+    console.log('[teardown] stopping the servers');
     for (const s of servers) await s.stop().catch(() => {});
+    console.log('[teardown] closing the stand-ins');
     for (const fake of fakes) await fake.close();
+    console.log('[teardown] removing the scratch folders');
     for (const dir of [SPEAKERS, ...scratchDirs]) fs.rmSync(dir, { recursive: true, force: true });
     console.log(`\nscreenshots: ${OUT}`);
     t.finish();

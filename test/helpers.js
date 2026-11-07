@@ -169,7 +169,8 @@ export function streamWav(port, args, { timeoutMs = 300000 } = {}) {
  */
 export async function fakeElevenLabs({ key = 'test-key', text = (c) => `propoziÈ›ia ${c.index}`, partial = (c) => `ascult ${c.index}`, fail = () => null } = {}) {
   const port = await freePort();
-  const wss = new WebSocketServer({ host: '127.0.0.1', port, path: '/v1/speech-to-text/realtime' });
+  const httpServer = http.createServer(); // ours, so close() can end every connection; ws's own server would wait for them
+  const wss = new WebSocketServer({ server: httpServer, path: '/v1/speech-to-text/realtime' });
   /** @type {FakeConnection[]} */
   const connections = [];
   wss.on('connection', (ws, req) => {
@@ -212,13 +213,15 @@ export async function fakeElevenLabs({ key = 'test-key', text = (c) => `propoziÈ
       send({ message_type: 'committed_transcript', text: text(c) });
     });
   });
-  await new Promise((resolve) => wss.once('listening', resolve));
+  await new Promise((resolve) => httpServer.listen(port, '127.0.0.1', () => resolve(undefined)));
   return {
     url: `http://127.0.0.1:${port}`,
     connections,
     close: () => new Promise((resolve) => {
       for (const client of wss.clients) client.terminate();
-      wss.close(resolve);
+      wss.close();
+      httpServer.closeAllConnections(); // a connection still open (a handshake, keep-alive) would keep close() from answering
+      httpServer.close(resolve);
     }),
   };
 }
@@ -256,6 +259,7 @@ export async function fakeServer({ greet = [] } = {}) {
     close: () => new Promise((resolve) => {
       for (const ws of wss.clients) ws.terminate();
       wss.close();
+      server.closeAllConnections(); // the page's keep-alive connections; close() alone waits for them
       server.close(resolve);
     }),
   };
