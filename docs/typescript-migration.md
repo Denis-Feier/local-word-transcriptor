@@ -340,6 +340,14 @@ header (`SafeTensor`) and the vocabulary (`Record<string, number>`); and `Sideca
 `public/app.js`'s one comment and the user-manual skill's `git log` paths; the history rows of TESTING.md §13 and
 §14 keep the names the files had then.
 
+What happened in N3 (2026-11-07, `ts/3-n3`): the five engines and the transcriber, six files, nothing new in kind.
+`declare` for `TranscribeCppEngine.hint`, `ElevenLabsEngine.query`, `Transcriber.device` and `Transcriber.lastCrashAt`,
+which `load()` or a crash sets. The three `@typedef`s of `transcribe-cpp` (`LoadedModel`, `DeviceInfo`, `LoadModel`)
+are exported types, so a test's stand-in can name them; the ElevenLabs shapes stay derived from the SDK's own types
+(`typeof import('@elevenlabs/elevenlabs-js')`), as the JSDoc had them; `Sentence.onPartial` is
+`NonNullable<StreamOptions['onPartial']>`. The three projects were green on the first run. README's file table
+(`lib/engines/*.ts`) and the types' comments followed.
+
 ## 7. Phase 4 — the page becomes `.ts`
 
 Branch `ts/4-web`. `public/*.js` move to `web/*.ts` (`git mv`, so history follows), keep `web/order.ts` as the one
@@ -418,6 +426,7 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 | Phases 0–2 | `main` | merged, `1541a37` | 2026-11-07 | twelve fast-forwards (`ts/0-tooling` … `ts/2-n8`); full tier on `main` 236 / 0 / 5 / 0 (TESTING.md §12) |
 | Phase 3 N1 | `ts/3-n1` | done, awaiting merge | 2026-11-07 | nine leaf modules are `.ts`; the three projects green; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-17-05-16_204bd99/`) |
 | Phase 3 N2 | `ts/3-n2` | done, awaiting merge | 2026-11-07 | the detectors, the segmenter, the crosstalk gate, the catalogue, the converter and the sidecar base; full tier 236 / 0 / 5 / 0 (`test-results/2026-11-07-17-15-20_65c785f/`) |
-| Phase 3 N3 … N7 | `ts/3-<batch>` | not started | | E1 decides `desktop/main.ts` |
+| Phase 3 N3 | `ts/3-n3` | done, awaiting merge | 2026-11-07 | the five engines and the transcriber; full tier 236 / 0 / 5 / 0 (`test-results/2026-11-07-17-30-35_76f3524/`) |
+| Phase 3 N4 … N7 | `ts/3-<batch>` | not started | | E1 decides `desktop/main.ts` |
 | Phase 4 | `ts/4-web` | not started | | D2 confirmed? |
 | Phase 5 | `ts/5-tighten` | not started | | |

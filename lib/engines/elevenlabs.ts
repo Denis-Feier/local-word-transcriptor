@@ -1,42 +1,34 @@
 import { SAMPLE_RATE, concatFloat32 } from '../wav.ts';
 import { sleep } from './sidecar.ts';
-/** @import { StreamOptions, TranscribeOptions, TranscribeResult } from '../../types/engine.ts' */
+import type { StreamOptions, TranscribeOptions, TranscribeResult } from '../../types/engine.ts';
 
-/** @typedef {typeof import('@elevenlabs/elevenlabs-js')} Sdk */
-/** @typedef {InstanceType<Sdk['ElevenLabsClient']>} Client */
-/** @typedef {Parameters<Client['speechToText']['realtime']['connect']>[0]} Query */
-/** @typedef {Awaited<ReturnType<Client['speechToText']['realtime']['connect']>>} Connection */
+type Sdk = typeof import('@elevenlabs/elevenlabs-js');
+type Client = InstanceType<Sdk['ElevenLabsClient']>;
+type Query = Parameters<Client['speechToText']['realtime']['connect']>[0];
+type Connection = Awaited<ReturnType<Client['speechToText']['realtime']['connect']>>;
 
 // @elevenlabs/elevenlabs-js costs ~150 MB of memory and up to a second to load: only when the cloud model is chosen.
-/** @type {Sdk | null} */
-let sdk = null;
+let sdk: Sdk | null = null;
 
 const MIN_CHUNK = SAMPLE_RATE / 10; // ElevenLabs asks for chunks of 0.1–1 s
 const MAX_CHUNK = SAMPLE_RATE;
 const COMMIT_TIMEOUT_MS = 10000; // the committed text normally comes ~150 ms after the commit
 
-/** @type {Record<string, string>} */
-const HINTS = {
+const HINTS: Record<string, string> = {
   auth_error: 'Check ELEVENLABS_API_KEY in .env.local.',
   quota_exceeded: 'The ElevenLabs account has no credits left for this.',
   unaccepted_terms: 'Accept the ElevenLabs terms of service on elevenlabs.io first.',
 };
 
-/**
- * A server message ({ message_type, error }) or a WebSocket error as one line for the page.
- * @param {any} err  a server message, an Error, or whatever the socket throws
- */
-function describe(err) {
+/** A server message ({ message_type, error }) or a WebSocket error as one line for the page; err is a server message, an Error, or whatever the socket throws. */
+function describe(err: any) {
   if (err?.message_type) return [`ElevenLabs: ${(err.error || err.message_type).replace(/([^.!?])$/, '$1.')}`, HINTS[err.message_type]].filter(Boolean).join(' ');
   const text = `ElevenLabs: ${err?.message ?? err}`;
   return /\b40[13]\b/.test(text) ? `${text} ${HINTS.auth_error}` : text;
 }
 
-/**
- * Float32 samples -> 16-bit PCM (pcm_16000), base64.
- * @param {Float32Array} samples
- */
-function toBase64(samples) {
+/** Float32 samples -> 16-bit PCM (pcm_16000), base64. */
+function toBase64(samples: Float32Array) {
   const pcm = new Int16Array(samples.length);
   for (let i = 0; i < samples.length; i++) pcm[i] = Math.round(Math.max(-1, Math.min(1, samples[i])) * 32767);
   return Buffer.from(pcm.buffer).toString('base64');
@@ -49,38 +41,31 @@ function toBase64(samples) {
  * transcript so far as context (previous_text, accepted only with a connection's first audio).
  */
 class Sentence {
-  /** @type {Connection | null} */
-  #connection = null;
+  #connection: Connection | null = null;
   #started = false;
   #done = false;
-  /** @type {Float32Array[]} */
-  #audio = []; // not sent yet: before the session starts, and less than MIN_CHUNK
+  #audio: Float32Array[] = []; // not sent yet: before the session starts, and less than MIN_CHUNK
   #waiting = 0;
   #sent = false;
-  /** @type {string[]} */
-  #texts = []; // committed by ElevenLabs; it also commits by itself after ~36 s of audio
-  /** @type {NodeJS.Timeout | null} */
-  #timer = null;
+  #texts: string[] = []; // committed by ElevenLabs; it also commits by itself after ~36 s of audio
+  #timer: NodeJS.Timeout | null = null;
   // Both are set by the Promise executors below, which run at once; the no-ops are only a start the checker accepts.
-  /** @type {{ resolve: () => void, reject: (err: Error) => void }} */
-  #ready = { resolve() {}, reject() {} };
-  /** @type {{ resolve: (result: TranscribeResult) => void, reject: (err: Error) => void }} */
-  #result = { resolve() {}, reject() {} };
+  #ready: { resolve: () => void; reject: (err: Error) => void } = { resolve() {}, reject() {} };
+  #result: { resolve: (result: TranscribeResult) => void; reject: (err: Error) => void } = { resolve() {}, reject() {} };
+  prompt: string;
+  onPartial: NonNullable<StreamOptions['onPartial']>;
+  closed: boolean;
+  committing: boolean;
+  ready: Promise<void>;
+  result: Promise<TranscribeResult>;
 
-  /**
-   * @param {Client} client
-   * @param {Query} query
-   * @param {StreamOptions} [opts]
-   */
-  constructor(client, query, { prompt = '', onPartial = () => {} } = {}) {
-    const { RealtimeEvents } = /** @type {Sdk} */ (sdk); // load() imported it
+  constructor(client: Client, query: Query, { prompt = '', onPartial = () => {} }: StreamOptions = {}) {
+    const { RealtimeEvents } = sdk as Sdk; // load() imported it
     this.prompt = prompt;
     this.onPartial = onPartial;
     this.closed = false;
     this.committing = false;
-    /** @type {Promise<void>} */
     this.ready = new Promise((resolve, reject) => (this.#ready = { resolve, reject })); // ElevenLabs is listening
-    /** @type {Promise<TranscribeResult>} */
     this.result = new Promise((resolve, reject) => (this.#result = { resolve, reject }));
     // A sentence dropped (a cough) or failed before anyone waits for it is nobody's error.
     this.ready.catch(() => {});
@@ -107,19 +92,15 @@ class Sentence {
     }, (err) => this.#finish(new Error(describe(err))));
   }
 
-  /** @param {Float32Array} samples */
-  push(samples) {
+  push(samples: Float32Array) {
     if (this.#done || !samples.length) return;
     this.#audio.push(samples);
     this.#waiting += samples.length;
     this.#send();
   }
 
-  /**
-   * The sentence is over: send what is left and wait for its text.
-   * @returns {Promise<TranscribeResult>}
-   */
-  commit() {
+  /** The sentence is over: send what is left and wait for its text. */
+  commit(): Promise<TranscribeResult> {
     if (!this.#done && !this.committing) {
       this.committing = true;
       this.#timer = setTimeout(() => this.#finish(new Error(`ElevenLabs did not answer within ${COMMIT_TIMEOUT_MS / 1000} s.`)), COMMIT_TIMEOUT_MS);
@@ -135,7 +116,7 @@ class Sentence {
 
   #send() {
     if (!this.#started || this.#done) return;
-    const connection = /** @type {Connection} */ (this.#connection); // set before the session started
+    const connection = this.#connection as Connection; // set before the session started
     try {
       if (this.#waiting >= MIN_CHUNK || (this.committing && this.#waiting)) {
         const audio = concatFloat32(this.#audio);
@@ -154,8 +135,7 @@ class Sentence {
     }
   }
 
-  /** @param {Error | null} err */
-  #finish(err) {
+  #finish(err: Error | null) {
     if (this.#done) return;
     this.#done = true;
     this.closed = true;
@@ -177,16 +157,20 @@ class Sentence {
  */
 export class ElevenLabsEngine {
   supportsPrompt = true; // previous_text: the end of the transcript so far
+  apiKey: string;
+  baseUrl: string | undefined;
+  modelId: string;
+  language: string;
+  client: Client | null;
+  open: Set<Sentence>;
+  declare query: Query; // load() sets it
 
-  /** @param {{ apiKey: string, baseUrl?: string, modelId: string, language: string }} opts */
-  constructor({ apiKey, baseUrl, modelId, language }) {
+  constructor({ apiKey, baseUrl, modelId, language }: { apiKey: string; baseUrl?: string; modelId: string; language: string }) {
     this.apiKey = apiKey;
     this.baseUrl = baseUrl;
     this.modelId = modelId;
     this.language = language;
-    /** @type {Client | null} */
     this.client = null;
-    /** @type {Set<Sentence>} */
     this.open = new Set();
   }
 
@@ -195,7 +179,6 @@ export class ElevenLabsEngine {
     if (!this.apiKey) throw new Error('No ElevenLabs API key: put it in .env.local as ELEVENLABS_API_KEY=… (see .env.example).');
     sdk ??= await import('@elevenlabs/elevenlabs-js');
     this.client = new sdk.ElevenLabsClient({ apiKey: this.apiKey, baseUrl: this.baseUrl });
-    /** @type {Query} */
     this.query = {
       modelId: this.modelId,
       languageCode: this.language,
@@ -211,23 +194,15 @@ export class ElevenLabsEngine {
     }
   }
 
-  /**
-   * After load(): a sentence to send while it is spoken: push(samples), commit() -> { text }, cancel(); onPartial(text) live.
-   * @param {StreamOptions} [opts]
-   */
-  stream(opts) {
-    const sentence = new Sentence(/** @type {Client} */ (this.client), /** @type {Query} */ (this.query), opts); // both set by load()
+  /** After load(): a sentence to send while it is spoken: push(samples), commit() -> { text }, cancel(); onPartial(text) live. */
+  stream(opts?: StreamOptions) {
+    const sentence = new Sentence(this.client as Client, this.query, opts); // both set by load()
     this.open.add(sentence);
     sentence.result.finally(() => this.open.delete(sentence)).catch(() => {});
     return sentence;
   }
 
-  /**
-   * @param {Float32Array} samples
-   * @param {TranscribeOptions} [opts]
-   * @returns {Promise<TranscribeResult>}
-   */
-  transcribe(samples, { prompt } = {}) {
+  transcribe(samples: Float32Array, { prompt }: TranscribeOptions = {}): Promise<TranscribeResult> {
     const sentence = this.stream({ prompt });
     sentence.push(samples);
     return sentence.commit();

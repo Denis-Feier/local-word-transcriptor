@@ -13,7 +13,7 @@ import path from 'node:path';
 import { config, ROOT } from '../lib/config.ts';
 import { MODELS, findModel, isInstalled } from '../lib/models.ts';
 import { ensureDataset, FLEURS_DIR as DATA } from '../lib/benchmark/dataset.js';
-import { Transcriber } from '../lib/transcriber.js';
+import { Transcriber } from '../lib/transcriber.ts';
 import { decodeWav } from '../lib/wav.ts';
 import { resultToText } from '../lib/text.ts';
 import { editDistance, words } from '../lib/wer.ts';

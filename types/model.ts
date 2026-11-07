@@ -1,7 +1,7 @@
 // The speech models the app can switch between (lib/models.ts MODELS), one shape per engine. Phase 1 of
 // docs/typescript-migration.md: written from the catalogue as it is.
 
-/** The five runtimes; lib/transcriber.js builds one engine per kind. */
+/** The five runtimes; lib/transcriber.ts builds one engine per kind. */
 export type EngineKind = 'whisper.cpp' | 'transcribe.cpp' | 'python-nemo' | 'apple-speech' | 'elevenlabs';
 
 /** The Model menu's two groups (#28): 'recommended' first, then 'other', each in ranking order. */

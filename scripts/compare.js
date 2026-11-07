@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../lib/config.ts';
 import { MODELS, findModel, isInstalled } from '../lib/models.ts';
-import { Transcriber } from '../lib/transcriber.js';
+import { Transcriber } from '../lib/transcriber.ts';
 import { Segmenter } from '../lib/segmenter.ts';
 import { createDetector } from '../lib/vad.ts';
 import { decodeWav } from '../lib/wav.ts';

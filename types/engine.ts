@@ -1,4 +1,4 @@
-// What lib/transcriber.js needs from a speech engine, and what it gives the session. Phase 1 of
+// What lib/transcriber.ts needs from a speech engine, and what it gives the session. Phase 1 of
 // docs/typescript-migration.md: written from the engines in lib/engines/ and the transcriber as they are.
 import type { Model } from './model.ts';
 
@@ -29,7 +29,7 @@ export interface StreamOptions {
 }
 
 /**
- * A sentence sent to a streaming engine while it is spoken (lib/engines/elevenlabs.js Sentence): push(samples) as the
+ * A sentence sent to a streaming engine while it is spoken (lib/engines/elevenlabs.ts Sentence): push(samples) as the
  * audio comes, commit() at the end for its text, cancel() to drop it.
  */
 export interface StreamingSentence {

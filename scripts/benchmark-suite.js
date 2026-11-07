@@ -19,7 +19,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { config, ROOT } from '../lib/config.ts';
 import { MODELS, findModel, isInstalled, isAvailable, installModel } from '../lib/models.ts';
-import { Transcriber } from '../lib/transcriber.js';
+import { Transcriber } from '../lib/transcriber.ts';
 import { machineInfo } from '../lib/benchmark/machine.js';
 import { ensureDataset, loadClips, clipSamples, selectClips, audioSeconds, FLEURS_DIR } from '../lib/benchmark/dataset.js';
 import { runModel, STAGES } from '../lib/benchmark/suite.js';

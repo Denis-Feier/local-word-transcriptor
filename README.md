@@ -381,8 +381,8 @@ where macOS decides. In Docker there is no GPU, so everything runs on the CPU th
 | `lib/segmenter.ts` | Turns detector frames into utterances: pre-roll, pause timeout, splits monologues longer than 20 s at the quietest point |
 | `lib/session.js` | One browser tab: a segmenter per mic, schedules live guesses and finals (or streams each sentence to a streaming model), drops a sentence another mic heard more clearly, writes transcript/audio files |
 | `lib/crosstalk.ts` | With several mics: decides which mic each moment of speech belongs to, by clarity above each mic's own noise |
-| `lib/transcriber.js` | Owns the active model, serialises requests, switches models, restarts a crashed model (after 4 quick crashes, retries it every 30 s) |
-| `lib/engines/*.js` | One adapter per runtime: whisper.cpp, transcribe.cpp, Python/NeMo, Apple speech, ElevenLabs (`elevenlabs.js`: a realtime connection per sentence). `sidecar.js` is the shared logic for models served by a separate process |
+| `lib/transcriber.ts` | Owns the active model, serialises requests, switches models, restarts a crashed model (after 4 quick crashes, retries it every 30 s) |
+| `lib/engines/*.ts` | One adapter per runtime: whisper.cpp, transcribe.cpp, Python/NeMo, Apple speech, ElevenLabs (`elevenlabs.ts`: a realtime connection per sentence). `sidecar.ts` is the shared logic for models served by a separate process |
 | `python/nemo_server.py` | Small local HTTP server that runs NeMo models (Jackrabbit, the UPB FastConformer) for the Node app; its environment lives in `python/.venv` |
 | `lib/models.ts` | Model catalogue, download, unpack, and conversion of Whisper fine-tunes (`lib/convert-whisper.ts`) |
 | `lib/text.ts` | Fixes ş/ţ → ș/ț, removes `[Muzică]` tags, drops Whisper's known silence hallucinations ("Mulțumim pentru vizionare!") |

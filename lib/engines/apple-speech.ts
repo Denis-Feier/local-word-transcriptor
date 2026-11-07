@@ -1,5 +1,5 @@
 import { HOST, SidecarEngine } from './sidecar.ts';
-/** @import { OnCrash, SidecarCommand, TranscribeResult } from '../../types/engine.ts' */
+import type { OnCrash, SidecarCommand, TranscribeResult } from '../../types/engine.ts';
 
 /**
  * Apple's on-device speech recognition (macOS 26 SpeechAnalyzer), run by native/apple-speech/AppleSpeechServer.swift
@@ -8,9 +8,12 @@ import { HOST, SidecarEngine } from './sidecar.ts';
 export class AppleSpeechEngine extends SidecarEngine {
   supportsPrompt = false;
   defaultDevice = 'the chip macOS picks'; // SpeechAnalyzer chooses the Neural Engine, GPU or CPU itself
+  bin: string;
+  language: string;
+  module: string;
+  preset: string;
 
-  /** @param {{ bin: string, language: string, module: string, preset?: string, onCrash?: OnCrash }} opts */
-  constructor({ bin, language, module, preset = 'long', onCrash }) {
+  constructor({ bin, language, module, preset = 'long', onCrash }: { bin: string; language: string; module: string; preset?: string; onCrash?: OnCrash }) {
     super({ onCrash });
     this.bin = bin;
     this.language = language;
@@ -18,11 +21,7 @@ export class AppleSpeechEngine extends SidecarEngine {
     this.preset = preset;
   }
 
-  /**
-   * @param {number} port
-   * @returns {SidecarCommand}
-   */
-  command(port) {
+  command(port: number): SidecarCommand {
     return {
       name: 'apple-speech',
       bin: this.bin,
@@ -31,11 +30,7 @@ export class AppleSpeechEngine extends SidecarEngine {
     };
   }
 
-  /**
-   * @param {Float32Array} samples
-   * @returns {Promise<TranscribeResult>}
-   */
-  async transcribe(samples) {
+  async transcribe(samples: Float32Array): Promise<TranscribeResult> {
     const body = Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength); // float32 PCM, 16 kHz mono
     const res = await this.post('/inference', { body, headers: { 'Content-Type': 'application/octet-stream' } });
     const json = JSON.parse(res.text);

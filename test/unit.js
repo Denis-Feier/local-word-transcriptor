@@ -15,11 +15,11 @@ import { EnergyDetector, SileroDetector, VadPool, createDetector } from '../lib/
 import { CrosstalkGate } from '../lib/crosstalk.ts';
 import { Session, fileStamp, fmtTime } from '../lib/session.js';
 import { SteadyText } from '../lib/steady.ts';
-import { Transcriber } from '../lib/transcriber.js';
-import { TranscribeCppEngine, describeDevice } from '../lib/engines/transcribe-cpp.js';
+import { Transcriber } from '../lib/transcriber.ts';
+import { TranscribeCppEngine, describeDevice } from '../lib/engines/transcribe-cpp.ts';
 import { SidecarEngine } from '../lib/engines/sidecar.ts';
-import { WhisperCppEngine } from '../lib/engines/whisper-cpp.js';
-import { PythonNemoEngine } from '../lib/engines/python-nemo.js';
+import { WhisperCppEngine } from '../lib/engines/whisper-cpp.ts';
+import { PythonNemoEngine } from '../lib/engines/python-nemo.ts';
 import { config, ROOT } from '../lib/config.ts';
 import { MODELS, findModel } from '../lib/models.ts';
 import { liveSteadiness, sumSteadiness } from '../lib/benchmark/metrics.ts';

@@ -2,8 +2,8 @@ import path from 'node:path';
 import { ROOT } from '../config.ts';
 import { PYTHON_BIN } from '../python-env.ts';
 import { HOST, SidecarEngine } from './sidecar.ts';
-/** @import { OnCrash, SidecarCommand, TranscribeResult } from '../../types/engine.ts' */
-/** @import { NemoSpec } from '../../types/model.ts' */
+import type { OnCrash, SidecarCommand, TranscribeResult } from '../../types/engine.ts';
+import type { NemoSpec } from '../../types/model.ts';
 
 /**
  * Runs an NVIDIA NeMo model (Jackrabbit, the UPB FastConformer) in python/nemo_server.py, a small local HTTP server.
@@ -13,9 +13,12 @@ import { HOST, SidecarEngine } from './sidecar.ts';
 export class PythonNemoEngine extends SidecarEngine {
   supportsPrompt = false;
   cpuFallback = true;
+  id: string;
+  modelDir: string;
+  nemo: NemoSpec;
+  threads: number;
 
-  /** @param {{ id: string, modelDir: string, nemo: NemoSpec, threads: number, onCrash?: OnCrash }} opts */
-  constructor({ id, modelDir, nemo, threads, onCrash }) {
+  constructor({ id, modelDir, nemo, threads, onCrash }: { id: string; modelDir: string; nemo: NemoSpec; threads: number; onCrash?: OnCrash }) {
     super({ onCrash });
     this.id = id;
     this.modelDir = modelDir;
@@ -23,12 +26,7 @@ export class PythonNemoEngine extends SidecarEngine {
     this.threads = threads;
   }
 
-  /**
-   * @param {number} port
-   * @param {{ cpu?: boolean }} [opts]
-   * @returns {SidecarCommand}
-   */
-  command(port, { cpu = false } = {}) {
+  command(port: number, { cpu = false }: { cpu?: boolean } = {}): SidecarCommand {
     const args = [
       path.join(ROOT, 'python', 'nemo_server.py'),
       '--host', HOST,
@@ -49,11 +47,7 @@ export class PythonNemoEngine extends SidecarEngine {
     };
   }
 
-  /**
-   * @param {Float32Array} samples
-   * @returns {Promise<TranscribeResult>}
-   */
-  async transcribe(samples) {
+  async transcribe(samples: Float32Array): Promise<TranscribeResult> {
     const body = Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength); // float32 PCM, 16 kHz mono
     const res = await this.post('/inference', { body, headers: { 'Content-Type': 'application/octet-stream' } });
     const json = JSON.parse(res.text);

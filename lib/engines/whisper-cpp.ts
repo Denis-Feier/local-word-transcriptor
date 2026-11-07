@@ -1,6 +1,6 @@
 import { encodeWav } from '../wav.ts';
 import { HOST, SidecarEngine } from './sidecar.ts';
-/** @import { OnCrash, SidecarCommand, TranscribeOptions, TranscribeResult } from '../../types/engine.ts' */
+import type { OnCrash, SidecarCommand, TranscribeOptions, TranscribeResult } from '../../types/engine.ts';
 
 /**
  * Runs whisper.cpp's `whisper-server` as a child process; the model stays loaded on the GPU (Metal). If the server
@@ -10,9 +10,12 @@ export class WhisperCppEngine extends SidecarEngine {
   supportsPrompt = true;
   cpuFallback = true;
   defaultDevice = 'GPU'; // started without --no-gpu and no "no GPU found" in the log: it uses the GPU it found
+  bin: string;
+  modelPath: string;
+  language: string;
+  threads: number;
 
-  /** @param {{ bin: string, modelPath: string, port: number, language: string, threads: number, onCrash?: OnCrash }} opts */
-  constructor({ bin, modelPath, port, language, threads, onCrash }) {
+  constructor({ bin, modelPath, port, language, threads, onCrash }: { bin: string; modelPath: string; port: number; language: string; threads: number; onCrash?: OnCrash }) {
     super({ port, onCrash });
     this.bin = bin;
     this.modelPath = modelPath;
@@ -20,12 +23,7 @@ export class WhisperCppEngine extends SidecarEngine {
     this.threads = threads;
   }
 
-  /**
-   * @param {number} port
-   * @param {{ cpu?: boolean }} [opts]
-   * @returns {SidecarCommand}
-   */
-  command(port, { cpu = false } = {}) {
+  command(port: number, { cpu = false }: { cpu?: boolean } = {}): SidecarCommand {
     return {
       name: 'whisper',
       bin: this.bin,
@@ -46,10 +44,8 @@ export class WhisperCppEngine extends SidecarEngine {
    * whisper.cpp logs the GPU it picks by its device name ("whisper_backend_init_gpu: using MTL0 backend", CUDA0,
    * Vulkan0; older builds "Metal"), or "no GPU found", or that the GPU failed to start (then it runs on the CPU).
    * Other "using … backend" lines (BLAS, the CPU) come after and say nothing about the GPU.
-   * @param {string} line
-   * @returns {string | null}
    */
-  deviceFromLog(line) {
+  deviceFromLog(line: string): string | null {
     if (!line.includes('whisper_backend_init_gpu')) return null;
     if (/no GPU found|failed to initialize/i.test(line)) return 'CPU';
     const name = line.match(/using (\S+) backend/)?.[1];
@@ -59,12 +55,7 @@ export class WhisperCppEngine extends SidecarEngine {
     return `GPU (${kind ?? name})`;
   }
 
-  /**
-   * @param {Float32Array} samples
-   * @param {TranscribeOptions} [opts]
-   * @returns {Promise<TranscribeResult>}
-   */
-  async transcribe(samples, { prompt = '', fallback = true } = {}) {
+  async transcribe(samples: Float32Array, { prompt = '', fallback = true }: TranscribeOptions = {}): Promise<TranscribeResult> {
     const form = new FormData();
     form.append('file', new Blob([encodeWav(samples)], { type: 'audio/wav' }), 'audio.wav');
     // whisper-server keeps request parameters between calls, so every field we care about is sent each time.
