@@ -1,4 +1,4 @@
-// What test/helpers.js hands the test suites. Phase 1 of docs/typescript-migration.md.
+// What test/helpers.ts hands the test suites. Phase 1 of docs/typescript-migration.md.
 import type { ServerMessage } from './protocol.ts';
 
 export interface StartServerOptions {
@@ -34,7 +34,7 @@ export interface ServerMemory {
   native?: number;
 }
 
-/** One final line as test/stream-wav.js prints it. */
+/** One final line as test/stream-wav.ts prints it. */
 export interface StreamedFinal {
   id: number;
   /** 1-based, as printed. */
@@ -121,7 +121,7 @@ export interface TestCase {
   detail: string;
 }
 
-/** suite(): pass/fail bookkeeping; finish() writes the JSON result run-all.js collects. */
+/** suite(): pass/fail bookkeeping; finish() writes the JSON result run-all.ts collects. */
 export interface Suite {
   check(id: string, title: string, ok: boolean, detail?: string, opts?: { known?: boolean }): boolean;
   skip(id: string, title: string, reason: string): void;
@@ -134,7 +134,7 @@ export interface SuiteResult {
   cases: TestCase[];
 }
 
-/** One suite's outcome in run-all.js. */
+/** One suite's outcome in run-all.ts. */
 export interface RunResult {
   suite: string;
   cases: TestCase[];

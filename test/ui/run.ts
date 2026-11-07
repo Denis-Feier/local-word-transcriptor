@@ -2,11 +2,12 @@
 // microphones that play the test speakers (preload.cjs). Starts its own servers. Screenshots go to UI_OUT
 // (default: a temp folder, printed at the end) for a person or an AI to look at.
 //
-//   npm run test:ui          (or: npx electron test/ui/run.mjs; needs ELECTRON_RUN_AS_NODE unset)
+//   npm run test:ui          (or: npx electron test/ui/run.ts; needs ELECTRON_RUN_AS_NODE unset)
 import { app, BrowserWindow, session, nativeTheme } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT, SR, FIXTURE, startServer, speakers, loadWav, saveWav, scratch, sleep, suite, fakeElevenLabs, fakeServer } from '../helpers.js';
+import { ROOT, SR, FIXTURE, startServer, speakers, loadWav, saveWav, scratch, sleep, suite, fakeElevenLabs, fakeServer } from '../helpers.ts';
+import type { FakeElevenLabs, FakeServer, StartServerOptions, TestServer } from '../../types/test.ts';
 
 const OUT = process.env.UI_OUT ?? scratch('ui');
 fs.mkdirSync(OUT, { recursive: true });
@@ -21,16 +22,16 @@ const t = suite('ui');
 app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((wc, p, cb) => cb(true));
   session.defaultSession.setPermissionCheckHandler(() => true);
-  const servers = [];
-  const serve = async (opts) => {
+  const servers: TestServer[] = [];
+  const serve = async (opts?: StartServerOptions) => {
     const s = await startServer(opts);
     servers.push(s);
     return s;
   };
   let server = await serve();
-  const scratchDirs = [];
-  const fakes = [];
-  const pageErrors = [];
+  const scratchDirs: string[] = [];
+  const fakes: (FakeElevenLabs | FakeServer)[] = [];
+  const pageErrors: string[] = [];
   const newWindow = (width = 1100, height = 900) => {
     const w = new BrowserWindow({
       width,
@@ -52,7 +53,7 @@ app.whenReady().then(async () => {
     for (let attempt = 1; ; attempt++) {
       try {
         return fs.writeFileSync(path.join(OUT, `${name}.png`), (await w.webContents.capturePage()).toPNG());
-      } catch (/** @type {any} */ err) {
+      } catch (err: any) {
         if (attempt === 3) return console.log(`screenshot ${name}.png not taken: ${err.message}`);
         await sleep(500);
       }
@@ -618,7 +619,7 @@ app.whenReady().then(async () => {
       `Download ${JSON.stringify(downloaded)}; on the page ${onPage.map((l) => l.slice(0, 12)).join(' | ')}; Copy ${copied.map((l) => l.slice(0, 12)).join(' | ')}`);
 
     t.check('UI-LOAD-02', 'no errors in the page console', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
-  } catch (/** @type {any} */ err) {
+  } catch (err: any) {
     t.check('UI-RUN', 'the UI run finished', false, err.stack);
   } finally {
     // Each step named, so a hang here (TESTING.md §12, twice in 2026-11) says where it is.
@@ -630,6 +631,6 @@ app.whenReady().then(async () => {
     for (const dir of [SPEAKERS, ...scratchDirs]) fs.rmSync(dir, { recursive: true, force: true });
     console.log(`\nscreenshots: ${OUT}`);
     t.finish();
-    app.exit(/** @type {number} */ (process.exitCode ?? 0)); // a number here, or unset
+    app.exit((process.exitCode ?? 0) as number); // a number here, or unset
   }
 });

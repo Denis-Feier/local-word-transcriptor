@@ -1,4 +1,4 @@
-// Loaded into the page by test/ui/run.mjs: fake microphones that play the test speakers instead of a real mic, and
+// Loaded into the page by test/ui/run.ts: fake microphones that play the test speakers instead of a real mic, and
 // fake audio outputs. The test changes window.__fake to plug devices in and out, re-pair one under a new id, or make
 // a mic record at 8 kHz or send only digital silence. Clipboard writes and downloads are captured instead of performed. Nothing is played out
 // loud: an output the page picks is silent, and window.__speakerLevel() measures what it would have played.

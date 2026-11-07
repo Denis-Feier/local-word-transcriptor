@@ -9,15 +9,14 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { decodeWav } from '../lib/wav.ts';
 import { sharedWords, wordErrorRate, words } from '../lib/wer.ts';
-import { ROOT, SR, FIXTURE, loadWav, room } from './helpers.js';
+import { ROOT, SR, FIXTURE, loadWav, room } from './helpers.ts';
 
 export const CHUNK = 1600; // 100 ms, as the page sends it
 const STEP = CHUNK / SR;
 const BANK = path.join(ROOT, 'test', 'fixtures', 'meeting-ro.txt');
 const CACHE = path.join(os.tmpdir(), 'transcriber-meeting-voices');
 const RATES = [180, 205, 160]; // words per minute: each person speaks at their own pace
-/** @type {[start: number, end: number, text: string][]} */
-const FIXTURE_SENTENCES = [
+const FIXTURE_SENTENCES: [start: number, end: number, text: string][] = [
   [0, 6.8, 'Bună ziua, mă numesc Ioana și astăzi vreau să vă povestesc despre o călătorie în munții Carpați.'],
   [7.3, 13.0, 'A fost o experiență frumoasă, deși ploaia ne-a ținut în cabană două zile.'],
   [13.4, 15.9, 'Ce părere aveți, mergem și la anul?'],
@@ -35,8 +34,8 @@ const SPEAKER_DB = -18; // the speaker in the room, as each mic hears it
 const SPEAKER_LAG = 0.02;
 const GAP = 0.3; // the page reopens its capture when the mics change: no audio for this long
 
-/** Blocks and their minutes. A block left out (or 0) is skipped; R2 repeats R exactly. @type {Record<string, Record<string, number>>} */
-export const SCRIPTS = {
+/** Blocks and their minutes. A block left out (or 0) is skipped; R2 repeats R exactly. */
+export const SCRIPTS: Record<string, Record<string, number>> = {
   full: { R: 15, shared: 60, presentation: 20, debate: 20, break: 15, hvac: 40, flaky: 30, changes: 20, R2: 15 },
   short: { R: 4, shared: 5, presentation: 3, debate: 3, break: 2, hvac: 4, flaky: 4, changes: 5, R2: 4 },
   mic3: { R: 20, debate: 20, hvac: 40, flaky: 25, R2: 15 },
@@ -100,7 +99,7 @@ function pieces(file) {
     for (let i = at; i < at + 512 && i < x.length; i++) sum += x[i] * x[i];
     return sum;
   };
-  const out = [];
+  const out: ReturnType<typeof clip>[] = [];
   for (let start = 0; start + 6 * SR < x.length;) {
     let cut = Math.min(x.length, start + 12 * SR);
     for (let at = start + 6 * SR; at < Math.min(x.length - 512, start + 12 * SR); at += 512) if (level(at) < level(cut)) cut = at;
@@ -115,9 +114,8 @@ function pieces(file) {
  * Each person's voice: a list of clips { text, samples, roomed, short }. The sentence bank spoken by macOS
  * `say -v Ioana` at the person's pace (cached in the temp folder); without that voice, the fixture's three sentences;
  * with recordings, pieces of those (text null until the caller fills it in). keep(i) picks sentences from the bank.
- * @param {{ people?: number, recordings?: string | null, keep?: (i: number) => boolean }} [opts]
  */
-export async function voices({ people = 3, recordings = null, keep = () => true } = {}) {
+export async function voices({ people = 3, recordings = null, keep = () => true }: { people?: number, recordings?: string | null, keep?: (i: number) => boolean } = {}) {
   if (recordings) {
     const files = recordings.split(',');
     return { source: 'recordings', people: Array.from({ length: people }, (_, p) => pieces(files[p % files.length])) };
@@ -129,9 +127,9 @@ export async function voices({ people = 3, recordings = null, keep = () => true 
   }
   fs.mkdirSync(CACHE, { recursive: true });
   const texts = fs.readFileSync(BANK, 'utf8').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).filter((_, i) => keep(i));
-  const out = [];
+  const out: ReturnType<typeof clip>[][] = [];
   for (let p = 0; p < people; p++) {
-    const clips = [];
+    const clips: ReturnType<typeof clip>[] = [];
     for (let i = 0; i < texts.length; i += 8) {
       const batch = texts.slice(i, i + 8);
       const audio = await Promise.all(batch.map((text) => say(text, RATES[p % RATES.length])));
@@ -163,18 +161,16 @@ function transient(rng, kind) {
 /**
  * The meeting for `voice` (from voices()): blocks of minutes in a fixed order (SCRIPTS), on 2 or 3 mics.
  * Times are meeting seconds. Returns the utterances (ground truth), events, blocks and what the room does when.
- * @param {Awaited<ReturnType<typeof voices>>} voice
- * @param {{ minutes?: Record<string, number>, mics?: number, seed?: number }} [opts]
  */
-export function meeting(voice, { minutes = SCRIPTS.full, mics = 2, seed = 1 } = {}) {
+export function meeting(voice: Awaited<ReturnType<typeof voices>>, { minutes = SCRIPTS.full, mics = 2, seed = 1 }: { minutes?: Record<string, number>, mics?: number, seed?: number } = {}) {
   const homeOf = (p) => (mics === 2 && p === 2 ? 0 : p);
-  const utterances = [];
-  const events = []; // { t, type: 'layout' | 'tuning' | 'clear', ... }
-  const dropouts = []; // { mic, start, end }: digital silence
-  const transients = []; // { start, samples, gains }
-  const ramps = []; // { start, end }: the air conditioning (noise +12 dB)
-  const speaker = []; // { start, end }: the speaker in the room plays the voices
-  const blocks = [];
+  const utterances: any[] = []; // { person, home, start, end, text, clip, block, kind, first }, then finishMeeting() adds orphan and solo
+  const events: any[] = []; // { t, type: 'layout' | 'tuning' | 'clear', ... }
+  const dropouts: { mic: number; start: number; end: number }[] = []; // digital silence
+  const transients: { start: number; samples: Float32Array; gains: number[]; kind: string }[] = [];
+  const ramps: { start: number; end: number }[] = []; // the air conditioning (noise +12 dB)
+  const speaker: { start: number; end: number }[] = []; // the speaker in the room plays the voices
+  const blocks: { name: string; start: number; end: number }[] = [];
   const pick = (rng, list, avoid) => {
     const ok = list.filter((c) => !avoid.has(c.text));
     return ok[Math.floor(rng() * ok.length)] ?? list[0];
@@ -191,8 +187,7 @@ export function meeting(voice, { minutes = SCRIPTS.full, mics = 2, seed = 1 } = 
 
   /** People taking turns: 1–4 sentences each, a share of the turns starting before the previous one ends. */
   const discussion = (rng, block, at, len, who, { overlap = 0.25, most = 3.5, replies = 0 } = {}) => {
-    /** @type {{ person: number, start: number, end: number } | null} */
-    let prev = null;
+    let prev: { person: number, start: number, end: number } | null = null;
     for (;;) {
       const others = who.filter((p) => p !== prev?.person);
       const person = others[Math.floor(rng() * others.length)];
@@ -202,8 +197,7 @@ export function meeting(voice, { minutes = SCRIPTS.full, mics = 2, seed = 1 } = 
       const n = 1 + Math.floor(rng() ** 1.6 * 4);
       if (start + 8 > at + len) break;
       let t = start;
-      /** @type {ReturnType<typeof speak> | null} */
-      let last = null;
+      let last: ReturnType<typeof speak> | null = null;
       for (let i = 0; i < n && t + 6 < at + len; i++) {
         last = speak(person, pick(rng, longOf(person), busy(t)), t, block, 'turn', i === 0);
         t = last.end + 0.25 + rng() * 0.2; // shorter than the pause that ends a sentence
@@ -280,12 +274,8 @@ export function meeting(voice, { minutes = SCRIPTS.full, mics = 2, seed = 1 } = 
   return finishMeeting({ mics, length: t + 2, utterances, events, dropouts, transients, ramps, speaker, blocks, voice: voice.source });
 }
 
-/**
- * A meeting from given utterances ({ person, start, clip }): for short checks that need exact control.
- * @param {any[]} utterances
- * @param {{ mics?: number, length?: number }} [opts]
- */
-export function meetingFrom(utterances, { mics = 2, length } = {}) {
+/** A meeting from given utterances ({ person, start, clip }): for short checks that need exact control. */
+export function meetingFrom(utterances: any[], { mics = 2, length }: { mics?: number, length?: number } = {}) {
   const list = utterances.map((u) => ({ home: mics === 2 && u.person === 2 ? 0 : u.person, end: u.start + u.clip.samples.length / SR, text: u.clip.text, block: 'R', kind: 'turn', first: true, ...u }));
   const end = Math.max(...list.map((u) => u.end));
   return finishMeeting({ mics, length: length ?? end + 2, utterances: list, events: [], dropouts: [], transients: [], ramps: [], speaker: [], blocks: [{ name: 'R', start: 0, end: end + 2 }], voice: 'given' });
@@ -339,7 +329,15 @@ export const sessionBlocks = (m) => m.blocks.map((b) => ({ name: b.name, start: 
  * (Uint32 mic count, then each mic's samples) or null while the page reopens its capture.
  */
 export class Room {
-  constructor(m, { seed = 7 } = {}) {
+  m: any; // the meeting (meeting(), meetingFrom())
+  next: number;
+  active: any[];
+  nextTransient: number;
+  activeTransients: any[];
+  noise: (() => number)[];
+  tail: number;
+
+  constructor(m: any, { seed = 7 }: { seed?: number } = {}) {
     this.m = m;
     this.next = 0;
     this.active = [];
@@ -401,7 +399,7 @@ export class Room {
   }
 
   /** The whole meeting as one Float32Array per mic (for WAV files: the fake mics, replays). */
-  static render(m, opts) {
+  static render(m: any, opts?: { seed?: number }) {
     const r = new Room(m, opts);
     const out = Array.from({ length: m.mics }, () => new Float32Array(m.chunks * CHUNK));
     for (let i = 0; i < m.chunks; i++) {
@@ -446,11 +444,8 @@ export function memoryCheck(samples, warmSec) {
  * each line is ok, phantom (nobody spoke) or wrong (another person's speech); pairs of lines are "both" when two mics
  * kept the same words; each utterance is caught or not (§14.3). An ok line is solo when nobody else spoke during it. groups: [{ name, start, end }] in session seconds
  * (blocks, windows); each gets its own numbers. partials: [{ sentSec }].
- * @param {any[]} items
- * @param {any[]} lines
- * @param {{ groups?: { name: string, start: number, end: number, window?: boolean }[], partials?: { sentSec: number }[] }} [opts]  window: a 10-minute window rather than a block
  */
-export function judge(items, lines, { groups = [], partials = [] } = {}) {
+export function judge(items: any[], lines: any[], { groups = [], partials = [] }: { groups?: { name: string, start: number, end: number, window?: boolean }[], partials?: { sentSec: number }[] } = {}) {
   const byStart = [...items].sort((a, b) => a.at[0][0] - b.at[0][0]);
   const starts = byStart.map((u) => Math.min(...u.at.map(([s]) => s)));
   const near = (from, to) => {
@@ -461,7 +456,7 @@ export function judge(items, lines, { groups = [], partials = [] } = {}) {
       if (starts[mid] < from - 30) lo = mid + 1;
       else hi = mid;
     }
-    const out = [];
+    const out: any[] = [];
     for (let i = lo; i < starts.length && starts[i] < to + 1; i++) out.push(byStart[i]);
     return out;
   };
@@ -488,7 +483,7 @@ export function judge(items, lines, { groups = [], partials = [] } = {}) {
     // solo: nobody else spoke while this line's own words were said, so it never waited for another mic (#6)
     return { ...line, kind, solo: kind === 'ok' && solo };
   });
-  const both = [];
+  const both: [any, any][] = [];
   const sorted = [...judged].sort((a, b) => a.start - b.start);
   for (let i = 0; i < sorted.length; i++) {
     for (let j = i + 1; j < sorted.length && sorted[j].start < sorted[i].end; j++) {
@@ -506,8 +501,7 @@ export function judge(items, lines, { groups = [], partials = [] } = {}) {
     const [s, e] = u.at[u.home];
     const text = perMic[u.home].filter((l) => overlap(l.start, l.end, s - 0.3, e + 0.3) > 0).map((l) => l.text).join(' ');
     const caught = sharedWords(u.text, text).count >= Math.ceil(contentWords(u.text) / 2);
-    /** @type {number | null} */
-    let offset = null;
+    let offset: number | null = null;
     if (caught && u.solo && u.first) {
       const line = perMic[u.home].filter((l) => overlap(l.start, l.end, s, e) > 0).sort((a, b) => overlap(b.start, b.end, s, e) - overlap(a.start, a.end, s, e))[0];
       if (line && line.start - s > -1 && line.start - s < 0.5) offset = line.start - s;
@@ -555,12 +549,8 @@ export function fmt(sec) {
 const pct = (x) => (Number.isFinite(x) ? `${(x * 100).toFixed(1)} %` : '—');
 const num = (x, d = 2) => (Number.isFinite(x) ? x.toFixed(d) : '—');
 
-/**
- * A Markdown table of the groups (blocks or windows).
- * @param {any[]} groups
- * @param {(group: any) => Record<string, unknown>} [extra]  more columns per group
- */
-export function table(groups, extra = () => ({})) {
+/** A Markdown table of the groups (blocks or windows). */
+export function table(groups: any[], extra: (group: any) => Record<string, unknown> = () => ({})) {
   const rows = groups.map((g) => ({
     Part: g.name,
     Lines: g.lines,
@@ -586,7 +576,7 @@ export function table(groups, extra = () => ({})) {
  * an utterance (the most common difference, refined by its median). period: the loop's length in seconds.
  */
 export function loopOffset(m, lines, mic, period) {
-  const ds = [];
+  const ds: number[] = [];
   for (const line of lines.filter((l) => l.mic === mic && contentWords(l.text) >= 4)) {
     for (const u of m.utterances) {
       const { count, ratio } = sharedWords(line.text, u.text ?? '');
@@ -604,7 +594,7 @@ export function loopOffset(m, lines, mic, period) {
 
 /** The truth of a looped meeting in session seconds, given each mic's loopOffset(), up to `length` seconds. */
 export function loopTruth(m, offsets, length, period) {
-  const out = [];
+  const out: any[] = [];
   for (let k = 0; k * period < length + period; k++) {
     for (const u of m.utterances) {
       const at = offsets.map((off, mic) => [u.start + MICS[mic].lag + k * period - off, u.end + MICS[mic].lag + k * period - off]);

@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import electron from 'electron'; // in Node this is the path to the Electron binary
-import { ROOT, FIXTURE, startServer, speakers, loadWav, saveWav, scratch, silence, concat, sleep } from '../test/helpers.js';
+import { ROOT, FIXTURE, startServer, speakers, loadWav, saveWav, scratch, silence, concat, sleep } from '../test/helpers.ts';
 
 const DIR = path.join(ROOT, 'docs', 'manual');
 const IMG = path.join(DIR, 'img');

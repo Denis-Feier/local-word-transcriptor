@@ -1,7 +1,7 @@
 // Logic checks that need no speech model (seconds). The crosstalk, session and detector-reuse checks use the Silero
 // voice detector (models/silero_vad.onnx) and are skipped without it. Case ids match TESTING.md.
 //
-//   node test/unit.js
+//   node test/unit.ts
 import fs from 'node:fs';
 import os from 'node:os';
 import { createRequire } from 'node:module';
@@ -31,10 +31,11 @@ import { renderReport } from '../lib/benchmark/report.ts';
 import { parseArgs } from '../scripts/benchmark-suite.ts';
 import { createBacklog, lostNote } from '../public/backlog.js';
 import { spokenOrder } from '../public/order.js';
-import { SR, FIXTURE, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs, loadWav, saveWav } from './helpers.js';
-import { memoryCheck } from './meeting.js';
-/** @import { Model } from '../types/model.ts' */
-/** @import { Vad } from 'sherpa-onnx-node' */
+import { SR, FIXTURE, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs, loadWav, saveWav } from './helpers.ts';
+import { memoryCheck } from './meeting.ts';
+import type { Model } from '../types/model.ts';
+import type { TimedResult } from '../types/engine.ts';
+import type { Vad } from 'sherpa-onnx-node';
 
 const t = suite('unit');
 
@@ -74,11 +75,11 @@ t.check('UNIT-TUNE-03', 'every setting has a range for the Settings sliders', Ob
   const longReason = MODELS.filter((m) => !m.reason || m.reason.length > 70 || /\n/.test(m.reason));
   t.check('UNIT-MODEL-02', 'every model has a tier (recommended/other) and a one-line reason of at most 70 characters; Canary and Parakeet Ultra are the recommended ones, listed first; the cloud model is never recommended',
     tiers.every((x) => ['recommended', 'other'].includes(x)) && !longReason.length && JSON.stringify(recommended) === '["canary-1b-v2","parakeet-ultra"]'
-      && MODELS.slice(0, recommended.length).every((m) => m.tier === 'recommended') && /** @type {Model} */ (MODELS.find((m) => m.cloud)).tier === 'other',
+      && MODELS.slice(0, recommended.length).every((m) => m.tier === 'recommended') && (MODELS.find((m) => m.cloud) as Model).tier === 'other',
     `recommended ${recommended.join(', ')}; ${longReason.length ? `reasons too long: ${longReason.map((m) => m.id).join(', ')}` : 'every reason fits'}`);
 }
 // python/nemo_server.py refuses a decoder it does not know, but only once someone picks the model.
-const nemoDecoders = /** @type {string[]} */ (/** @type {RegExpMatchArray} */ (fs.readFileSync(path.join(ROOT, 'python', 'nemo_server.py'), 'utf8').match(/"--decoder", choices=\[([^\]]*)\]/))[1].match(/[\w-]+/g)); // the server has the option
+const nemoDecoders = (fs.readFileSync(path.join(ROOT, 'python', 'nemo_server.py'), 'utf8').match(/"--decoder", choices=\[([^\]]*)\]/) as RegExpMatchArray)[1].match(/[\w-]+/g) as string[]; // the server has the option
 const nemoModels = MODELS.filter((m) => m.engine === 'python-nemo');
 const badNemo = nemoModels.filter(({ nemo, files }) => !nemoDecoders.includes(nemo.decoder)
   || (nemo.decoder === 'ctc-lm') !== Boolean(nemo.lm)
@@ -88,7 +89,7 @@ t.check('UNIT-MODEL-01', 'every NeMo model uses a decoder nemo_server.py accepts
 
 // ---------- the page's backlog while the server is unreachable (#11) ----------
 {
-  const b = /** @type {{ push(chunk: any): void, take(): { chunks: any[], dropped: number }, readonly dropped: number }} */ (createBacklog(3000)); // numbers stand in for the 100 ms chunks: 5 minutes, as the page
+  const b = createBacklog(3000) as { push(chunk: any): void, take(): { chunks: any[], dropped: number }, readonly dropped: number }; // numbers stand in for the 100 ms chunks: 5 minutes, as the page
   for (let i = 0; i < 4200; i++) b.push(i); // a 7-minute outage
   const kept = b.take();
   t.check('UNIT-NET-01', 'a 7-minute outage keeps the newest 5 minutes in order and counts the 2 minutes dropped',
@@ -125,17 +126,17 @@ t.check('UNIT-WAV-02', 'a WAV being written is playable after every chunk', half
  * open() counts those files still open; restore() puts the real fs back.
  */
 function smallDisk(free, kinds = ['.wav']) {
-  const real = /** @type {any} */ ({ openSync: fs.openSync, writeSync: fs.writeSync, ftruncateSync: fs.ftruncateSync, closeSync: fs.closeSync, appendFileSync: fs.appendFileSync }); // called with whatever the stand-ins got
+  const real = { openSync: fs.openSync, writeSync: fs.writeSync, ftruncateSync: fs.ftruncateSync, closeSync: fs.closeSync, appendFileSync: fs.appendFileSync } as any; // called with whatever the stand-ins got
   const sizes = new Map(); // fd -> bytes in the file
   const onDisk = (file) => kinds.some((kind) => String(file).endsWith(kind));
   const full = () => Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC', syscall: 'write' });
   // The stand-ins take whatever the real functions take; Node's overloads are not restated here.
-  fs.openSync = /** @type {any} */ ((file, ...rest) => {
+  fs.openSync = ((file, ...rest) => {
     const fd = real.openSync(file, ...rest);
     if (onDisk(file)) sizes.set(fd, fs.fstatSync(fd).size);
     return fd;
-  });
-  fs.writeSync = /** @type {any} */ ((fd, buf, offset, length, position) => {
+  }) as any;
+  fs.writeSync = ((fd, buf, offset, length, position) => {
     if (!sizes.has(fd)) return real.writeSync(fd, buf, offset, length, position);
     const size = sizes.get(fd);
     const at = position ?? size;
@@ -146,20 +147,20 @@ function smallDisk(free, kinds = ['.wav']) {
     free -= grown;
     sizes.set(fd, size + grown);
     return n;
-  });
-  fs.ftruncateSync = /** @type {any} */ ((fd, length = 0) => {
+  }) as any;
+  fs.ftruncateSync = ((fd, length = 0) => {
     if (sizes.has(fd)) {
       if (length - sizes.get(fd) > free) throw full();
       free -= length - sizes.get(fd);
       sizes.set(fd, length);
     }
     real.ftruncateSync(fd, length);
-  });
-  fs.closeSync = /** @type {any} */ ((fd) => {
+  }) as any;
+  fs.closeSync = ((fd) => {
     sizes.delete(fd);
     real.closeSync(fd);
-  });
-  fs.appendFileSync = /** @type {any} */ ((file, data, ...rest) => {
+  }) as any;
+  fs.appendFileSync = ((file, data, ...rest) => {
     if (!onDisk(file)) return real.appendFileSync(file, data, ...rest);
     const buf = Buffer.from(data);
     const fd = fs.openSync(file, 'a');
@@ -168,7 +169,7 @@ function smallDisk(free, kinds = ['.wav']) {
     } finally {
       fs.closeSync(fd);
     }
-  });
+  }) as any;
   return { open: () => sizes.size, restore: () => Object.assign(fs, real) };
 }
 
@@ -176,8 +177,7 @@ function smallDisk(free, kinds = ['.wav']) {
 let disk = smallDisk(44 + 2 * 12345 + 1);
 const fullWav = path.join(dir, 'full.wav');
 const filling = new WavWriter(fullWav);
-/** @type {any} */
-let full = null; // the error the full disk threw
+let full: any = null; // the error the full disk threw
 let chunk = 0;
 try {
   for (; chunk < 10; chunk++) filling.append(tone.subarray(0, 1600));
@@ -193,8 +193,7 @@ t.check('UNIT-WAV-03', 'a disk that fills up: the chunk that does not fit throws
   full?.code === 'ENOSPC' && chunk === 7 && kept === 12345 && grown.readUInt32LE(40) === 2 * (12345 + 1600) && grown.length === 44 + 2 * (12345 + 1600) && decodeWav(grown).samples.length === 12345 + 1600,
   `${full?.code ?? 'no error'} on chunk ${chunk + 1}; the header kept ${kept} of the 12,345 samples that fit; then ${grown.readUInt32LE(40) / 2} samples in the header, ${(grown.length - 44) / 2} in the file`);
 disk = smallDisk(0);
-/** @type {any} */
-let refused = null;
+let refused: any = null;
 try {
   new WavWriter(path.join(dir, 'none.wav')).close();
 } catch (err) {
@@ -205,7 +204,7 @@ disk.restore();
 let again = 'started';
 try {
   new WavWriter(path.join(dir, 'none.wav')).close(); // room again, Save audio ticked again: a new WavWriter never overwrites
-} catch (/** @type {any} */ err) {
+} catch (err: any) {
   again = err.code;
 }
 t.check('UNIT-WAV-04', 'a WAV started on a full disk: ENOSPC; the file is neither left open nor left behind, so it starts once there is room',
@@ -215,7 +214,7 @@ fs.writeFileSync(keptFile, encodeWav(tone));
 let overwrote = 'opened it';
 try {
   new WavWriter(keptFile).close();
-} catch (/** @type {any} */ err) {
+} catch (err: any) {
   overwrote = err.code;
 }
 t.check('UNIT-WAV-05', 'a WAV writer never overwrites a file: it refuses one that exists and leaves it as it was',
@@ -235,7 +234,7 @@ const fresh = new WavWriter(path.join(dir, 'resumed-new.wav'), { resume: true })
 fresh.append(tone.subarray(0, 1600));
 fresh.close();
 t.check('UNIT-WAV-06', 'a resumed WAV writer carries on an existing file after its last whole sample, header fixed; with no file it starts one',
-  resumedWav.samples.length === 8000 + 100 + 8000 && Math.abs(/** @type {number} */ (resumedWav.samples.at(-1)) - /** @type {number} */ (tone.at(-1))) < 1e-4
+  resumedWav.samples.length === 8000 + 100 + 8000 && Math.abs((resumedWav.samples.at(-1) as number) - (tone.at(-1) as number)) < 1e-4
     && decodeWav(fs.readFileSync(path.join(dir, 'resumed-new.wav'))).samples.length === 1600,
   `${resumedWav.samples.length} samples (want 16,100)`);
 
@@ -245,7 +244,7 @@ const quiet = (sec) => Float32Array.from({ length: Math.round(sec * SR) }, (_, i
 // Speech-like: 250 ms syllables with 100 ms gaps, so the loudness detector doesn't take it for steady noise.
 const loud = (sec) => Float32Array.from({ length: Math.round(sec * SR) }, (_, i) => ((i % 5600) < 4000 ? 0.1 : 0.0004) * Math.sin(i / 6));
 function segment(audio, extra = {}) {
-  const events = [];
+  const events: any[] = []; // { type: 'start' | 'segment' | 'discard', id, ... }
   const seg = new Segmenter({
     ...timing,
     ...extra,
@@ -279,7 +278,7 @@ t.check('UNIT-SEG-05', 'a segmenter added mid-session uses the session clock and
 // 1 ↔ 2 mics `changes` times, ending on two (none: two mics from the start).
 async function layouts(changes) {
   const PHASE = 23;
-  const sent = [];
+  const sent: any[] = [];
   const out = scratch('layout');
   const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
   const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null, transcribe: async () => ({ text: 'o propoziție', model: 'stub', ms: 1 }) };
@@ -317,8 +316,8 @@ async function reconnects(resumeWith) {
   const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
   const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null, transcribe: async () => ({ text: 'o propoziție', model: 'stub', ms: 1 }) };
   const talk = concat(quiet(1), loud(1.5), quiet(1.5));
-  const connect = async (resume, others = []) => {
-    const sent = [];
+  const connect = async (resume?: any, others: any[] = []) => {
+    const sent: any[] = [];
     const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
     session.setOptions({ saveAudio: true });
     if (resume) session.resume(resume, others);
@@ -359,15 +358,15 @@ t.check('UNIT-SESS-20', 'a reconnect naming a transcript that is not there (or n
 // One mic, a sentence every 4 s for 60 s. `slow`: the model answers nothing until the audio is all sent, then
 // finishes the queue one sentence at a time; otherwise it answers at once.
 async function lagging(slow) {
-  const sent = [];
+  const sent: any[] = [];
   const out = scratch('behind');
   const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
-  const queue = [];
+  const queue: ((value: TimedResult) => void)[] = [];
   const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null,
-    transcribe: () => (slow ? new Promise((resolve) => queue.push(resolve)) : Promise.resolve({ text: 'o propoziție', model: 'stub', ms: 1 })) };
+    transcribe: () => (slow ? new Promise<TimedResult>((resolve) => queue.push(resolve)) : Promise.resolve({ text: 'o propoziție', model: 'stub', ms: 1 })) };
   const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
   const talk = concat(...Array.from({ length: 15 }, () => concat(quiet(1), loud(1.5), quiet(1.5))));
-  const told = []; // { at: seconds of audio sent, seconds }
+  const told: { at: number; seconds: number }[] = []; // at: seconds of audio sent
   for (let i = 0; i < talk.length; i += 1600) {
     const from = sent.length;
     session.audio(talk.subarray(i, i + 1600));
@@ -377,7 +376,7 @@ async function lagging(slow) {
   session.flush();
   const waiting = queue.length;
   while (queue.length) {
-    queue.shift()({ text: 'o propoziție', model: 'stub', ms: 1 });
+    (queue.shift() as (value: TimedResult) => void)({ text: 'o propoziție', model: 'stub', ms: 1 }); // the loop runs while the queue has one
     await sleep(1);
   }
   await sleep(20);
@@ -420,7 +419,7 @@ t.check('UNIT-STEADY-03', 'words are compared ignoring case and punctuation, and
 
 // The same guesses through a session: one 5 s sentence, the stand-in answers each live guess with the next of GUESSES.
 async function liveGuesses(steadyLive) {
-  const sent = [];
+  const sent: any[] = [];
   const out = scratch('steady');
   const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
   let n = 0;
@@ -456,7 +455,7 @@ t.check('UNIT-STEADY-05', 'Steady live text off: every guess is shown as the mod
 // Two mics: a sentence on mic 1 every 4 s for 24 s, room noise on mic 2. The WAVs have room for 8 s of both mics and
 // 1,000 bytes, so mic 1's write at 8.0 s is cut short and then fails.
 async function diskFills() {
-  const sent = [];
+  const sent: any[] = [];
   const out = scratch('full');
   const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
   const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null, transcribe: async () => ({ text: 'o propoziție', model: 'stub', ms: 1 }) };
@@ -465,8 +464,7 @@ async function diskFills() {
   const talk = concat(...Array.from({ length: 6 }, () => concat(quiet(1), loud(1.5), quiet(1.5))));
   const noise = quiet(0.1);
   const small = smallDisk(2 * 44 + 8 * 2 * 2 * SR + 1000);
-  /** @type {any} */
-  let thrown = null;
+  let thrown: any = null;
   try {
     for (let i = 0; i < talk.length; i += 1600) {
       const frame = new Float32Array(3200);
@@ -507,7 +505,7 @@ t.check('UNIT-SESS-12', 'when a full disk stops Save audio, the page is told onc
 // line 3 is cut short and then fails, as on a real disk. Then there is room again (someone deleted files), the disk
 // fills again, Stop and Start are pressed, then Clear, and at last there is room again.
 async function textFills() {
-  const sent = [];
+  const sent: any[] = [];
   const out = scratch('full-text');
   const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
   const said = (n) => `propoziția numărul ${n} din ședință`;
@@ -546,7 +544,7 @@ async function textFills() {
     const odd = got.filter((l) => !want.includes(l)).map((l) => JSON.stringify(l.length > 45 ? `${l.slice(0, 45)}…` : l));
     return [missing.length && `lines ${missing.join(', ')} missing`, odd.length && `not a line: ${odd.join(', ')}`].filter(Boolean).join(', ') || 'out of order';
   };
-  const told = []; // after which line each "Could not save transcript" came
+  const told: number[] = []; // after which line each "Could not save transcript" came
   sent.forEach((m, i) => m.type === 'error' && told.push(sent.slice(0, i).filter((x) => x.type === 'final' && x.text).length));
   const result = {
     finals: finals().length,
@@ -573,7 +571,7 @@ t.check('UNIT-SESS-14', 'a full disk while saving the transcript: the page is to
 // Mic 1 says a long sentence, then mic 2 a short one, taking turns. The stand-in model takes longer for longer audio,
 // so the short line is transcribed first. The page shows it at once (it sorts by start); the .txt waits for mic 1's.
 async function speakingOrder() {
-  const sent = [];
+  const sent: any[] = [];
   const out = scratch('order');
   const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
   const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null,
@@ -610,7 +608,7 @@ t.check('UNIT-SESS-15', 'mic 2\'s short line is transcribed before mic 1\'s long
 // so it has the smaller id and the later start. The page (public/order.js, the rule app.js places lines with) and the
 // .txt must both put mic 1's rest first. Before the fix the page sorted by id: mic 2's line came first.
 async function splitOrder() {
-  const sent = [];
+  const sent: any[] = [];
   const out = scratch('order50');
   const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy', maxSegmentSec: 5 } };
   // No word in common: a line that shares words with one on the other mic at the same time is dropped as heard twice.
@@ -662,7 +660,7 @@ t.check('UNIT-ORDER-02', 'the order rule (public/order.js): by connection, then 
  * mic 2 hears only its noise. `sign` -1 inverts the audio, so two recordings never send the same samples.
  */
 function recording(out, said, { sign = 1, mics = 2 } = {}) {
-  const sent = [];
+  const sent: any[] = [];
   const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
   const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null, transcribe: async () => ({ text: said, model: 'stub', ms: 1 }) };
   const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
@@ -755,7 +753,7 @@ fs.rmSync(out, { recursive: true, force: true });
 // Seeded noise makes every 512-sample frame different, so the stand-in's audio can be found in what was streamed.
 let seed = 11;
 const noisy = (x) => x.map((v) => v + 0.0003 * (((seed = (seed * 16807) % 2147483647) / 2147483647) * 2 - 1));
-const pcm16 = (x) => Int16Array.from(x, (v) => Math.round(Math.max(-1, Math.min(1, v)) * 32767));
+const pcm16 = (x: Float32Array) => Int16Array.from(x, (v) => Math.round(Math.max(-1, Math.min(1, v)) * 32767));
 /** Where a connection's audio is in the input: [from, to) in samples, or null when it is not one piece of it. */
 function piece(input, audio) {
   for (let at = 0; audio.length && at + audio.length <= input.length; at += 512) {
@@ -775,7 +773,7 @@ async function cloud(audio, fakeOptions = {}, { close = false } = {}) {
   const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
   const transcriber = new Transcriber(conf);
   await transcriber.select('elevenlabs-scribe-v2');
-  const sent = [];
+  const sent: any[] = [];
   const session = new Session({ send: (m) => sent.push(m), transcriber, config: conf });
   for (let i = 0; i < audio.length; i += 1600) {
     session.audio(audio.subarray(i, i + 1600));
@@ -835,7 +833,7 @@ t.check('UNIT-CLOUD-01', 'a wrong key: the model is in error, saying ElevenLabs 
 {
   const keepKey = config.elevenlabs.apiKey;
   config.elevenlabs.apiKey = 'stand-in'; // makes the cloud model count as installed; the engine is the stand-in below
-  let crash = /** @type {(() => void) | null} */ (null); // set when the stand-in loads
+  let crash = null as (() => void) | null; // set when the stand-in loads
   let loads = 0;
   let failLoads = 0;
   class Flaky extends Transcriber {
@@ -854,17 +852,16 @@ t.check('UNIT-CLOUD-01', 'a wrong key: the model is in error, saying ElevenLabs 
   }
   const tr = new Flaky(structuredClone(config));
   tr.retryMs = 300;
-  /** @type {string[]} */
-  const states = [];
+  const states: string[] = [];
   tr.on('state', (s) => states.push(s.state));
   const logError = console.error;
   console.error = () => {};
   try {
     await tr.select('elevenlabs-scribe-v2');
-    for (let k = 0; k < 3; k++) { /** @type {() => void} */ (crash)(); await tr.queue; }
+    for (let k = 0; k < 3; k++) { (crash as () => void)(); await tr.queue; }
     const restarted = tr.state === 'ready' && loads === 4;
     failLoads = 1;
-    /** @type {() => void} */ (crash)();
+    (crash as () => void)();
     const gaveUp = { state: tr.state, message: tr.message, loads };
     states.length = 0;
     await sleep(450); // first retry: its load fails
@@ -878,7 +875,7 @@ t.check('UNIT-CLOUD-01', 'a wrong key: the model is in error, saying ElevenLabs 
     t.check('UNIT-ENG-01', 'after giving up it is tried again on its own; a failed retry keeps the error shown (no "loading"), the next one brings it back',
       afterFailed.state === 'error' && afterFailed.loads === 5 && afterFailed.states.every((s) => s === 'error') && loads === 6 && tr.state === 'ready' && text === 'merge',
       `after the 1st retry ${afterFailed.state} (${afterFailed.states.join(', ') || 'no state change'}); after the 2nd ${tr.state}, ${loads} loads, text ${text}`);
-    /** @type {() => void} */ (crash)(); // within a minute of the last crashes: gives up straight away
+    (crash as () => void)(); // within a minute of the last crashes: gives up straight away
     const before = loads;
     tr.kill();
     await sleep(450);
@@ -916,7 +913,7 @@ http.createServer((req, res) => {
       return { text: JSON.parse(res.text).text };
     }
   }
-  const engines = [];
+  const engines: any[] = [];
   class Restarting extends Transcriber {
     createEngine(model, onCrash) {
       const engine = new FakeModelProcess({ onCrash });
@@ -952,10 +949,9 @@ http.createServer((req, res) => {
 {
   const keepKey = config.elevenlabs.apiKey;
   config.elevenlabs.apiKey = 'stand-in';
-  /** @type {Model} */
-  const standIn = { id: 'stand-in-model', label: 'Stand-in model', tier: 'other', reason: 'a stand-in', engine: 'elevenlabs', size: 'cloud', notes: 'a stand-in', cloud: true, elevenlabs: { modelId: 'stand-in' } };
+  const standIn: Model = { id: 'stand-in-model', label: 'Stand-in model', tier: 'other', reason: 'a stand-in', engine: 'elevenlabs', size: 'cloud', notes: 'a stand-in', cloud: true, elevenlabs: { modelId: 'stand-in' } };
   MODELS.push(standIn);
-  const log = [];
+  const log: string[] = [];
   let crash = false;
   class Switching extends Transcriber {
     createEngine(model, onCrash) {
@@ -1026,10 +1022,10 @@ http.createServer((req, res) => {
 
   // transcribe.cpp: "auto" (the GPU) first; the CPU only when that load throws.
   const fakeModel = (backend, deviceType) => ({ backend, device: { deviceType, name: backend }, capabilities: { languages: ['ro'] }, supports: () => false, dispose() {}, transcribe: async () => ({ text: backend }) });
-  const tries = [];
+  const tries: string[] = [];
   const onGpu = new TranscribeCppEngine({ modelPath: 'x.gguf', language: 'ro', load: async (file, opts) => (tries.push(opts.backend), fakeModel('Metal', 'gpu')) });
   await onGpu.load();
-  const failing = [];
+  const failing: string[] = [];
   const onCpu = new TranscribeCppEngine({
     modelPath: 'x.gguf',
     language: 'ro',
@@ -1058,10 +1054,8 @@ http.createServer((req, res) => res.end(JSON.stringify({ status: 'ok' }))).liste
 `);
   class FakeSidecar extends SidecarEngine {
     cpuFallback = true;
-    /** @type {string | undefined} */
-    bin;
-    /** @type {string[]} */
-    commands = [];
+    bin: string | undefined;
+    commands: string[] = [];
     command(port, { cpu }) {
       this.commands.push(cpu ? 'cpu' : 'gpu');
       return { name: 'fake', bin: this.bin ?? process.execPath, args: [script, String(port), cpu ? 'cpu' : 'gpu'], missing: 'fake program missing' };
@@ -1081,24 +1075,24 @@ http.createServer((req, res) => res.end(JSON.stringify({ status: 'ok' }))).liste
   // The real engines ask for the GPU first and the CPU on the retry.
   const whisper = new WhisperCppEngine({ bin: 'whisper-server', modelPath: 'm.bin', port: 1, language: 'ro', threads: 4 });
   const nemo = new PythonNemoEngine({ id: 'jackrabbit-110m-ro', modelDir: 'd', nemo: { model: 'a.nemo', decoder: 'ctc' }, threads: 4 });
-  const nemoDevices = /** @type {string[]} */ (fs.readFileSync(path.join(ROOT, 'python', 'nemo_server.py'), 'utf8').match(/"--device", choices=\[([^\]]*)\]/)?.[1].match(/[\w-]+/g) ?? []);
+  const nemoDevices = fs.readFileSync(path.join(ROOT, 'python', 'nemo_server.py'), 'utf8').match(/"--device", choices=\[([^\]]*)\]/)?.[1].match(/[\w-]+/g) ?? [] as string[];
   const arg = (cmd, flag) => cmd.args[cmd.args.indexOf(flag) + 1];
   const [wGpu, wCpu, nGpu, nCpu] = [whisper.command(1, { cpu: false }), whisper.command(1, { cpu: true }), nemo.command(1, { cpu: false }), nemo.command(1, { cpu: true })];
   t.check('UNIT-GPU-05', 'whisper-server gets --no-gpu only on the CPU retry; the NeMo server gets --device auto, then cpu (choices it accepts), with MPS fallback on',
     whisper.cpuFallback && nemo.cpuFallback && !wGpu.args.includes('--no-gpu') && wCpu.args.includes('--no-gpu')
       && arg(nGpu, '--device') === 'auto' && arg(nCpu, '--device') === 'cpu' && ['auto', 'cpu'].every((d) => nemoDevices.includes(d))
       && nGpu.env?.PYTORCH_ENABLE_MPS_FALLBACK === '1'
-      && /** @type {[line: string, want: string | null][]} */ ([['whisper_backend_init_gpu: using MTL0 backend', 'GPU (Metal)'], ['whisper_backend_init_gpu: using Metal backend', 'GPU (Metal)'],
+      && ([['whisper_backend_init_gpu: using MTL0 backend', 'GPU (Metal)'], ['whisper_backend_init_gpu: using Metal backend', 'GPU (Metal)'],
         ['whisper_backend_init_gpu: using CUDA0 backend', 'GPU (CUDA)'], ['whisper_backend_init_gpu: using Vulkan0 backend', 'GPU (Vulkan)'],
         ['whisper_backend_init_gpu: no GPU found', 'CPU'], ['whisper_backend_init_gpu: failed to initialize MTL0 backend', 'CPU'],
-        ['whisper_backend_init: using BLAS backend', null], ['whisper_init_with_params_no_state: use gpu    = 1', null]])
+        ['whisper_backend_init: using BLAS backend', null], ['whisper_init_with_params_no_state: use gpu    = 1', null]] as [line: string, want: string | null][])
         .every(([line, want]) => (whisper.deviceFromLog(line) ?? null) === want),
     `whisper ${wCpu.args.slice(-1)}; nemo --device ${arg(nGpu, '--device')} / ${arg(nCpu, '--device')}; server accepts ${nemoDevices.join('/')}`);
 
   // transcribe.cpp mid-meeting: the GPU fails on a sentence. The CPU is tried on the same audio: if it works the GPU was
   // at fault and the model stays on the CPU; if it fails too, the audio was, and the model stays on the GPU.
   const midMeeting = async (cpuWorks) => {
-    const disposed = [];
+    const disposed: string[] = [];
     const model = (backend, type, fails) => ({ ...fakeModel(backend, type), dispose: () => disposed.push(backend), transcribe: async () => { if (fails) throw new Error(`stand-in: ${backend} failed`); return { text: backend }; } });
     const engine = new TranscribeCppEngine({ modelPath: 'x.gguf', language: 'ro', load: async (file, opts) => (opts.backend === 'cpu' ? model('CPU', 'cpu', !cpuWorks) : model('Metal', 'gpu', true)) });
     await engine.load();
@@ -1122,10 +1116,10 @@ http.createServer((req, res) => res.end(JSON.stringify({ status: 'ok' }))).liste
     }
   }
   const tr = new OnGpu(structuredClone(config));
-  const told = [];
+  const told: any[] = []; // the status messages
   tr.on('state', (s) => told.push(s));
   const logError = console.error;
-  const logged = [];
+  const logged: string[] = [];
   console.error = (...a) => logged.push(a.join(' '));
   try {
     await tr.select('elevenlabs-scribe-v2');
@@ -1271,22 +1265,14 @@ if (!silero) {
   // Session with a stand-in model: same words on both mics -> one copy; different words -> both.
   // text(n, seg): what the model "hears" in the n-th sentence, seg = { mic, start, end }. mics(sec): how many mics are
   // chosen at that moment (2 when m2 is given, more with `more`: the signals of mics 3…).
-  /**
-   * @param {Float32Array} m1
-   * @param {Float32Array | null} m2
-   * @param {(n: number, seg: any) => string} text
-   * @param {{ margin?: number, saveAudio?: boolean, more?: Float32Array[], mics?: (sec: number) => number }} [opts]
-   */
-  const run = async (m1, m2, text, { margin = 30, saveAudio = false, more = [], mics = () => 2 + more.length } = {}) => {
-    /** @type {any[]} */
-    const sent = [];
+  const run = async (m1: Float32Array, m2: Float32Array | null, text: (n: number, seg: any) => string, { margin = 30, saveAudio = false, more = [], mics = () => 2 + more.length }: { margin?: number, saveAudio?: boolean, more?: Float32Array[], mics?: (sec: number) => number } = {}) => {
+    const sent: any[] = [];
     const out = scratch('session');
     const conf = { ...structuredClone(config), transcriptsDir: out, crosstalkDb: margin };
     let calls = 0;
-    /** @type {Session | null} */
-    let session = null;
+    let session: Session | null = null;
     const stub = { supportsPrompt: false, avgMs: 10, busy: false, tryTranscribe: () => null,
-      transcribe: async () => ({ text: text(++calls, [.../** @type {Session} */ (session).transcribing.values()].at(-1)), model: 'stub', ms: 1 }) }; // called once the session exists
+      transcribe: async () => ({ text: text(++calls, [...(session as Session).transcribing.values()].at(-1)), model: 'stub', ms: 1 }) }; // called once the session exists
     session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
     session.setOptions({ saveAudio });
     const signals = [m1, m2, ...more];
@@ -1299,7 +1285,7 @@ if (!silero) {
       }
       const count = mics(i / SR);
       const frame = new Float32Array(count * len);
-      signals.slice(0, count).forEach((m, k) => frame.set(/** @type {Float32Array} */ (m).subarray(i, i + len), k * len)); // count mics have a signal
+      signals.slice(0, count).forEach((m, k) => frame.set((m as Float32Array).subarray(i, i + len), k * len)); // count mics have a signal
       session.audio(frame, count);
     }
     session.flush(); // Stop: finish what is being said, then the connection closes
@@ -1358,8 +1344,8 @@ if (!silero) {
       transcribe: async () => ({ text: 'munții carpați frumoși astăzi', model: 'stub', ms: 1 }) };
     const [m1, m2] = twoMics(concat(silence(5), A), silence(5 + A.length / SR), { bleedDb: 6, lagMs: 150, gain2Db: 12, noise2: -50 });
     const cut = 5 * SR;
-    const connect = async (from, to, resume) => {
-      const sent = [];
+    const connect = async (from: number, to: number, resume?: any) => {
+      const sent: any[] = [];
       const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
       session.setOptions({ saveAudio: true });
       if (resume) session.resume(resume, []);
@@ -1393,15 +1379,14 @@ if (!silero) {
   // copy (D5, #6). The stand-in model answers between two chunks, as a fast model in real time; `at` is how many
   // seconds of audio were sent when each line arrived. A says one sentence; its words are 1.5–7.5 s.
   const timed = async (m1, m2, text, { margin = config.crosstalkDb, vad = {} } = {}) => {
-    const sent = [];
+    const sent: any[] = [];
     const out = scratch('wait');
     const conf = { ...structuredClone(config), transcriptsDir: out, crosstalkDb: margin };
     Object.assign(conf.vad, vad);
-    /** @type {Session | null} */
-    let session = null;
+    let session: Session | null = null;
     let at = 0;
     const stub = { supportsPrompt: false, avgMs: 10, tryTranscribe: () => null,
-      transcribe: async () => ({ text: text([.../** @type {Session} */ (session).transcribing.values()].at(-1)), model: 'stub', ms: 1 }) }; // called once the session exists
+      transcribe: async () => ({ text: text([...(session as Session).transcribing.values()].at(-1)), model: 'stub', ms: 1 }) }; // called once the session exists
     session = new Session({ send: (m) => sent.push({ ...m, at }), transcriber: stub, config: conf });
     for (let i = 0; i + 1600 <= Math.min(m1.length, m2.length); i += 1600) {
       const frame = new Float32Array(3200);
@@ -1446,7 +1431,7 @@ if (!silero) {
   const spans = (r) => r.finals.map((f) => `mic${f.mic + 1} ${f.start.toFixed(1)}–${f.end.toFixed(1)} s: ${f.text}`).join(' | ');
   const [mic3, far1] = twoMics(lead(A), quietMic, { bleedDb: 12 });
   const [, far2] = twoMics(lead(A), quietMic, { bleedDb: 12, seed: 11 });
-  const lastWord = [1.5 + 5.45, 1.5 + 6]; // A's last word, in session seconds
+  const lastWord: [number, number] = [1.5 + 5.45, 1.5 + 6]; // A's last word, in session seconds
   s = await run(louder(far1, ...lastWord, 9), louder(far2, ...lastWord, 9), (n, seg) => (seg.mic === 2 ? SENTENCE : 'rare.'),
     { margin: config.crosstalkDb, more: [mic3] });
   t.check('UNIT-TAIL-01', 'three mics, only the person on mic 3 talks, mics 1 and 2 hear the last word 3 dB less clearly: no line on mics 1 and 2',
@@ -1544,7 +1529,7 @@ if (!silero) {
   const fresh = new SileroDetector({ model, threshold: 0.5, pool: own });
   const first = decide(fresh, lead(A));
   decide(fresh, B.subarray(0, 2 * SR)); // stops in the middle of B's sentence
-  const midSentence = /** @type {Vad} */ (fresh.vad).isDetected(); // not released yet
+  const midSentence = (fresh.vad as Vad).isDetected(); // not released yet
   const handle = fresh.vad;
   fresh.release();
   const again = new SileroDetector({ model, threshold: 0.5, pool: own });
@@ -1560,7 +1545,7 @@ if (!silero) {
   let count = vadCounter();
   const heard = new Set(); // what each connection's detectors decided, as the page sees it
   for (let k = 0; k < 20; k++) {
-    const sent = [];
+    const sent: any[] = [];
     const session = new Session({ send: (m) => sent.push(m), transcriber: stub, config: conf });
     stream(session, talk, 0, 1);
     session.close();
@@ -1590,7 +1575,7 @@ if (!silero) {
   }
   await turns();
   const last = values.at(-1);
-  const applied = tuned.mics.every(({ segmenter: { detector } }) => /** @type {SileroDetector} */ (detector).threshold === last && /** @type {Vad} */ (/** @type {SileroDetector} */ (detector).vad).config.sileroVad.threshold === last);
+  const applied = tuned.mics.every(({ segmenter: { detector } }) => (detector as SileroDetector).threshold === last && ((detector as SileroDetector).vad as Vad).config.sileroVad.threshold === last);
   const alive = count.alive();
   const grown = Math.round((process.memoryUsage().rss - rss0) / 1048576);
   tuned.close();
@@ -1605,11 +1590,10 @@ if (!silero) {
   closing.setOptions({ saveAudio: true });
   stream(closing, talk, 0, 2);
   closing.close();
-  const given = closing.mics.every(({ segmenter }) => /** @type {SileroDetector} */ (segmenter.detector).vad === null);
+  const given = closing.mics.every(({ segmenter }) => (segmenter.detector as SileroDetector).vad === null);
   const wavs = () => fs.readdirSync(out).filter((f) => f.endsWith('.wav')).sort().map((f) => (fs.statSync(path.join(out, f)).size - 44) / (2 * SR));
   const before = wavs();
-  /** @type {any} */
-  let thrown = null;
+  let thrown: any = null;
   try {
     stream(closing, talk, 2, 3);
   } catch (err) {
@@ -1673,7 +1657,7 @@ if (!silero) {
   const info = await machineInfo();
   const text = JSON.stringify(info);
   t.check('UNIT-BENCH-05', 'machine info has the OS, CPU, memory, GPU list, compute devices, Node and app version, and no user or host name',
-    info.os.platform === process.platform && info.cpu.cores > 0 && /** @type {number} */ (info.ramGb) > 0 && Array.isArray(info.gpus) && Array.isArray(info.compute) && info.node === process.version && typeof info.app.version === 'string'
+    info.os.platform === process.platform && info.cpu.cores > 0 && (info.ramGb as number) > 0 && Array.isArray(info.gpus) && Array.isArray(info.compute) && info.node === process.version && typeof info.app.version === 'string'
       && !text.includes(os.hostname()) && !text.includes(os.userInfo().username) && describeMachine(info).includes(`${info.ramGb} GB`),
     describeMachine(info));
 
@@ -1681,8 +1665,7 @@ if (!silero) {
   const set = scratch('bench');
   fs.mkdirSync(path.join(set, 'test'));
   const fixture = loadWav(FIXTURE);
-  /** @type {[from: number, to: number, ref: string][]} */
-  const cuts = [[0, 6.8, 'Bună ziua dragi colegi, astăzi vorbim despre munții noștri.'], [7.3, 11.2, 'Vremea este frumoasă la munte.'], [11.2, 15.9, 'Cabana avea ferestre mari spre vale.']];
+  const cuts: [from: number, to: number, ref: string][] = [[0, 6.8, 'Bună ziua dragi colegi, astăzi vorbim despre munții noștri.'], [7.3, 11.2, 'Vremea este frumoasă la munte.'], [11.2, 15.9, 'Cabana avea ferestre mari spre vale.']];
   const rows = cuts.map(([from, to, ref], i) => {
     const samples = fixture.subarray(Math.round(from * SR), Math.round(to * SR));
     const file = `clip-${i}.wav`;
@@ -1691,8 +1674,7 @@ if (!silero) {
   });
   fs.writeFileSync(path.join(set, 'test.tsv'), rows.map((r, i) => [i, r.file, r.ref, r.ref.toLowerCase(), '', r.samples.length, 'FEMALE'].join('\t')).join('\n'));
   const clips = loadClips(set);
-  /** @type {{ samples: Float32Array, ref: string } | null} */
-  let current = null;
+  let current: { samples: Float32Array, ref: string } | null = null;
   const load = (c) => {
     current = { samples: clipSamples(c, set), ref: c.ref };
     return current.samples;
@@ -1702,7 +1684,7 @@ if (!silero) {
   // silence or noise.
   let loadFails = false;
   let guessNo = 0;
-  const isPrefix = (samples) => current && samples.length < current.samples.length && samples.subarray(0, 200).every((v, i) => v === /** @type {{ samples: Float32Array }} */ (current).samples[i]);
+  const isPrefix = (samples) => current && samples.length < current.samples.length && samples.subarray(0, 200).every((v, i) => v === (current as { samples: Float32Array }).samples[i]);
   class Bench extends Transcriber {
     createEngine() {
       return {
@@ -1715,7 +1697,7 @@ if (!silero) {
           const whole = rows.find((r) => r.samples.length === samples.length || r.samples.length + 1072 === samples.length); // the room adds 67 ms
           if (whole) return { text: whole.ref };
           if (isPrefix(samples)) {
-            const cur = /** @type {{ samples: Float32Array, ref: string }} */ (current); // isPrefix() checked it
+            const cur = current as { samples: Float32Array, ref: string }; // isPrefix() checked it
             const words = cur.ref.split(' ');
             const out = words.slice(0, Math.round((words.length * samples.length) / cur.samples.length));
             if (out.length) out[out.length - 1] = `xx${guessNo++}`; // never the same wrong guess twice
@@ -1729,7 +1711,7 @@ if (!silero) {
   }
   const keepKey = config.elevenlabs.apiKey;
   config.elevenlabs.apiKey = 'stand-in'; // makes the cloud model count as installed; the engine is the stand-in above
-  const model = /** @type {Model} */ (findModel('elevenlabs-scribe-v2')); // in the catalogue
+  const model = findModel('elevenlabs-scribe-v2') as Model; // in the catalogue
   const logError = console.error;
   console.error = () => {};
   let full;
@@ -1748,7 +1730,7 @@ if (!silero) {
   const st = full.stages;
   t.check('UNIT-BENCH-06', 'a whole run on a stand-in: every stage has its numbers; a model that writes the reference scores 0 % WER, on every condition and on the joined long sentences; silence gets no words',
     !full.error && !full.truncated && full.load.device === 'CPU' && st.accuracy.done === 3 && st.accuracy.werStrict === 0 && st.accuracy.speed > 0 && Object.keys(st.accuracy.perClip).length === 3
-      && Object.keys(st.robustness.conditions).length === CONDITIONS.length + 1 && Object.values(st.robustness.conditions).every((c) => c.werPlain === 0)
+      && Object.keys(st.robustness.conditions).length === CONDITIONS.length + 1 && Object.values(st.robustness.conditions).every((c: any) => c.werPlain === 0)
       && st.length.lengths.length >= 1 && st.length.lengths.every((l) => l.werPlain === 0 && l.msPerSentence >= 0) && st.silence.inputs.length === SILENCE_INPUTS.length && st.silence.hallucinated === 0,
     `${full.error ?? ''} accuracy ${JSON.stringify({ done: st.accuracy?.done, wer: st.accuracy?.werStrict })}, robustness ${Object.keys(st.robustness?.conditions ?? {}).join('/')}, lengths ${st.length?.lengths.map((l) => l.target).join('/')}, silence ${st.silence?.hallucinated}`);
   const lv = st.live;

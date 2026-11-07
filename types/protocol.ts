@@ -3,7 +3,7 @@
 // every send() site and the page's switch, and read against the PROT-* tests.
 //
 // Binary frames (page → server): Float32 PCM at 16 kHz. On /ws?mics each frame starts with a Uint32 mic count, then
-// each mic's samples in turn, all from the same moment; other clients (test/stream-wav.js) send plain mono audio.
+// each mic's samples in turn, all from the same moment; other clients (test/stream-wav.ts) send plain mono audio.
 import type { Tuning, TuningPatch, TuningRanges } from './config.ts';
 import type { EngineKind, Tier } from './model.ts';
 import type { TranscriberStatus } from './engine.ts';

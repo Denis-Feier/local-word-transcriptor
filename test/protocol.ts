@@ -1,27 +1,22 @@
 // The server as the page (and other clients) use it: static files, WebSocket messages, settings, files,
 // mic layouts, broken input, startup and shutdown. Starts its own servers (Parakeet 110M by default).
 //
-//   node test/protocol.js
+//   node test/protocol.ts
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import WebSocket from 'ws';
-import { ROOT, SR, startServer, speakers, sleep, suite, fakeElevenLabs } from './helpers.js';
+import { ROOT, SR, startServer, speakers, sleep, suite, fakeElevenLabs } from './helpers.ts';
 import { fmtTime } from '../lib/session.ts';
-/** @import { TestServer } from '../types/test.ts' */
+import type { TestServer } from '../types/test.ts';
 
 const t = suite('protocol');
 const { A, B } = speakers();
 
-/**
- * A page-like client: framed audio (/ws?mics) unless mono, collects every message.
- * @param {TestServer} server
- * @param {{ mono?: boolean }} [opts]
- */
-async function connect(server, { mono = false } = {}) {
+/** A page-like client: framed audio (/ws?mics) unless mono, collects every message. */
+async function connect(server: TestServer, { mono = false }: { mono?: boolean } = {}) {
   const ws = new WebSocket(server.ws(mono ? '' : '?mics'));
-  /** @type {any[]} */
-  const msgs = []; // the checks below read whatever fields they care about, also ones a message must not have
+  const msgs: any[] = []; // the checks below read whatever fields they care about, also ones a message must not have
   ws.on('message', (d) => msgs.push(JSON.parse(d.toString())));
   await new Promise((resolve, reject) => {
     ws.once('open', resolve);
@@ -30,17 +25,12 @@ async function connect(server, { mono = false } = {}) {
   return {
     ws,
     msgs,
-    /** @param {object} msg  what the page would send, or what it must not */
-    json: (msg) => ws.send(JSON.stringify(msg)),
-    /**
-     * Send `seconds` of audio, one source per mic from its start (null = silence), faster than real time.
-     * @param {(Float32Array | null)[]} sources
-     * @param {number} seconds
-     */
-    async audio(sources, seconds) {
+    json: (msg: object) => ws.send(JSON.stringify(msg)),
+    /** Send `seconds` of audio, one source per mic from its start (null = silence), faster than real time. */
+    async audio(sources: (Float32Array | null)[], seconds: number) {
       for (let i = 0, at = 0; i < seconds * 10; i++) {
         const n = 1600;
-        if (mono) ws.send(/** @type {Float32Array} */ (sources[0]).slice(at, at + n).buffer); // mono: one real source
+        if (mono) ws.send((sources[0] as Float32Array).slice(at, at + n).buffer); // mono: one real source
         else {
           const frame = new Float32Array(1 + sources.length * n);
           new Uint32Array(frame.buffer, 0, 1)[0] = sources.length;
@@ -52,9 +42,8 @@ async function connect(server, { mono = false } = {}) {
       }
     },
     finals: () => msgs.filter((m) => m.type === 'final' && m.text),
-    /** @param {string} type */
-    last: (type) => msgs.filter((m) => m.type === type).at(-1),
-    close: () => /** @type {Promise<void>} */ (new Promise((r) => (ws.readyState === WebSocket.CLOSED ? r() : (ws.once('close', /** @type {() => void} */ (r)), ws.close())))),
+    last: (type: string) => msgs.filter((m) => m.type === type).at(-1),
+    close: () => new Promise((r) => (ws.readyState === WebSocket.CLOSED ? r() : (ws.once('close', r as () => void), ws.close()))) as Promise<void>,
   };
 }
 
@@ -74,7 +63,7 @@ try {
   t.check('PROT-STATIC-03', 'unknown paths and non-GET requests get 404', missing.status === 404 && post.status === 404);
   // What the server's memory is made of, for the stress tests (#48): only with DEBUG, which every test server has.
   const memory = await fetch(`${server.url}/debug/memory`);
-  const mem = /** @type {Record<string, number>} */ (memory.status === 200 ? await memory.json() : {});
+  const mem = (memory.status === 200 ? await memory.json() : {}) as Record<string, number>;
   t.check('PROT-MEM-01', 'with DEBUG, /debug/memory says what the server\'s memory is made of, in MB: all of it, V8\'s heap, the memory outside it',
     ['rss', 'heapTotal', 'heapUsed', 'external', 'arrayBuffers'].every((k) => Number.isInteger(mem[k]) && mem[k] >= 0) && mem.heapUsed <= mem.heapTotal && mem.heapTotal < mem.rss,
     `${memory.status} ${JSON.stringify(mem)}`);
@@ -121,11 +110,7 @@ try {
   await c.close();
 
   // ---------- only the app's own page may connect ----------
-  /**
-   * @param {string} origin
-   * @returns {Promise<string>}
-   */
-  const tryOrigin = (origin) => new Promise((resolve) => {
+  const tryOrigin = (origin: string): Promise<string> => new Promise((resolve) => {
     const ws = new WebSocket(server.ws('?mics'), { origin });
     ws.once('open', () => (ws.close(), resolve('open')));
     ws.once('error', (err) => resolve(err.message));
@@ -207,7 +192,7 @@ if (process.platform === 'win32') {
     await c.audio([A], 4); // mid-sentence, no Stop
     await sleep(300);
     const files = () => (fs.existsSync(s2.transcripts) ? fs.readdirSync(s2.transcripts).filter((f) => f.endsWith('.txt')) : []);
-    process.kill(/** @type {number} */ (s2.pid), 'SIGINT'); // a started server has a pid
+    process.kill(s2.pid as number, 'SIGINT'); // a started server has a pid
     await waitFor(() => files().length && fs.readFileSync(path.join(s2.transcripts, files()[0]), 'utf8').length > 10, 10000);
     const text = files().length ? fs.readFileSync(path.join(s2.transcripts, files()[0]), 'utf8') : '';
     t.check('PROT-RUN-02', 'stopping the server (Ctrl+C) saves the sentence being spoken', text.length > 10, JSON.stringify(text.slice(0, 60)));
@@ -282,8 +267,7 @@ if (process.platform === 'win32') {
 
 // The model choice is remembered: a server restarted without MODEL loads the saved one.
 const s3 = await startServer();
-/** @type {string | null} */
-let savedSettings = null;
+let savedSettings: string | null = null;
 try {
   const c = await connect(s3);
   c.json({ type: 'select', id: 'orukeet' });
@@ -295,7 +279,7 @@ try {
 } finally {
   await s3.stop();
 }
-const s4 = await startServer({ model: null, env: { SETTINGS_FILE: /** @type {string} */ (savedSettings) } }); // set above
+const s4 = await startServer({ model: null, env: { SETTINGS_FILE: savedSettings as string } }); // set above
 try {
   const c = await connect(s4);
   await sleep(300);
@@ -303,7 +287,7 @@ try {
   await c.close();
 } finally {
   await s4.stop();
-  fs.rmSync(/** @type {string} */ (savedSettings), { force: true });
+  fs.rmSync(savedSettings as string, { force: true });
 }
 
 // ---------- the ElevenLabs cloud model, against the stand-in (never the real service, TESTING.md §2) ----------
@@ -331,11 +315,7 @@ try {
   await fake.close();
 }
 
-/**
- * @param {() => unknown} cond
- * @param {number} [ms]
- */
-async function waitFor(cond, ms = 15000) {
+async function waitFor(cond: () => unknown, ms: number = 15000) {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
     if (cond()) return true;

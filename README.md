@@ -40,7 +40,7 @@ Then update the user manual, which the installers and the release include: in Cl
 what changed for users since the last manual, rewrites what is needed, retakes the screenshots and rebuilds the
 PDFs (by hand: edit `docs/manual/manual.*.html`, then `npm run manual`). `npm test` fails (`STATIC-05`) while the
 manual is built for an older version.
-Each build first runs `test/smoke.js`, which transcribes a Romanian test clip with the speech engine on that
+Each build first runs `test/smoke.ts`, which transcribes a Romanian test clip with the speech engine on that
 system. To try the app from source: `npm run app`.
 
 ## Quick start (developer setup)
@@ -393,8 +393,8 @@ where macOS decides. In Docker there is no GPU, so everything runs on the CPU th
 | `desktop/main.ts` | The desktop app (Electron): starts the server in the background, opens its page, sends the caption window to the projector, data folders per user |
 | `docs/manual/` | The user manual: `manual.en.html` / `manual.ro.html` (the text), `manual.css`, `img/` (screenshots) and the PDFs built from them |
 | `scripts/manual.ts` | Builds the manual (`npm run manual`): screenshots of the page with the UI test's fake microphones, then a PDF per language; `--pdf-only` skips the screenshots |
-| `test/smoke.js` | End-to-end check on any OS: server, automatic model download, transcription of `test/fixtures/ro.wav` (one mic and two) |
-| `test/run-all.js` | Runs the whole test plan (`TESTING.md`): logic, server, two-mic conversations, the page in Electron; `npm test` |
+| `test/smoke.ts` | End-to-end check on any OS: server, automatic model download, transcription of `test/fixtures/ro.wav` (one mic and two) |
+| `test/run-all.ts` | Runs the whole test plan (`TESTING.md`): logic, server, two-mic conversations, the page in Electron; `npm test` |
 | `.github/workflows/desktop.yml` | Builds and tests the Mac and Windows installers on GitHub; publishes them on version tags |
 
 Live guesses refresh every 0.5 s, or less often for slow models (twice the model's average inference time), so they never delay the final text.

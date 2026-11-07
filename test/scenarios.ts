@@ -2,26 +2,21 @@
 // sentences, never the other's, and never the same sentence twice. Speakers are cut from the fixture; with
 // --recordings two real recordings are used instead (they stay on this computer; never commit them).
 //
-//   node test/scenarios.js [--model canary-1b-v2] [--speed 2] [--long] [--only SCN-02]
-//   node test/scenarios.js --recordings transcripts/a.wav,transcripts/b.wav
+//   node test/scenarios.ts [--model canary-1b-v2] [--speed 2] [--long] [--only SCN-02]
+//   node test/scenarios.ts --recordings transcripts/a.wav,transcripts/b.wav
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { sharedWords, wordErrorRate } from '../lib/wer.ts';
-import { SR, startServer, streamWav, speakers, loadWav, saveWav, silence, concat, twoMics, scratch, suite } from './helpers.js';
-/** @import { StreamResult } from '../types/test.ts' */
+import { SR, startServer, streamWav, speakers, loadWav, saveWav, silence, concat, twoMics, scratch, suite } from './helpers.ts';
+import type { StreamResult } from '../types/test.ts';
 
-/** Who each mic must hear: a speaker, nobody (null), or either ('any'). @typedef {Record<string, 'A' | 'B' | null | 'any'>} Expect */
-/** @typedef {{ maxWer?: Record<string, number>, known?: boolean, compare?: boolean }} JudgeOptions */
+/** Who each mic must hear: a speaker, nobody (null), or either ('any'). */
+type Expect = Record<string, 'A' | 'B' | null | 'any'>;
+type JudgeOptions = { maxWer?: Record<string, number>, known?: boolean, compare?: boolean };
 
 const args = process.argv.slice(2);
-/**
- * @template T
- * @param {string} name
- * @param {T} fallback
- * @returns {string | T}
- */
-const option = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
+const option = <T>(name: string, fallback: T): string | T => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
 const model = option('--model', process.env.TEST_MODEL ?? 'parakeet-ro-110m');
 const speed = option('--speed', model.startsWith('whisper') || model.startsWith('jackrabbit') ? '2' : '4');
 const only = option('--only', null);
@@ -30,25 +25,17 @@ const t = suite(`scenarios (${model}${recordings ? ', real recordings' : ''})`);
 
 let { A, B } = speakers();
 if (recordings) [A, B] = recordings.split(',').map((f) => loadWav(f).subarray(0, 60 * SR));
-/** @param {Float32Array} x */
-const lead = (x) => concat(silence(1.5), x); // people start a moment after Start
-/** @param {Float32Array} x */
-const len = (x) => x.length / SR;
+const lead = (x: Float32Array) => concat(silence(1.5), x); // people start a moment after Start
+const len = (x: Float32Array) => x.length / SR;
 const dir = scratch('scenarios');
 const server = await startServer({ model });
 const pid = server.pid;
 const memory = () => Math.round(Number(execSync(`ps -o rss= -p ${pid}`).toString()) / 1024);
 
-/** @type {number[]} */
-const modelMs = []; // model time per sentence, for the performance line at the end (TESTING.md PERF-01)
+const modelMs: number[] = []; // model time per sentence, for the performance line at the end (TESTING.md PERF-01)
 
-/**
- * Stream two mic signals; returns sentences with mic numbers 1/2.
- * @param {string} name
- * @param {Float32Array} m1
- * @param {Float32Array} m2
- */
-async function two(name, m1, m2) {
+/** Stream two mic signals; returns sentences with mic numbers 1/2. */
+async function two(name: string, m1: Float32Array, m2: Float32Array) {
   const f1 = path.join(dir, `${name}-mic1.wav`);
   const f2 = path.join(dir, `${name}-mic2.wav`);
   saveWav(f1, m1);
@@ -60,8 +47,7 @@ async function two(name, m1, m2) {
 }
 
 // One-mic references: what the model writes for each speaker alone.
-/** @type {Record<string, string>} */
-const refs = {};
+const refs: Record<string, string> = {};
 for (const [name, x] of Object.entries({ A, B })) {
   const f = path.join(dir, `ref-${name}.wav`);
   saveWav(f, lead(x));
@@ -69,11 +55,8 @@ for (const [name, x] of Object.entries({ A, B })) {
 }
 console.log(`references: A ${refs.A.split(' ').length} words, B ${refs.B.split(' ').length} words\n`);
 
-/**
- * Whose words a sentence is; '?' when too short to tell (under three content words in common).
- * @param {string} text
- */
-function owner(text) {
+/** Whose words a sentence is; '?' when too short to tell (under three content words in common). */
+function owner(text: string) {
   const a = sharedWords(text, refs.A).count;
   const b = sharedWords(text, refs.B).count;
   return Math.max(a, b) < 3 || a === b ? '?' : a > b ? 'A' : 'B';
@@ -82,20 +65,14 @@ function owner(text) {
 /**
  * expect: { 1: 'A' | 'B' | null | 'any', 2: ... } — null: that mic must stay silent; 'any': either speaker.
  * maxWer: { 1: 0.25 } — the mic's text may differ from its speaker's one-mic reference at most this much.
- * @param {string} id
- * @param {string} title
- * @param {StreamResult} result
- * @param {Expect} expect
- * @param {JudgeOptions} [opts]
  */
-function judge(id, title, { finals, timedOut, seconds }, expect, { maxWer = {}, known = false, compare = true } = {}) {
+function judge(id: string, title: string, { finals, timedOut, seconds }: StreamResult, expect: Expect, { maxWer = {}, known = false, compare = true }: JudgeOptions = {}) {
   if (timedOut) return t.check(id, title, false, `timed out after ${seconds.toFixed(0)} s`, { known });
   const byMic = [1, 2].map((m) => finals.filter((f) => f.mic === m));
   const wrong = finals.filter((f) => expect[f.mic] !== 'any' && (expect[f.mic] === null || (owner(f.text) !== '?' && owner(f.text) !== expect[f.mic])));
   const both = byMic[0].filter((f) => byMic[1].some((g) => Math.min(f.end, g.end) - Math.max(f.start, g.start) > 0.5
     && sharedWords(f.text, g.text).count >= 2 && sharedWords(f.text, g.text).ratio > 0.5));
-  /** @type {Record<string, number>} */
-  const wer = {};
+  const wer: Record<string, number> = {};
   for (const m of [1, 2]) {
     const who = expect[m]; // null or 'any' name no reference
     if (compare && who && refs[who]) wer[m] = wordErrorRate(refs[who], byMic[m - 1].map((f) => f.text).join(' '));
@@ -113,8 +90,7 @@ function judge(id, title, { finals, timedOut, seconds }, expect, { maxWer = {}, 
   return ok;
 }
 
-/** @type {[id: string, title: string, run: () => Promise<StreamResult>, expect: Expect, opts?: JudgeOptions][]} */
-const scenarios = [
+const scenarios: [id: string, title: string, run: () => Promise<StreamResult>, expect: Expect, opts?: JudgeOptions][] = [
   ['SCN-01', 'turn-taking: A talks, then B answers (B on Bluetooth: 150 ms late, 6 dB louder)', () =>
     two('s1', ...twoMics(lead(concat(A, silence(1), silence(len(B)))), lead(concat(silence(len(A) + 1), B)), { bleedDb: 12, lagMs: 150, gain2Db: 6 })),
   { 1: 'A', 2: 'B' }, { maxWer: { 1: 0.25, 2: 0.25 } }],
@@ -146,12 +122,9 @@ for (const [id, title, run, expect, opts = {}] of scenarios) {
 
 if (args.includes('--long') && (!only || only === 'SCN-07')) {
   // ~10 minutes: X (mic 1) and Y (mic 2, Bluetooth) take turns of 6-9 s, a quarter of them overlapping by 2 s.
-  /** @type {number[]} */
-  const turns = [];
-  /** @type {[number, Float32Array][]} */
-  let x = [];
-  /** @type {[number, Float32Array][]} */
-  let y = [];
+  const turns: number[] = [];
+  let x: [number, Float32Array][] = [];
+  let y: [number, Float32Array][] = [];
   let tx = 0;
   for (let i = 0, at = 1.5; at < 600; i++) {
     const who = i % 2;
@@ -162,8 +135,7 @@ if (args.includes('--long') && (!only || only === 'SCN-07')) {
     at = start + len(clip) + 1;
     tx = Math.max(tx, at);
   }
-  /** @param {[number, Float32Array][]} parts */
-  const build = (parts) => {
+  const build = (parts: [number, Float32Array][]) => {
     const out = new Float32Array(Math.round(tx * SR));
     for (const [start, clip] of parts) out.set(clip.subarray(0, out.length - Math.round(start * SR)), Math.round(start * SR));
     return out;
@@ -178,8 +150,7 @@ if (args.includes('--long') && (!only || only === 'SCN-07')) {
 
 if (modelMs.length) {
   const ms = modelMs.sort((a, b) => a - b);
-  /** @param {number} p */
-  const at = (p) => ms[Math.floor(p * (ms.length - 1))];
+  const at = (p: number) => ms[Math.floor(p * (ms.length - 1))];
   console.log(`\nmodel time per sentence (${model}): median ${at(0.5)} ms, p90 ${at(0.9)} ms, max ${ms.at(-1)} ms over ${ms.length} sentences`);
 }
 await server.stop();

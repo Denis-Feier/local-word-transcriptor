@@ -158,7 +158,7 @@ const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 1 << 20, veri
 
 wss.on('connection', (ws, req) => {
   // The page connects to /ws?mics and prefixes every audio frame with its number of mics;
-  // other clients (test/stream-wav.js) send plain mono audio.
+  // other clients (test/stream-wav.ts) send plain mono audio.
   const framed = new URL(req.url as string, 'http://localhost').searchParams.has('mics');
   const send = (msg: ServerMessage) => {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));

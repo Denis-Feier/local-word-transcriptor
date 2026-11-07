@@ -383,6 +383,21 @@ entry, forked `server.ts` as the utility process, the server's log said `Parakee
 within a second, and the app quit on SIGTERM within a second. The `.js` mentions
 followed in README's file table, TESTING.md §7.1, `types/vendor.d.ts`'s comment and the user-manual skill.
 
+What happened in N7 (2026-11-07, `ts/3-n7`): the eleven test files (`test/*.js`, `test/ui/run.mjs`, `test/ui/stress.mjs`;
+`test/ui/preload.cjs` stays, D6), 264 tags. Too many to patch by hand, so a converter did them: `@import` to
+`import type`, one-line `@typedef`s to type aliases, `/** @type */` casts to `as` (a compound expression in its own
+parentheses, so `as` binds to all of it), parameter and return types from the `@param`/`@returns` of the block before
+each signature (functions, methods, arrows, object-literal arrows), `@template` to a type parameter; it ran until
+nothing changed, which reaches a cast inside a cast. Left for the hand: two multi-line `@typedef`s in `stress.ts`,
+one `@type` at the end of a doc line in `meeting.ts`, and `meeting.ts`'s arrays and `Room` fields, which JavaScript
+inferred from their later pushes and assignments and a `.ts` file does not (`const x = []` is `never[]` there), typed
+`any[]` where the module treats them as such and by shape where one is written beside them. A doc comment that had
+drifted off `streamWav` is back on it. `STATIC-01` parses the JavaScript files only (`node --check` cannot read
+`.ts`) and walks the `.ts` files too, for `STATIC-03`'s id scan; its detail says how many of each. `package.json`'s
+`test*` scripts, CI's smoke step, the runner's suite paths, the spawned tools (`stream-wav.ts`), the types' comments
+and the docs name the new files. The converter is a session script, not part of the repository: every file it wrote
+is in the diff.
+
 ## 7. Phase 4 — the page becomes `.ts`
 
 Branch `ts/4-web`. `public/*.js` move to `web/*.ts` (`git mv`, so history follows), keep `web/order.ts` as the one
@@ -465,6 +480,6 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 | Phase 3 N4 | `ts/3-n4` | done, awaiting merge | 2026-11-07 | the session and the server entry (`node server.ts`); full tier 176 / 1 / 5 / 0, the one failure the UI suite's teardown hang (TESTING.md §12), then the UI suite alone 60 / 0 / 0 / 0 |
 | Phase 3 N5 | `ts/3-n5` | done, awaiting merge | 2026-11-07 | the benchmark library, the scripts and the manual script; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-18-25-33_e30b57b/`); each script smoked |
 | Phase 3 N6 | `ts/3-n6` | done, awaiting merge | 2026-11-07 | `desktop/main.ts` is the app's `"main"`; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-18-31-03_8fe032c/`); the app started and quit once (`electron .` from source, `LT_TEST=1`) |
-| Phase 3 N7 | `ts/3-n7` | not started | | the tests |
+| Phase 3 N7 | `ts/3-n7` | done, awaiting merge | 2026-11-07 | the eleven test files; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-18-36-31_e42855e/`), run by `node test/run-all.ts`. **Phase 3 complete.** |
 | Phase 4 | `ts/4-web` | not started | | D2 confirmed? |
 | Phase 5 | `ts/5-tighten` | not started | | |

@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import WebSocket from 'ws';
 import { decodeWav } from '../lib/wav.ts';
-/** @import { FinalMessage, ServerMessage } from '../types/protocol.ts' */
+import type { FinalMessage, ServerMessage } from '../types/protocol.ts';
 
 const args = process.argv.slice(2);
 const file = args.find((a, i) => !a.startsWith('--') && !args[i - 1]?.startsWith('--'));
@@ -26,13 +26,7 @@ const modelIdx = args.indexOf('--model');
 const model = modelIdx >= 0 ? args[modelIdx + 1] : null;
 const expectIdx = args.indexOf('--expect');
 const expected = expectIdx >= 0 ? args[expectIdx + 1].toLowerCase() : null; // exit 1 unless the transcript contains it
-/**
- * @template T
- * @param {string} name
- * @param {T} fallback
- * @returns {string | T}
- */
-const option = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
+const option = <T>(name: string, fallback: T): string | T => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
 const mic2 = option('--mic2', null);
 const bleedDb = Number(option('--bleed', Infinity));
 const lagMs = Number(option('--lag', 0));
@@ -45,8 +39,7 @@ if (!file) {
   process.exit(1);
 }
 
-/** @param {string} path */
-function load(path) {
+function load(path: string) {
   const { sampleRate, samples } = decodeWav(fs.readFileSync(path));
   if (sampleRate !== 16000) {
     console.error(`Expected 16 kHz audio, got ${sampleRate} Hz. Convert with: afconvert -f WAVE -d LEI16@16000 -c 1 in.wav out.wav`);
@@ -65,7 +58,7 @@ const length = Math.max(samples.length, second?.length ?? 0) + lag + 16000 * 1.5
 const gain = 10 ** (-bleedDb / 20);
 const noise = Number.isFinite(bleedDb) ? () => (Math.random() * 2 - 1) * 0.002 : () => 0; // about -60 dBFS
 const mics = second
-  ? /** @type {[Float32Array, Float32Array, number, number][]} */ ([[samples, second, 0, 1], [second, samples, lag, gain2]]).map(([own, other, delay, volume]) => {
+  ? ([[samples, second, 0, 1], [second, samples, lag, gain2]] as [Float32Array, Float32Array, number, number][]).map(([own, other, delay, volume]) => {
     const out = new Float32Array(length);
     for (let i = 0; i < length - delay; i++) out[i + delay] = volume * ((own[i] ?? 0) + gain * (other[i] ?? 0) + noise());
     return out;
@@ -76,15 +69,12 @@ const ws = new WebSocket(url);
 const t0 = Date.now();
 const elapsed = () => `${((Date.now() - t0) / 1000).toFixed(2).padStart(6)}s`;
 let streaming = false;
-/** @type {Set<number>} */
-let outstanding = new Set();
+let outstanding: Set<number> = new Set();
 let doneSending = false;
-/** @type {FinalMessage[]} */
-const finals = [];
+const finals: FinalMessage[] = [];
 
 ws.on('message', (data) => {
-  /** @type {ServerMessage} */
-  const msg = JSON.parse(data.toString());
+  const msg: ServerMessage = JSON.parse(data.toString());
   if (msg.type === 'models' && model && msg.active !== model) {
     ws.send(JSON.stringify({ type: 'select', id: model }));
   } else if (msg.type === 'status') {
@@ -100,7 +90,7 @@ ws.on('message', (data) => {
     if (msg.text) {
       finals.push(msg);
       const who = second ? ` mic ${msg.mic + 1}` : '';
-      console.log(`${elapsed()} ✔ #${msg.id}${who} [${/** @type {number} */ (msg.start).toFixed(1)}–${/** @type {number} */ (msg.end).toFixed(1)}s] (${msg.ms} ms) ${msg.text}`); // a final with text has its times
+      console.log(`${elapsed()} ✔ #${msg.id}${who} [${(msg.start as number).toFixed(1)}–${(msg.end as number).toFixed(1)}s] (${msg.ms} ms) ${msg.text}`); // a final with text has its times
     }
     if (doneSending && outstanding.size === 0) finish();
   } else if (msg.type === 'error') {

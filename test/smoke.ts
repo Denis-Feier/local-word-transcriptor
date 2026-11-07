@@ -3,7 +3,7 @@
 // and requires the expected words in the transcript. Then streams it again as two mics, where the second mic only
 // hears the speaker from across the room, and requires every sentence on mic 1.
 //
-//   node test/smoke.js                          (SMOKE_MODEL=canary-1b-v2 to test another model)
+//   node test/smoke.ts                          (SMOKE_MODEL=canary-1b-v2 to test another model)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -12,16 +12,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-/** @param {number} ms */
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** @returns {Promise<number>} */
-function freePort() {
+function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const probe = net.createServer();
     probe.on('error', reject);
     probe.listen(0, '127.0.0.1', () => {
-      const { port } = /** @type {import('node:net').AddressInfo} */ (probe.address()); // listening on a TCP port
+      const { port } = probe.address() as import('node:net').AddressInfo; // listening on a TCP port
       probe.close(() => resolve(port));
     });
   });
@@ -50,21 +48,16 @@ try {
       await sleep(250);
     }
   }
-  /**
-   * @param {string[]} args
-   * @param {number} minutes
-   * @returns {Promise<number>}
-   */
-  const stream = (args, minutes) => {
-    const test = spawn(process.execPath, [path.join(ROOT, 'test', 'stream-wav.js'), path.join(ROOT, 'test', 'fixtures', 'ro.wav'), ...args], { env, stdio: 'inherit' });
+  const stream = (args: string[], minutes: number): Promise<number> => {
+    const test = spawn(process.execPath, [path.join(ROOT, 'test', 'stream-wav.ts'), path.join(ROOT, 'test', 'fixtures', 'ro.wav'), ...args], { env, stdio: 'inherit' });
     const timer = setTimeout(() => test.kill(), minutes * 60 * 1000);
-    return /** @type {Promise<number>} */ (new Promise((resolve) => test.on('exit', (c) => resolve(c ?? 1)))).finally(() => clearTimeout(timer));
+    return (new Promise((resolve) => test.on('exit', (c) => resolve(c ?? 1))) as Promise<number>).finally(() => clearTimeout(timer));
   };
   code = await stream(['--speed', '3', '--expect', 'munții'], 10); // includes the model download
   // Two mics: the second only hears the speaker from across the room (quieter, late like Bluetooth),
   // so every sentence must stay on mic 1.
   if (code === 0) code = await stream(['--mic2', 'silence', '--bleed', '12', '--lag', '150', '--only-mic', '1', '--speed', '3', '--expect', 'munții'], 2);
-} catch (/** @type {any} */ err) {
+} catch (err: any) {
   console.error(`✖ ${err.message}`);
 } finally {
   server.kill();

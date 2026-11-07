@@ -3,15 +3,15 @@
 //   soak: a long meeting recorded in real time through the page, on the default model
 //   net:  the server killed and restarted while the page records
 //
-//   npx electron test/ui/stress.mjs --group page|soak|net [--short] [--soak-minutes 120]   (ELECTRON_RUN_AS_NODE unset)
+//   npx electron test/ui/stress.ts --group page|soak|net [--short] [--soak-minutes 120]   (ELECTRON_RUN_AS_NODE unset)
 import { app, BrowserWindow, session } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../../lib/config.ts';
 import { MODELS, isInstalled, isAvailable } from '../../lib/models.ts';
 import { TUNING, tuningFrom } from '../../lib/tuning.ts';
-import { ROOT, SR, fakeServer, freePort, outOfPlace, saveWav, scratch, serverMemory, silence, sleep, startServer, suite } from '../helpers.js';
-import { SCRIPTS, Room, contentWords, judge, loopOffset, loopTruth, meeting, memoryCheck, quantile, table, voices, windows } from '../meeting.js';
+import { ROOT, SR, fakeServer, freePort, outOfPlace, saveWav, scratch, serverMemory, silence, sleep, startServer, suite } from '../helpers.ts';
+import { SCRIPTS, Room, contentWords, judge, loopOffset, loopTruth, meeting, memoryCheck, quantile, table, voices, windows } from '../meeting.ts';
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -32,7 +32,7 @@ app.on('window-all-closed', () => {}); // closing the test's windows must not qu
 
 // ---------- the page ----------
 
-const pageErrors = [];
+const pageErrors: string[] = [];
 function newWindow({ loop = false, width = 1100, height = 900 } = {}) {
   const w = new BrowserWindow({
     width,
@@ -131,7 +131,7 @@ function speakFor(m) {
 /** n lines of a two-mic meeting from line `from` on, ~4.3 s each, a quarter overlapping the line before. */
 function fakeLines(from, n) {
   const bank = fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'meeting-ro.txt'), 'utf8').split('\n').filter((l) => l && !l.startsWith('#') && contentWords(l) >= 3);
-  const out = [];
+  const out: { id: number; mic: number; start: number; end: number; text: string }[] = [];
   let end = 0;
   for (let i = 0; i < from + n; i++) {
     const text = bank[(i * 7) % bank.length];
@@ -178,7 +178,7 @@ async function pageGroup() {
 
     // PAGE-01, 02: the lines of a long meeting, in batches of 500 to see whether each costs more as the page fills.
     const all = fakeLines(0, N);
-    const batches = [];
+    const batches: number[] = [];
     for (let b = 0; b < N; b += 500) {
       const before = await dt.metrics();
       await feed(all.slice(b, b + 500));
@@ -187,7 +187,7 @@ async function pageGroup() {
     }
     const longest = Math.max(0, ...(await js(win, 'window.__long')));
     t.check('STRESS-PAGE-01', `${N} lines with their live guesses: each message costs no more at the end than at the start (≤ 2×), no task over 200 ms`,
-      batches.at(-1) <= 2 * batches[0] && longest <= 200, `main-thread time per message: ${batches.map((x) => p(x, 2)).join(', ')} ms; longest task ${p(longest, 0)} ms`);
+      (batches.at(-1) as number) <= 2 * batches[0] && longest <= 200, `main-thread time per message: ${batches.map((x) => p(x, 2)).join(', ')} ms; longest task ${p(longest, 0)} ms`);
     const dom = await js(win, `[...document.querySelectorAll('#transcript .line')].map((l) => ({ text: l.querySelector('.text').textContent, time: l.querySelector('time').textContent, overlap: l.classList.contains('overlap'), mic: l.dataset.mic, partial: l.classList.contains('partial') }))`);
     const expectOverlap = all.map((l) => all.some((o) => o.mic !== l.mic && Math.min(l.end, o.end) - Math.max(l.start, o.start) >= 0.5));
     const inOrder = dom.length === N && dom.every((d, i) => d.text === all[i].text && !d.partial && d.mic === String(all[i].mic + 1));
@@ -227,7 +227,7 @@ async function pageGroup() {
     await js(win, watch);
     await js(captions, watch);
     const probes = fakeLines(N + 350, 5).map((l, i) => ({ ...l, text: `${l.text} (proba ${i + 1})` }));
-    const sentAt = [];
+    const sentAt: number[] = [];
     for (const l of probes) {
       sentAt.push(Date.now());
       for (const msg of messages(l)) fake.send(msg);
@@ -237,7 +237,7 @@ async function pageGroup() {
     await sleep(500);
     const lag = async (w) => {
       const seen = await js(w, 'window.__seen');
-      return probes.map((l, i) => (Object.entries(seen).find(([text]) => text.includes(l.text))?.[1] ?? Infinity) - sentAt[i]);
+      return probes.map((l, i) => (Object.entries(seen as Record<string, number>).find(([text]) => text.includes(l.text))?.[1] ?? Infinity) - sentAt[i]);
     };
     const [onStage, onCaptions] = [await lag(win), await lag(captions)];
     t.check('STRESS-PAGE-05', `at line ~${N} the projector and the caption window show a new line within 300 ms`, [...onStage, ...onCaptions].every((x) => x <= 300),
@@ -294,7 +294,7 @@ async function soak() {
     const live = sockets().length - 1; // the page loads twice in open(): its first connection is gone
     console.log(`soak: recording (page ${await status(win)})`);
     console.log(`soak: ${minutes} min in real time on ${model}, the page playing a ${p(period / 60, 0)}-minute meeting in a loop`);
-    const samples = [];
+    const samples: any[] = []; // { sec, page, heap, nodes, ...dom, server, serverParts }
     let banner = 0;
     while (Date.now() - start < minutes * 60000) {
       await sleep(60000);
@@ -333,7 +333,7 @@ async function soak() {
     // A line said over someone else's speech waits for the other mic's sentence (decision #6), so it is held to a
     // looser limit; solo lines, most of a meeting where people take turns, must come within 2 s.
     const inWindow = (g) => (l) => (l.start + l.end) / 2 >= g.start && (l.start + l.end) / 2 < g.end;
-    const groups = /** @type {((typeof j.groups)[number] & { delays?: number[], overlapDelays?: number[] })[]} */ (j.groups); // the two lists are added here
+    const groups = j.groups as ((typeof j.groups)[number] & { delays?: number[], overlapDelays?: number[] })[]; // the two lists are added here
     for (const g of groups) {
       g.delays = j.lines.filter(inWindow(g)).filter((l) => l.solo).map((l) => l.delay);
       g.overlapDelays = j.lines.filter(inWindow(g)).filter((l) => !l.solo).map((l) => l.delay);
@@ -344,7 +344,7 @@ async function soak() {
     const overlapP95 = full.map((g) => quantile(g.overlapDelays, 0.95)).filter(Number.isFinite);
     fs.writeFileSync(path.join(OUT, 'soak.md'), [`# Soak: ${minutes} min in real time through the page (${model})`, '', `Mic offsets in the loop: ${offsets.map((o) => p(o, 2)).join(', ')} s.`, '',
       table(j.groups, (g) => ({ 'Seen delay p95, solo (s)': p(quantile(g.delays, 0.95)), 'Overlapping (s)': p(quantile(g.overlapDelays, 0.95)), 'Page MB': samples.filter((s) => s.sec <= g.end).at(-1)?.page ?? '—', 'Server MB': samples.filter((s) => s.sec <= g.end).at(-1)?.server ?? '—' })), '',
-      // As in meeting.md and mic3.md (test/stress.js): what SOAK-02 counts as wrong, to trace it (issue #46).
+      // As in meeting.md and mic3.md (test/stress.ts): what SOAK-02 counts as wrong, to trace it (issue #46).
       '## Lines that are wrong', '',
       ...j.lines.filter((l) => l.kind !== 'ok').slice(0, 50).map((l) => `- ${l.kind} · mic ${l.mic + 1} · ${p(l.start, 1)}–${p(l.end, 1)} s · ${l.text.slice(0, 90)}`),
       ...j.both.slice(0, 20).map(([a, b]) => `- both mics · ${p(a.start, 1)} s · mic ${a.mic + 1}: ${a.text.slice(0, 60)} · mic ${b.mic + 1}: ${b.text.slice(0, 60)}`), ''].join('\n'));
@@ -419,11 +419,11 @@ async function net() {
     await js(win, `(() => { const c = document.getElementById('saveAudio'); c.checked = true; c.dispatchEvent(new Event('change')); })()`);
     await click(win, 'toggle');
     const start = Date.now();
-    const outages = [];
+    const outages: any[] = []; // { minute, outage, shown, reconnect, conn, told }
     for (const [minute, outage] of plan) {
       await sleep(start + minute * 60000 - Date.now());
       const shown = await finalTexts(win);
-      process.kill(/** @type {number} */ (server.pid), 'SIGKILL'); // a started server has a pid
+      process.kill(server.pid as number, 'SIGKILL'); // a started server has a pid
       const before = sockets().length;
       await sleep(outage * 1000);
       server = await startServer({ model: MODEL, env });
@@ -468,9 +468,9 @@ async function net() {
       return said <= size && size - said <= 2 * 3200;
     });
     // One transcript for the whole recording, its times never going back on a mic.
-    const times = /** @type {RegExpMatchArray[]} */ ((txt[0] ?? []).map((l) => l.match(/^\[([\d:]+)\] (?:(Mic \d+): )?/)).filter(Boolean))
+    const times = ((txt[0] ?? []).map((l) => l.match(/^\[([\d:]+)\] (?:(Mic \d+): )?/)).filter(Boolean) as RegExpMatchArray[])
       .map(([, at, mic]) => ({ mic, sec: at.split(':').reduce((sum, x) => sum * 60 + Number(x), 0) }));
-    const latest = {};
+    const latest: Record<number, number> = {};
     const backwards = times.filter(({ mic, sec }) => {
       const earlier = sec + 1 < (latest[mic] ?? -Infinity);
       latest[mic] = Math.max(latest[mic] ?? -Infinity, sec);
@@ -505,11 +505,11 @@ app.whenReady().then(async () => {
   session.defaultSession.setPermissionCheckHandler(() => true);
   try {
     await { page: pageGroup, soak, net }[group]();
-  } catch (/** @type {any} */ err) {
+  } catch (err: any) {
     t.check(`STRESS-${group.toUpperCase()}-RUN`, `the ${group} group ran to the end`, false, err.stack);
   } finally {
     fs.rmSync(SPEAKERS, { recursive: true, force: true });
     t.finish();
-    app.exit(/** @type {number} */ (process.exitCode ?? 0)); // a number here, or unset
+    app.exit((process.exitCode ?? 0) as number); // a number here, or unset
   }
 });

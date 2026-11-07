@@ -18,7 +18,7 @@ npm run test:quick          # quick tier, ~1 min: static, unit, protocol (no bro
 npm run test:full           # full tier, ~15 min: standard + every speech engine + a 10-minute conversation
 npm run test:ui             # one suite (also: --only static|unit|protocol|smoke|scenarios|engines|long)
 npm run test:stress         # stress tier (§14), ~4.5 h: hours-long meetings and failures; before a release. --short ~25 min
-node test/run-all.js full --recordings transcripts/a.wav,transcripts/b.wav   # + real voices (§2, privacy)
+node test/run-all.ts full --recordings transcripts/a.wav,transcripts/b.wav   # + real voices (§2, privacy)
 ```
 
 - Exit code 0 means no unexpected failure. Known limits (◌) and skips (–) do not fail a run.
@@ -28,14 +28,14 @@ node test/run-all.js full --recordings transcripts/a.wav,transcripts/b.wav   # +
   is not committed; a report names neither the user nor the computer, so it can be shared.
 - Read `summary.md` first. For a failure, open that suite's `.log`; every test prints one line
   (`✔` pass, `✖` fail, `◌` known limit, `–` skipped) with the measured values after `—`.
-- Single suites can also be run directly: `node test/unit.js`, `node test/protocol.js`, `node test/smoke.js`,
-  `node test/scenarios.js [--model id] [--long] [--only SCN-02]`. The UI suite needs Electron:
+- Single suites can also be run directly: `node test/unit.ts`, `node test/protocol.ts`, `node test/smoke.ts`,
+  `node test/scenarios.ts [--model id] [--long] [--only SCN-02]`. The UI suite needs Electron:
   `npm run test:ui`.
 
 ## 2. Rules for the agent
 
 1. **Never touch the user's data.** Tests start their own servers with temporary settings and transcripts folders
-   (`test/helpers.js`). Do not run `npm start` against `.settings.json` or `transcripts/` for testing. The models
+   (`test/helpers.ts`). Do not run `npm start` against `.settings.json` or `transcripts/` for testing. The models
    folder is read-only for tests. If a tool writes into `transcripts/` (e.g. `npm run compare` writes
    `transcripts/<name>.compare.md`), delete only the file you created, after looking at it.
 2. **Private recordings stay private.** `transcripts/*.wav` are the user's real conversations. Use them only with
@@ -54,15 +54,15 @@ node test/run-all.js full --recordings transcripts/a.wav,transcripts/b.wav   # +
    can show the test itself is wrong (§10 has the procedure and real examples of both kinds).
 8. **Environment traps:**
    - VS Code terminals set `ELECTRON_RUN_AS_NODE=1`, which turns Electron into plain Node ("Cannot find module
-     'electron'"). `run-all.js` removes it; when running Electron by hand use `env -u ELECTRON_RUN_AS_NODE`.
+     'electron'"). `run-all.ts` removes it; when running Electron by hand use `env -u ELECTRON_RUN_AS_NODE`.
    - zsh does not split unquoted variables: `$args` stays one argument (use `${=args}` or arrays).
    - The first model load after a reboot is slower; a timeout on the very first run is worth one retry, not two.
    - A Mac left alone goes to sleep (this one after 1 min on battery, the display after 2), and every test process
-     stops with it: a stream then "stalls" for minutes and times out (§10.2, §12 2026-11-04). `run-all.js` keeps the
-     Mac awake with `caffeinate`; a suite run by hand needs `caffeinate -dis node test/scenarios.js …`. A closed lid
+     stops with it: a stream then "stalls" for minutes and times out (§10.2, §12 2026-11-04). `run-all.ts` keeps the
+     Mac awake with `caffeinate`; a suite run by hand needs `caffeinate -dis node test/scenarios.ts …`. A closed lid
      still sleeps.
 9. **The real ElevenLabs is tested by hand only.** Automated tests never use it: the cloud model is tested against a
-   stand-in (`fakeElevenLabs` in `helpers.js`). `run-all.js` and `startServer` never read the user's `.env.local`
+   stand-in (`fakeElevenLabs` in `helpers.ts`). `run-all.ts` and `startServer` never read the user's `.env.local`
    (`ENV_FILE`), drop `ELEVENLABS_API_KEY`, and a test server refuses a key unless it points at the stand-in. The real
    service is checked only by hand (`ENG-05`), and only when the user asks; `npm run benchmark` and `npm run compare`
    leave it out unless the user explicitly asks at that time. It costs the user money and sends audio away. Do not open
@@ -119,7 +119,7 @@ This is the maintenance loop. Do all steps; skipping one is how the plan goes st
 | macOS `say` with the Romanian voice *Ioana* | stress tier: the voiced sentence bank (§14.2); without it the fixture's three sentences | built into macOS (System Settings → Accessibility → Spoken Content → System voice → Manage voices) |
 | `hdiutil` (macOS), ~3 GB free disk | stress tier: `STRESS-DISK-01`; WAVs of hours-long meetings | built in |
 
-Other systems: CI (`.github/workflows/desktop.yml`) runs `test/smoke.js` on macOS and Windows before building the
+Other systems: CI (`.github/workflows/desktop.yml`) runs `test/smoke.ts` on macOS and Windows before building the
 installers. The other suites are written for macOS; on Windows `PROT-RUN-02` (no SIGINT), `PROT-ERR-03`, `PROT-ERR-04`
 and `UI-DISK-01` (no `ulimit`) are skipped and `SCN-08` uses `ps` (macOS/Linux only).
 
@@ -132,17 +132,17 @@ B ~2.5 h alone); measured: the 4-hour meeting 30 min at 8×, `PAGE` 5 min, the f
 
 | File | Role |
 |---|---|
-| `test/run-all.js` | Runs the tiers, the static checks (`STATIC-*`) and writes the signed report: `summary.md` and `run.json`, with the exact start moment as the run's id, the computer's hardware and software (`lib/benchmark/machine.ts`, shared with the benchmark suite), the models installed and one row per test |
-| `test/helpers.js` | Isolated server per test (`startServer`; `maxFileBlocks` caps its files with `ulimit -f`, like a full disk), streaming client (`streamWav`), test speakers, two-mic room simulator (`twoMics`), a stand-in for ElevenLabs' realtime speech-to-text that records every connection (`fakeElevenLabs`), a stand-in for `server.ts` that serves the page and sends it whatever a test wants (`fakeServer`; `UI-TX-06`, `STRESS-PAGE-*`), how many lines of one list are out of order against another (`outOfPlace`), result bookkeeping (`suite`) |
-| `test/unit.js` | Logic without a speech model (`UNIT-*`) |
-| `test/protocol.js` | The server as clients use it (`PROT-*`) |
-| `test/smoke.js` | End to end on any OS, downloads the model if needed; CI runs it (`SMOKE-*`) |
-| `test/stream-wav.js` | Streams WAV files to a server like the page does: one mic, or two with `--mic2`, `--bleed`, `--lag`, `--gain2`, `--only-mic`; also used by people to replay recordings |
-| `test/scenarios.js` | Two-mic conversations through the real model (`SCN-*`, `KNOWN-*`) |
-| `test/ui/run.mjs` + `test/ui/preload.cjs` | The page in Electron's Chromium with fake microphones (`UI-*`) |
+| `test/run-all.ts` | Runs the tiers, the static checks (`STATIC-*`) and writes the signed report: `summary.md` and `run.json`, with the exact start moment as the run's id, the computer's hardware and software (`lib/benchmark/machine.ts`, shared with the benchmark suite), the models installed and one row per test |
+| `test/helpers.ts` | Isolated server per test (`startServer`; `maxFileBlocks` caps its files with `ulimit -f`, like a full disk), streaming client (`streamWav`), test speakers, two-mic room simulator (`twoMics`), a stand-in for ElevenLabs' realtime speech-to-text that records every connection (`fakeElevenLabs`), a stand-in for `server.ts` that serves the page and sends it whatever a test wants (`fakeServer`; `UI-TX-06`, `STRESS-PAGE-*`), how many lines of one list are out of order against another (`outOfPlace`), result bookkeeping (`suite`) |
+| `test/unit.ts` | Logic without a speech model (`UNIT-*`) |
+| `test/protocol.ts` | The server as clients use it (`PROT-*`) |
+| `test/smoke.ts` | End to end on any OS, downloads the model if needed; CI runs it (`SMOKE-*`) |
+| `test/stream-wav.ts` | Streams WAV files to a server like the page does: one mic, or two with `--mic2`, `--bleed`, `--lag`, `--gain2`, `--only-mic`; also used by people to replay recordings |
+| `test/scenarios.ts` | Two-mic conversations through the real model (`SCN-*`, `KNOWN-*`) |
+| `test/ui/run.ts` + `test/ui/preload.cjs` | The page in Electron's Chromium with fake microphones (`UI-*`) |
 | `test/fixtures/ro.wav` | 16 s of clean synthetic Romanian speech, three sentences, silence at −88 dBFS |
-| `test/meeting.js` | The synthetic meeting for the stress tier: script, N-mic room, ground truth, streaming and WAV output (§14.2) |
-| `test/stress.js`, `test/ui/stress.mjs` | The stress tier: server-side groups (`--group meet`, `mic3`, `load`, `cap`, `eng`, `conn,conc,tune,disk`) and the page's groups in Electron (`page`, `soak`, `net`) (`STRESS-*`, §14) |
+| `test/meeting.ts` | The synthetic meeting for the stress tier: script, N-mic room, ground truth, streaming and WAV output (§14.2) |
+| `test/stress.ts`, `test/ui/stress.ts` | The stress tier: server-side groups (`--group meet`, `mic3`, `load`, `cap`, `eng`, `conn,conc,tune,disk`) and the page's groups in Electron (`page`, `soak`, `net`) (`STRESS-*`, §14) |
 | `test/fixtures/meeting-ro.txt` | The stress tier's sentence bank: text only, voiced on the test computer |
 
 **Audio used by the tests.** Speaker A is the fixture's first sentence (0–6.8 s, 17 words), speaker B its second and
@@ -174,8 +174,8 @@ manual's screenshots; after changing the preload, run `npm run manual` to check 
 
 ## 6. Adding a test
 
-1. Pick the suite: pure logic → `unit.js`; server behaviour → `protocol.js`; speech through a model →
-   `scenarios.js`; anything a person sees or clicks → `ui/run.mjs`.
+1. Pick the suite: pure logic → `unit.ts`; server behaviour → `protocol.ts`; speech through a model →
+   `scenarios.ts`; anything a person sees or clicks → `ui/run.ts`.
 2. Give it an id `AREA-TOPIC-NN` (areas: `UNIT`, `PROT`, `SCN`, `KNOWN`, `UI`, `STATIC`, `SMOKE`, `STRESS`). Write
    ids in full in the code: STATIC-03 reads any `AREA-NAME` as an id, so refer to a group as `STRESS-<GROUP>`. Never reuse an
    id; when a test is removed, keep its row with "removed in <commit>".
@@ -187,11 +187,11 @@ manual's screenshots; after changing the preload, run `npm run manual` to check 
 
 ## 7. Test catalogue
 
-How: `auto` = run by `run-all.js`; `manual` = steps an agent can do on this computer; `review` = an agent looks at
+How: `auto` = run by `run-all.ts`; `manual` = steps an agent can do on this computer; `review` = an agent looks at
 screenshots or logs; `hardware` = a person with real devices (§9); `planned` = designed but not written yet, becomes
 `auto` when its test exists (STATIC-03 does not check `planned` rows).
 
-### 7.1 Static checks (`run-all.js`)
+### 7.1 Static checks (`run-all.ts`)
 
 | Id | Checks | Pass when | How |
 |---|---|---|---|
@@ -202,7 +202,7 @@ screenshots or logs; `hardware` = a person with real devices (§9); `planned` = 
 | `STATIC-05` | User manual is current and packaged | `docs/manual/manual.json` has `package.json`'s version (a version bump needs `npm run manual` / the user-manual skill), both PDFs exist, `build.files` includes `docs/manual/*.pdf` | auto |
 | `STATIC-06` | The types (`docs/typescript-migration.md`) | `tsc --noEmit` passes on every project: the server side (`tsconfig.json`: `server.js`, `lib/`, `scripts/`, `desktop/`, `types/`), the page (`tsconfig.web.json`: `public/`) and the tests (`tsconfig.test.json`: `test/`, strict but for `noImplicitAny`); the same as `npm run typecheck`. Also the syntax check for `.ts` files, which `node --check` cannot parse | auto |
 
-### 7.2 Logic (`test/unit.js`)
+### 7.2 Logic (`test/unit.ts`)
 
 | Id | Checks | Pass when | How |
 |---|---|---|---|
@@ -309,9 +309,9 @@ screenshots or logs; `hardware` = a person with real devices (§9); `planned` = 
 | `UNIT-BENCH-06` | A whole run (`runModel`) on a stand-in model over three clips cut from the fixture, with their own references: the stand-in writes the reference for a whole clip (clean or under a condition), for the audio so far that many words with the unfinished one guessed wrong, nothing for silence | every stage has its numbers: 0 % WER on the 3 clips, on every condition and on the joined long sentences, 0 words on silence; live text: guesses from 0.6 s on, 0.5 s apart; raw erasure > 0 (the wrong last word), Steady live text 0 and still > 50 % of the sentence on screen before the final | auto |
 | `UNIT-BENCH-07` | The same with the deadline already past; and a stand-in whose load fails | the model still loads and warms up, every stage stops at once and is marked truncated, nothing throws; the failed load gives `error` and no stages | auto |
 | `UNIT-BENCH-08` | The report (`renderReport`) of that run plus the failed model; the command line (`parseArgs`) | every section names the model, the machine line, the side-by-side warning (`--parallel 2`), the failed model's error; `--minutes 500` → 120, `--parallel 0` → 1, `--models a, b` → two ids, `--label My Laptop/1` → `My-Laptop-1`, default 60 min | auto |
-| `UNIT-MEM-01` | The stress tier's memory check (`memoryCheck` in `test/meeting.js`, [#48](https://github.com/Denis-Feier/local-word-transcriptor/issues/48)) on the server's samples from the 3.9-hour meeting of 2026-11-05 (a rise of 165 MB after the break that comes back down), on a floor rising 15 MB per hour under the same ups and downs, and on a 40-minute run | the hump: low point 278 → 284 MB, under 10 MB per hour, peak 144 MB above the first 30 minutes (the straight line it replaces read 29 MB per hour); the rising floor: > 30 MB and > 10 MB per hour; the short run judges thirds of its time (0 MB) | auto |
+| `UNIT-MEM-01` | The stress tier's memory check (`memoryCheck` in `test/meeting.ts`, [#48](https://github.com/Denis-Feier/local-word-transcriptor/issues/48)) on the server's samples from the 3.9-hour meeting of 2026-11-05 (a rise of 165 MB after the break that comes back down), on a floor rising 15 MB per hour under the same ups and downs, and on a 40-minute run | the hump: low point 278 → 284 MB, under 10 MB per hour, peak 144 MB above the first 30 minutes (the straight line it replaces read 29 MB per hour); the rising floor: > 30 MB and > 10 MB per hour; the short run judges thirds of its time (0 MB) | auto |
 
-### 7.3 Server and protocol (`test/protocol.js`)
+### 7.3 Server and protocol (`test/protocol.ts`)
 
 | Id | Checks | Pass when | How |
 |---|---|---|---|
@@ -338,7 +338,7 @@ screenshots or logs; `hardware` = a person with real devices (§9); `planned` = 
 | `PROT-MIC-05` | Transcript file | one line per sentence | auto |
 | `PROT-MIC-06` | Clear | starts a new transcript file | auto |
 | `PROT-ERR-01` | Broken frames (2 bytes, 0 mics, uneven size, 5 mics), bad JSON | connection stays open, server keeps answering | auto |
-| `PROT-ERR-02` | Plain mono client without `?mics` (older clients, `stream-wav.js`) | transcribed, all on mic 0 | auto |
+| `PROT-ERR-02` | Plain mono client without `?mics` (older clients, `stream-wav.ts`) | transcribed, all on mic 0 | auto |
 | `PROT-ERR-03` | The disk fills up while Save audio is on ([#1](https://github.com/Denis-Feier/local-word-transcriptor/issues/1)): no file may grow past 300 blocks (`ulimit -f` in `sh`: 1,024 bytes each on macOS, 512 on Linux), so the WAV is full at 9.6 s of 40 s (Linux 4.8 s); skipped on Windows | the server stays up, keeps transcribing (≥ 2 sentences after the WAV filled; 3 on macOS, 4 on Linux) and saving the `.txt`; the page gets one error, "Could not save audio"; the WAV's header matches its data (without the fix the server exits when the WAV fills) | auto |
 | `PROT-ERR-04` | The disk fills up while the transcript is saved ([#19](https://github.com/Denis-Feier/local-word-transcriptor/issues/19)): Save audio off, no file may grow past 1 block (1,024 bytes on macOS, 512 on Linux), speaker A 12 times (~116-byte lines), so the `.txt` is full after 8 lines (Linux 4); skipped on Windows | the server keeps transcribing (≥ 2 lines waiting); every line in the `.txt` is one of the page's, whole and in order; the page gets one error, "Could not save transcript" (without the fix the last line is left cut and every later sentence sends an error) | auto |
 | `PROT-RUN-01` | Port already in use | message "already in use", exit code 1 | auto |
@@ -346,16 +346,16 @@ screenshots or logs; `hardware` = a person with real devices (§9); `planned` = 
 | `PROT-MODEL-01` | Choosing another model | loads, status ready with the new model | auto |
 | `PROT-MODEL-02` | Model choice after a restart | a server started without `MODEL` uses the saved choice | auto |
 
-### 7.4 End to end (`test/smoke.js`, also in CI)
+### 7.4 End to end (`test/smoke.ts`, also in CI)
 
 | Id | Checks | Pass when | How |
 |---|---|---|---|
 | `SMOKE-01` | Fresh server, model download if missing, the fixture through one mic | the transcript contains "munții" | auto |
 | `SMOKE-02` | The fixture as two mics, mic 2 hears it 12 dB quieter and 150 ms late | contains "munții", every sentence on mic 1 | auto |
 
-`run-all.js` reports both as one result (`SMOKE-RUN`); the log has the transcripts.
+`run-all.ts` reports both as one result (`SMOKE-RUN`); the log has the transcripts.
 
-### 7.5 Two-mic conversations (`test/scenarios.js`)
+### 7.5 Two-mic conversations (`test/scenarios.ts`)
 
 Common pass condition: no sentence on the wrong mic, no sentence on both mics, plus the extra condition in the row.
 "vs reference" in the output is how much a mic's text differs from its speaker transcribed alone.
@@ -375,7 +375,7 @@ Common pass condition: no sentence on the wrong mic, no sentence on both mics, p
 
 With `--recordings a.wav,b.wav` the same scenarios run on 60 s of two real voices (full tier when given).
 
-### 7.6 The page (`test/ui/run.mjs`)
+### 7.6 The page (`test/ui/run.ts`)
 
 | Id | Checks | Pass when | How |
 |---|---|---|---|
@@ -440,7 +440,7 @@ With `--recordings a.wav,b.wav` the same scenarios run on 60 s of two real voice
 | `UI-MODEL-02` | The ElevenLabs model (a key, the stand-in), recording speaker A, then Parakeet 110M picked | in the menu; the footer says the speech goes to the internet, in the warning colour; live and final lines are the stand-in's texts; the local model brings back "No audio leaves your machine" | auto |
 | `UI-MODEL-03` | The Model menu's groups ([#28](https://github.com/Denis-Feier/local-word-transcriptor/issues/28)) | two `<optgroup>`s, *Recommended* first (Canary in it) then *Other models*; every entry `label — reason` | auto |
 
-### 7.7 Stress: long meetings (`test/stress.js`, `test/ui/stress.mjs`, design in §14)
+### 7.7 Stress: long meetings (`test/stress.ts`, `test/ui/stress.ts`, design in §14)
 
 Run with `npm run test:stress` before a release (§14.4); it is not part of the other tiers. Meeting blocks (R, R′, 1–9)
 and terms (wrong mic, caught, delay) are defined in §14.2 and §14.3. Thresholds are starting values until the baseline
@@ -551,9 +551,9 @@ mics). The page uses neither Node nor the preload, so this difference matters on
 | TOOL-04 | The shareable benchmark: `npm run benchmark:suite -- --models parakeet-ro-110m --minutes 5 --label test` (FLEURS ~500 MB the first time; ask before; one heavy job: not beside a test suite), then delete `benchmarks/runs/<name>/` | `benchmarks/runs/<date>_test/report.md` has every section (accuracy, live text, noise, long sentences, silence), `run.json` the machine (OS, CPU, RAM, GPU) and the per-clip texts; WER near `fleurs-ro.md`'s; stages shrunk to the 5 min and marked ⏱ where the deadline cut them; `--report` rewrites the report from `run.json` |
 | ENG-01 | Kill `whisper-server` while a Whisper model is loaded and a server is running | the server restarts it (at most 3 times a minute) and keeps transcribing |
 | ENG-02 | Switch models several times while recording | old model unloaded (memory returns), no lost sentences beyond the switch moment |
-| ENG-03 | Apple's on-device dictation, on macOS 26: `npm run setup -- apple-dictation`, then `node test/scenarios.js --model apple-dictation` (one heavy suite: not beside another) | the helper builds and the server gets ready with it; `SCN-01…06` give each mic only its own speaker, as on the other engines (Apple's model leaves words out, so the text is shorter); `KNOWN-01` as a known limit. Not in the full tier: it needs macOS 26 and the Xcode tools, and nobody should pick it for Romanian (FLEURS 17.6 % WER) |
-| ENG-04 | The UPB FastConformer ([#21](https://github.com/Denis-Feier/local-word-transcriptor/issues/21)): `npm run setup -- ro-fast-conformer`, then `node test/scenarios.js --model ro-fast-conformer` (one heavy suite: not beside another) | the NeMo server gets ready with `--decoder rnnt`; `SCN-01…06` give each mic only its own speaker, as on the other engines (its text is lowercase without punctuation, as it was trained); `KNOWN-01` as a known limit. Not in the full tier, which runs one model per engine (NeMo: Jackrabbit, on `ctc-lm`); on FLEURS Romanian it scores 11.6 % WER against Canary's 6.6 % |
-| ENG-05 | The real ElevenLabs service. **Only when the user explicitly asks** (§2 rule 9): it bills their account and sends audio away. With their key in `.env.local`: `MODEL=elevenlabs-scribe-v2 npm start` in a temporary copy of the settings (`SETTINGS_FILE`, `TRANSCRIPTS_DIR`), then `node test/stream-wav.js test/fixtures/ro.wav` (16 s of synthetic speech, < $0.01) | the server gets ready (the key is accepted); grey live text while each sentence streams; the finals are the fixture's Romanian sentences with diacritics; `DEBUG=1` shows ~150–500 ms per sentence |
+| ENG-03 | Apple's on-device dictation, on macOS 26: `npm run setup -- apple-dictation`, then `node test/scenarios.ts --model apple-dictation` (one heavy suite: not beside another) | the helper builds and the server gets ready with it; `SCN-01…06` give each mic only its own speaker, as on the other engines (Apple's model leaves words out, so the text is shorter); `KNOWN-01` as a known limit. Not in the full tier: it needs macOS 26 and the Xcode tools, and nobody should pick it for Romanian (FLEURS 17.6 % WER) |
+| ENG-04 | The UPB FastConformer ([#21](https://github.com/Denis-Feier/local-word-transcriptor/issues/21)): `npm run setup -- ro-fast-conformer`, then `node test/scenarios.ts --model ro-fast-conformer` (one heavy suite: not beside another) | the NeMo server gets ready with `--decoder rnnt`; `SCN-01…06` give each mic only its own speaker, as on the other engines (its text is lowercase without punctuation, as it was trained); `KNOWN-01` as a known limit. Not in the full tier, which runs one model per engine (NeMo: Jackrabbit, on `ctc-lm`); on FLEURS Romanian it scores 11.6 % WER against Canary's 6.6 % |
+| ENG-05 | The real ElevenLabs service. **Only when the user explicitly asks** (§2 rule 9): it bills their account and sends audio away. With their key in `.env.local`: `MODEL=elevenlabs-scribe-v2 npm start` in a temporary copy of the settings (`SETTINGS_FILE`, `TRANSCRIPTS_DIR`), then `node test/stream-wav.ts test/fixtures/ro.wav` (16 s of synthetic speech, < $0.01) | the server gets ready (the key is accepted); grey live text while each sentence streams; the finals are the fixture's Romanian sentences with diacritics; `DEBUG=1` shows ~150–500 ms per sentence |
 | ENG-06 | GPU first on the Mac ([#24](https://github.com/Denis-Feier/local-word-transcriptor/issues/24), [#25](https://github.com/Denis-Feier/local-word-transcriptor/issues/25)): `npm start`, pick each installed local model in turn; then `npm run benchmark -- --models parakeet-tdt-0.6b-v3,jackrabbit-110m-ro,ro-fast-conformer --limit 200` and again with `NEMO_DEVICE=cpu … --name fleurs-ro-cpu` for the NeMo models on the CPU (Parakeet's CPU numbers are the README's sherpa-onnx ones) | the page's status says `· ready on GPU` for each model, its tooltip `Runs on GPU (Metal)` / `GPU (MPS)` (Apple dictation: no device, `the chip macOS picks` in the tooltip), and the terminal has no "could not use the GPU" or "moved to the CPU" line; Parakeet TDT v3 on transcribe.cpp scores within noise of 12.4 % WER and is faster than the sherpa-onnx CPU build (40–53×); the NeMo models on MPS give the same WER as on the CPU (within noise) and are not slower; if MPS loses, set it back to the CPU for that model and write down why (`lib/models.ts` notes, README) |
 | DOCK-01 | `docker compose up -d --build` (slow; ask before) | page on `127.0.0.1:3000`, Whisper marked "slow in Docker", stop saves the last sentence |
 
@@ -639,7 +639,7 @@ output (the `[mics]` lines every 10 s), and what went wrong with the time it hap
 
 Useful tools: `DEBUG=1` server logs (`[final #n mic m] … ms: text`, `dropped, another mic heard it more clearly`,
 `not transcribed, another mic heard this speech N dB more clearly`, `… s cut off, another mic heard this speech more clearly`, `[mics] …`); `sample <pid> 3` (macOS) for a server that stops answering; the gate can be traced offline by running
-`Segmenter.analyze()` + `CrosstalkGate.push()` over two WAVs (see `gate()` in `test/unit.js`).
+`Segmenter.analyze()` + `CrosstalkGate.push()` over two WAVs (see `gate()` in `test/unit.ts`).
 
 ### 10.2 Known limits (tracked, do not fail a run)
 
@@ -654,7 +654,7 @@ Useful tools: `DEBUG=1` server logs (`[final #n mic m] … ms: text`, `dropped, 
 | — | The speaker may get the transcription's auto gain | Chromium processes a mic once per page: when the transcription opened the mic first, the speaker's stream gets its auto gain even though it asks for none (checked with Electron's fake devices; when the speaker opens first, each gets its own) | Hardware data (`HW-19`); a page-level fix would mean giving up auto gain for the text |
 | — | On a Mac, only one Bluetooth headset mic works at a time; the other sends digital silence | macOS runs one Bluetooth headset (HFP) microphone at a time; the app opens each mic on its own (`mics.js`), so this is below it. The page warns (`UI-DEV-12`) | Nothing in the app; a headset's USB receiver or a cable (README) |
 | — | Bluetooth speakers play ~0.2 s late | Bluetooth audio buffering in the speaker and the OS | Nothing in the app; README recommends a cable or USB speaker |
-| — | A run stops for minutes, then goes on (2026-10-31: a scenario run, twice, ~8 min; 2026-11-04: the 10-minute conversation, 593 s, so `SCN-07` timed out) | **Explained** (2026-11-04): the Mac went to sleep. `pmset -g log` shows "Entering Sleep state due to 'Idle Sleep' … 593 secs" at 19:01:35, seconds into the conversation, on battery with nobody at the Mac (it sleeps after 1 min on battery, the display after 2), and idle sleeps of 931, 968 and 474 s on the afternoon of 2026-10-31 (on AC). Every process stops with the Mac: the client's clock jumped 590 s between two live guesses, and the suite's 300-s kill timer fired at 597 s | `run-all.js` holds `caffeinate -dis` (display and idle sleep) while it runs and the report says so; a suite started by hand on a Mac left alone needs `caffeinate -dis node test/…`; a closed lid still sleeps |
+| — | A run stops for minutes, then goes on (2026-10-31: a scenario run, twice, ~8 min; 2026-11-04: the 10-minute conversation, 593 s, so `SCN-07` timed out) | **Explained** (2026-11-04): the Mac went to sleep. `pmset -g log` shows "Entering Sleep state due to 'Idle Sleep' … 593 secs" at 19:01:35, seconds into the conversation, on battery with nobody at the Mac (it sleeps after 1 min on battery, the display after 2), and idle sleeps of 931, 968 and 474 s on the afternoon of 2026-10-31 (on AC). Every process stops with the Mac: the client's clock jumped 590 s between two live guesses, and the suite's 300-s kill timer fired at 597 s | `run-all.ts` holds `caffeinate -dis` (display and idle sleep) while it runs and the report says so; a suite started by hand on a Mac left alone needs `caffeinate -dis node test/…`; a closed lid still sleeps |
 
 ## 11. Coverage map
 
@@ -774,6 +774,7 @@ Add one row per run on `main` (§3 step 5), newest first. Feature-branch runs go
 | 2026-11-06 | The TypeScript migration starts (`docs/typescript-migration.md`, Phase 0, `ts/0-tooling`): `typescript` 7.0.2, `@types/node`, `@types/ws` and `@types/audioworklet` as devDependencies; `tsconfig.json` (server side) and `tsconfig.web.json` (page), both `strict`, `allowJs`, `checkJs: false` until a file opts in with `// @ts-check` (Phase 2), `noEmit`, `erasableSyntaxOnly` and `.ts` import specifiers so Node runs `.ts` files as they are; `types/vendor.d.ts` declares `sherpa-onnx-node`'s `Vad`; `npm run typecheck`; `engines.node` `>=22.18` (type stripping is on by default from there; CI, Docker and Electron 45 run 24). New `STATIC-06` in every tier: both projects pass `tsc`. No source file changed; both projects pass on the code as it is. §7.1, §11. |
 | 2026-11-07 | The test suites are type-checked (`docs/typescript-migration.md`, Phase 2 N7, `ts/2-n7`): `// @ts-check` on every file in `test/` but `ui/preload.cjs`, with the shared shapes from `types/test.ts`; the suites get their own project, `tsconfig.test.json`, strict except for `noImplicitAny` (their callbacks probe messages and stand-ins loosely, by design; a thousand parameter annotations would say nothing), and `STATIC-06` and `npm run typecheck` run all three projects. Three stand-in shapes the checker wanted became interfaces the app's code takes: `TranscriberLike` for what a session needs from the transcriber, `VadPool` generic over what its maker returns, `ReportRun` for what the report needs of a run; `Engine.supportsPrompt` is optional. Code changes in the suites only where the checker was right about a gap (`JSON.parse(data)` on a Buffer now `.toString()`s it; `FinalizationRegistry.register` gets its second argument; the stand-in model carries the catalogue's fields), each behaviour-neutral. §7.1 `STATIC-06`. |
 | 2026-11-07 | Every JavaScript file is type-checked (`docs/typescript-migration.md`, Phase 2 N8, `ts/2-n8`): `checkJs` on in all three projects and the 52 `// @ts-check` lines gone, so `STATIC-06` now checks every file under `strict` (the tests without `noImplicitAny`; `test/ui/preload.cjs` excluded). §11 row. Phase 2 of the migration is complete; Phase 3 renames the server side to `.ts`. |
+| 2026-11-07 | The test suites are TypeScript (`docs/typescript-migration.md`, Phase 3 N7, `ts/3-n7`): `test/*.ts`, `test/ui/run.ts` and `test/ui/stress.ts` (`test/ui/preload.cjs` stays JavaScript, D6), run by Node and Electron as they are; `npm test` is `node test/run-all.ts`, CI's smoke step `node test/smoke.ts`. `STATIC-01` parses the JavaScript files only and walks the `.ts` files for `STATIC-03`'s id scan; tsc (`STATIC-06`) parses the `.ts` files. No test changed what it checks. |
 | 2026-11-07 | The UI suite's teardown hung a second time after its last check (§12, 2026-11-06 and 2026-11-07): of the awaits in its `finally`, `stop()` is bounded (SIGTERM, 8 s, SIGKILL) and only the two stand-ins' `close()` were not, each an `http.Server.close()` that answers once every connection has ended. Both now end their connections themselves (`closeAllConnections()`; the ElevenLabs stand-in listens on its own `http.Server` for that), and the teardown logs each step (`[teardown] …`), so a hang names its place. No test changed what it checks. |
 
 
