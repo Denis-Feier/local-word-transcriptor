@@ -8,7 +8,7 @@
   "main": "desktop/main.mjs",
   "scripts": {
     "setup": "node scripts/setup.js",
-    "start": "node server.js",
+    "start": "node server.ts",
     "compare": "node scripts/compare.js",
     "test": "node test/run-all.js",
     "test:quick": "node test/run-all.js quick",
@@ -54,7 +54,7 @@
     },
     "files": [
       "package.json",
-      "server.js",
+      "server.ts",
       "lib/**",
       "public/**",
       "desktop/main.mjs",

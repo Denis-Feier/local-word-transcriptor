@@ -13,7 +13,7 @@ import { encodeWav, decodeWav, WavWriter } from '../lib/wav.ts';
 import { Segmenter } from '../lib/segmenter.ts';
 import { EnergyDetector, SileroDetector, VadPool, createDetector } from '../lib/vad.ts';
 import { CrosstalkGate } from '../lib/crosstalk.ts';
-import { Session, fileStamp, fmtTime } from '../lib/session.js';
+import { Session, fileStamp, fmtTime } from '../lib/session.ts';
 import { SteadyText } from '../lib/steady.ts';
 import { Transcriber } from '../lib/transcriber.ts';
 import { TranscribeCppEngine, describeDevice } from '../lib/engines/transcribe-cpp.ts';

@@ -131,7 +131,6 @@ function staticChecks() {
     }
   };
   for (const dir of ['lib', 'public', 'scripts', 'desktop', 'test']) walk(dir);
-  files.push('server.js');
   const broken = files.filter((f) => {
     try {
       execSync(`"${process.execPath}" --check "${path.join(ROOT, f)}"`, { stdio: 'pipe' });
@@ -144,7 +143,7 @@ function staticChecks() {
 
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   const packaged = pkg.build.files;
-  check('STATIC-02', 'the installers include server.js, lib/ and public/', ['server.js', 'lib/**', 'public/**', 'desktop/main.mjs'].every((p) => packaged.includes(p)), packaged.join(' '));
+  check('STATIC-02', 'the installers include server.ts, lib/ and public/', ['server.ts', 'lib/**', 'public/**', 'desktop/main.mjs'].every((p) => packaged.includes(p)), packaged.join(' '));
 
   // A new version needs its manual rebuilt (npm run manual, or the user-manual skill) before it is tagged.
   /** @type {{ version?: string }} */
@@ -159,12 +158,12 @@ function staticChecks() {
     `manual ${manual.version ?? 'not built'}, app ${pkg.version}${noPdf.length ? `; missing ${noPdf.join(', ')}` : ''}`);
 
   // The server serves only the page files it lists; a new one left out breaks the page without an error.
-  const served = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  const served = fs.readFileSync(path.join(ROOT, 'server.ts'), 'utf8');
   const unserved = fs.readdirSync(path.join(ROOT, 'public')).filter((f) => f !== 'index.html' && !served.includes(`'/${f}': ['${f}'`));
-  check('STATIC-04', 'the server serves every file in public/', unserved.length === 0, unserved.join(', ') || 'all listed in server.js');
+  check('STATIC-04', 'the server serves every file in public/', unserved.length === 0, unserved.join(', ') || 'all listed in server.ts');
 
   // The types (docs/typescript-migration.md): every project passes tsc without emitting: the server side (tsconfig.json:
-  // server.js, lib/, scripts/, desktop/, types/), the page (tsconfig.web.json: public/) and the tests (tsconfig.test.json:
+  // server.ts, lib/, scripts/, desktop/, types/), the page (tsconfig.web.json: public/) and the tests (tsconfig.test.json:
   // test/). Node runs .ts files itself and node --check cannot parse them, so this is also the syntax check for every .ts file.
   const tsc = path.join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
   const typeErrors = ['tsconfig.json', 'tsconfig.web.json', 'tsconfig.test.json'].flatMap((project) => {

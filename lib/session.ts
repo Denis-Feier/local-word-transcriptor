@@ -8,23 +8,24 @@ import { SteadyText } from './steady.ts';
 import { sharedWords, comparedWords, words } from './wer.ts';
 import { WavWriter, concatFloat32, SAMPLE_RATE } from './wav.ts';
 import { spokenOrder } from '../public/order.js';
-/** @import { Config } from '../types/config.ts' */
-/** @import { ServerMessage } from '../types/protocol.ts' */
-/** @import { CurrentSegment, DetectorName, Frame, NoiseFloor, Segment } from '../types/audio.ts' */
-/** @import { SessionStream, TranscriberLike } from '../types/engine.ts' */
+import type { Config } from '../types/config.ts';
+import type { ServerMessage } from '../types/protocol.ts';
+import type { CurrentSegment, Frame, NoiseFloor, Segment } from '../types/audio.ts';
+import type { SessionStream, TranscriberLike } from '../types/engine.ts';
 
 /**
  * One mic's channel: its segmenter, the timing of its live guesses, and the sentence a streaming model is hearing
  * (`stream`, id `streamId`; `sentFrame` is the last frame index sent to it).
- * @typedef {{ mic: number, segmenter: Segmenter, lastPartialAt: number, partialWall: number, stream: SessionStream | null, streamId: number, sentFrame: number }} Channel
  */
+type Channel = { mic: number; segmenter: Segmenter; lastPartialAt: number; partialWall: number; stream: SessionStream | null; streamId: number; sentFrame: number };
 /**
  * A sentence from the moment it goes to the model: its times, then its text, model and time once transcribed, then
  * whether it was published and whether it turned out to be another mic's speech (`echo`).
- * @typedef {{ id: number, mic: number, start: number, end: number, text: string, model?: string, ms?: number, published?: boolean, echo?: boolean }} Sentence
  */
-/** @typedef {{ id: number, start: number, line: string }} HeldLine  a published line not yet in the .txt */
-/** @typedef {{ file: string, writer: WavWriter }} AudioFile */
+type Sentence = { id: number; mic: number; start: number; end: number; text: string; model?: string; ms?: number; published?: boolean; echo?: boolean };
+/** A published line not yet in the .txt. */
+type HeldLine = { id: number; start: number; line: string };
+type AudioFile = { file: string; writer: WavWriter };
 
 const MIN_PARTIAL_SEC = 0.6;
 const MIN_OVERLAP_SEC = 0.5; // sentences on two mics overlapping less than this are just people taking turns
@@ -38,8 +39,7 @@ const CAUGHT_UP_SEC = 10; // and clear the warning once it is back within this
 const BEHIND_STEP_SEC = 5; // while behind, update the page when the delay changes by this much
 const REPORT_FRAMES = 312; // ~10 s: how often DEBUG logs what the crosstalk gate did
 
-/** @param {number} sec */
-export const fmtTime = (sec) => {
+export const fmtTime = (sec: number) => {
   const s = Math.floor(sec);
   const hh = Math.floor(s / 3600);
   const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
@@ -47,10 +47,8 @@ export const fmtTime = (sec) => {
   return hh ? `${hh}:${mm}:${ss}` : `${mm}:${ss}`;
 };
 
-/** @param {Date} d */
-export const fileStamp = (d) => {
-  /** @param {number} n */
-  const p = (n) => String(n).padStart(2, '0');
+export const fileStamp = (d: Date) => {
+  const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
 };
 
@@ -63,18 +61,13 @@ export const fileStamp = (d) => {
  */
 const NAME = /^\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d(-\d+)?$/; // what claimName() gives, and nothing that leaves the folder
 
-/**
- * @param {string} dir
- * @param {string} stamp
- * @param {number} maxMics
- */
-function claimName(dir, stamp, maxMics) {
+function claimName(dir: string, stamp: string, maxMics: number) {
   for (let n = 1; ; n++) {
     const name = n > 1 ? `${stamp}-${n}` : stamp;
     const base = path.join(dir, name);
     try {
       fs.closeSync(fs.openSync(`${base}.txt`, 'wx'));
-    } catch (/** @type {any} */ err) {
+    } catch (err: any) {
       if (err.code === 'EEXIST') continue;
       throw err;
     }
@@ -89,11 +82,7 @@ function claimName(dir, stamp, maxMics) {
  * fails the rest (ENOSPC); that part is cut off again, so the file only ever has whole lines. Opened for writing rather
  * than appending, because Windows cuts a file only through a handle that may write anywhere in it.
  */
-/**
- * @param {string} file
- * @param {string} text
- */
-function appendWhole(file, text) {
+function appendWhole(file: string, text: string) {
   const fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_CREAT);
   try {
     const size = fs.fstatSync(fd).size;
@@ -120,11 +109,7 @@ function appendWhole(file, text) {
   }
 }
 
-/**
- * @param {{ start: number, end: number }} a
- * @param {{ start: number, end: number }} b
- */
-const overlap = (a, b) => Math.min(a.end, b.end) - Math.max(a.start, b.start);
+const overlap = (a: { start: number; end: number }, b: { start: number; end: number }) => Math.min(a.end, b.end) - Math.max(a.start, b.start);
 
 /**
  * The mics' noise levels of transcripts whose connection closed, for the connection that resumes them (#44): after a
@@ -133,21 +118,15 @@ const overlap = (a, b) => Math.min(a.end, b.end) - Math.max(a.start, b.start);
  * the transcript's path; the newest KEPT_FLOORS, a few kB each.
  */
 const KEPT_FLOORS = 32;
-/** @type {Map<string, NoiseFloor[]>} */
-const keptFloors = new Map();
+const keptFloors = new Map<string, NoiseFloor[]>();
 
-/**
- * @param {string} key
- * @param {NoiseFloor[]} floors
- */
-function keepFloors(key, floors) {
+function keepFloors(key: string, floors: NoiseFloor[]) {
   keptFloors.delete(key);
   keptFloors.set(key, floors);
-  if (keptFloors.size > KEPT_FLOORS) keptFloors.delete(/** @type {string} */ (keptFloors.keys().next().value)); // not empty here
+  if (keptFloors.size > KEPT_FLOORS) keptFloors.delete(keptFloors.keys().next().value as string); // not empty here
 }
 
-/** @param {string} key */
-function takeFloors(key) {
+function takeFloors(key: string) {
   const floors = keptFloors.get(key);
   keptFloors.delete(key);
   return floors;
@@ -161,11 +140,7 @@ function takeFloors(key) {
  * being said, nor from "Da." with one word of the other person's sentence before it. The model gives no times, so a
  * word's moment is estimated from its place in its line.
  */
-/**
- * @param {{ text: string, start: number, end: number }} seg
- * @param {{ text: string, start: number, end: number }[]} lines
- */
-function pieceOf(seg, lines) {
+function pieceOf(seg: { text: string; start: number; end: number }, lines: { text: string; start: number; end: number }[]) {
   const mine = words(seg.text, { diacritics: false });
   const theirs = lines.flatMap(({ text, start, end }) => {
     const ws = words(text, { diacritics: false });
@@ -189,23 +164,45 @@ function pieceOf(seg, lines) {
  * The .txt is created with the transcript's first file, so it is empty until the first line: it claims the name.
  */
 export class Session {
-  /** @param {{ send: (msg: ServerMessage) => void, transcriber: TranscriberLike, config: Config }} opts */
-  constructor({ send, transcriber, config }) {
+  send: (msg: ServerMessage) => void;
+  transcriber: TranscriberLike;
+  config: Config;
+  transcript: string;
+  finalized: Set<number>;
+  finalsPending: number;
+  partialBusy: boolean;
+  stamp: string | null;
+  textFile: string | null;
+  unsaved: string[];
+  held: HeldLine[];
+  textErrorSent: boolean;
+  stopped: boolean;
+  heard: boolean;
+  resumed: boolean;
+  saveAudio: boolean;
+  steadyLive: boolean;
+  steady: Map<number, SteadyText>;
+  audioFiles: (AudioFile | undefined)[];
+  nextId: number;
+  mics: Channel[];
+  gate: CrosstalkGate | null;
+  floors: NoiseFloor[];
+  transcribing: Map<number, Sentence>;
+  done: Sentence[];
+  behindSec: number;
+  closed: boolean;
+
+  constructor({ send, transcriber, config }: { send: (msg: ServerMessage) => void; transcriber: TranscriberLike; config: Config }) {
     this.send = send;
     this.transcriber = transcriber;
     this.config = config;
     this.transcript = '';
-    /** @type {Set<number>} */
     this.finalized = new Set();
     this.finalsPending = 0;
     this.partialBusy = false;
-    /** @type {string | null} */
     this.stamp = null;
-    /** @type {string | null} */
     this.textFile = null;
-    /** @type {string[]} */
     this.unsaved = []; // lines the disk had no room for yet, oldest first
-    /** @type {HeldLine[]} */
     this.held = []; // published lines not yet in the .txt, waiting for sentences spoken earlier
     this.textErrorSent = false; // the page knows the transcript cannot be saved, and no save has worked since
     this.stopped = false; // Stop pressed: the next audio is a new recording
@@ -213,20 +210,13 @@ export class Session {
     this.resumed = false; // continuing another connection's transcript: its WAVs are carried on, not refused
     this.saveAudio = false;
     this.steadyLive = true; // Steady live text (#26): show a live word only once two guesses agree
-    /** @type {Map<number, SteadyText>} */
     this.steady = new Map(); // sentence id -> SteadyText, while its live text is shown
-    /** @type {(AudioFile | undefined)[]} */
     this.audioFiles = []; // per mic
     this.nextId = 1; // shared by all mics, so ids follow the order people started speaking
-    /** @type {Channel[]} */
     this.mics = []; // per mic
-    /** @type {CrosstalkGate | null} */
     this.gate = null; // with several mics: decides which mic each bit of speech belongs to
-    /** @type {NoiseFloor[]} */
     this.floors = []; // each mic's background noise as the gate learned it, kept when the mics change or the page reconnects
-    /** @type {Map<number, Sentence>} */
     this.transcribing = new Map(); // id -> the sentence waiting for the model
-    /** @type {Sentence[]} */
     this.done = []; // transcribed sentences, until published and then for KEEP_SEC
     this.behindSec = 0; // the delay last reported to the page (0: not behind)
     this.closed = false;
@@ -237,12 +227,8 @@ export class Session {
     return this.mics[0].segmenter.detector.name;
   }
 
-  /**
-   * Audio of `count` mics, one after the other, all covering the same moment.
-   * @param {Float32Array} samples
-   * @param {number} [count]
-   */
-  audio(samples, count = 1) {
+  /** Audio of `count` mics, one after the other, all covering the same moment. */
+  audio(samples: Float32Array, count = 1) {
     // After close() (e.g. while the server drains on Ctrl+C the page keeps sending) the voice detectors belong to
     // the pool again, and saving would reopen the WAVs and wipe them.
     if (this.closed) return;
@@ -261,7 +247,7 @@ export class Session {
       for (let i = 0; i < frames[0].length; i++) this.#feed(this.gate.push(frames.map((f) => f[i])));
       // A line of one word may stop waiting once the other mic's speaker goes on talking (#waiting).
       if (this.done.some((seg) => !seg.published)) this.#settle();
-      if (process.env.DEBUG && frames[0].length && /** @type {Frame} */ (frames[0].at(-1)).index % REPORT_FRAMES < frames[0].length) {
+      if (process.env.DEBUG && frames[0].length && (frames[0].at(-1) as Frame).index % REPORT_FRAMES < frames[0].length) {
         console.log(`[mics] ${this.gate.report()}`);
       }
     } else {
@@ -281,8 +267,7 @@ export class Session {
     this.gate?.setMargin(this.config.crosstalkDb);
   }
 
-  /** @param {{ saveAudio?: boolean, steadyLive?: boolean }} opts */
-  setOptions({ saveAudio, steadyLive }) {
+  setOptions({ saveAudio, steadyLive }: { saveAudio?: boolean; steadyLive?: boolean }) {
     if (saveAudio !== undefined) this.saveAudio = Boolean(saveAudio);
     if (steadyLive !== undefined && Boolean(steadyLive) !== this.steadyLive) {
       this.steadyLive = Boolean(steadyLive);
@@ -296,14 +281,12 @@ export class Session {
    * the clock goes on from there. Only before this connection's first audio; a name that is not an existing transcript
    * here, or that another open connection is writing, starts a new one as before. A reload sends nothing: the page is
    * empty again, and so is its new file. The mics' noise levels come along when this server heard the transcript last
-   * (a network drop, not a restart), as they do when the mics change (#44).
-   * @param {{ name?: string | null, samples?: number }} request
-   * @param {Session[]} [others]  the other open connections
+   * (a network drop, not a restart), as they do when the mics change (#44). `others` are the other open connections.
    */
-  resume({ name, samples }, others = []) {
+  resume({ name, samples }: { name?: string | null; samples?: number }, others: Session[] = []) {
     if (this.closed || this.heard) return;
-    if (Number.isSafeInteger(samples) && /** @type {number} */ (samples) > 0) {
-      const sent = /** @type {number} */ (samples); // a safe integer, as checked
+    if (Number.isSafeInteger(samples) && (samples as number) > 0) {
+      const sent = samples as number; // a safe integer, as checked
       for (const { segmenter } of this.mics) {
         segmenter.frameIndex = Math.floor(sent / FRAME);
         segmenter.leftover = new Float32Array(sent % FRAME);
@@ -348,11 +331,8 @@ export class Session {
     this.audioFiles = [];
   }
 
-  /**
-   * The number of mics changed (or the session starts): finish what is being said, then start fresh.
-   * @param {number} count
-   */
-  #layout(count) {
+  /** The number of mics changed (or the session starts): finish what is being said, then start fresh. */
+  #layout(count: number) {
     const startFrame = Math.max(0, ...this.mics.map(({ segmenter }) => segmenter.frameIndex));
     // Audio not yet cut into frames carries over, or the clock would fall behind by up to a frame per change.
     // A mic that was not there gets silence, so frame N is the same moment on every mic.
@@ -371,16 +351,9 @@ export class Session {
     for (const { segmenter } of this.mics) segmenter.detector.release?.();
   }
 
-  /**
-   * @param {number} mic
-   * @param {number} startFrame
-   * @param {Float32Array} leftover
-   * @returns {Channel}
-   */
-  #channel(mic, startFrame, leftover) {
-    const ch = /** @type {Channel} */ ({ mic, lastPartialAt: 0, partialWall: 0, stream: null, streamId: 0, sentFrame: -1 }); // the segmenter follows
-    /** @param {number} id */
-    const discard = (id) => {
+  #channel(mic: number, startFrame: number, leftover: Float32Array): Channel {
+    const ch = { mic, lastPartialAt: 0, partialWall: 0, stream: null, streamId: 0, sentFrame: -1 } as Channel; // the segmenter follows
+    const discard = (id: number) => {
       if (ch.streamId === id) ch.stream?.cancel();
       ch.stream = null;
       this.#endLive(id);
@@ -418,11 +391,7 @@ export class Session {
    * that speech clearly less well than the other person's own mic did (by more than half of "Mic separation"), which
    * is what this checks before the model runs. A short reply said softly while the other person talks can go with it.
    */
-  /**
-   * @param {number} mic
-   * @param {Segment} seg
-   */
-  #otherSpeaker(mic, { id, start, end }) {
+  #otherSpeaker(mic: number, { id, start, end }: Segment) {
     if (!this.gate) return false;
     const deficit = this.gate.deficit(mic, start, end);
     const theirs = deficit > this.config.crosstalkDb * OTHER_SPEAKER;
@@ -437,30 +406,20 @@ export class Session {
    * #otherSpeaker measures it) and this mic heard it that much more quietly than the sentence before it, the rest is
    * cut off before the model runs (CrosstalkGate.theirsFrom). A streaming model has heard it already.
    */
-  /**
-   * @param {number} mic
-   * @param {Segment} seg
-   * @returns {Segment}
-   */
-  #withoutTheirs(mic, seg) {
+  #withoutTheirs(mic: number, seg: Segment): Segment {
     const cut = this.gate?.theirsFrom(mic, seg.start, seg.end, this.config.crosstalkDb * OTHER_SPEAKER) ?? null;
     if (cut === null) return seg;
     if (process.env.DEBUG) console.log(`[final #${seg.id} mic ${mic + 1}] ${cut.toFixed(1)}–${seg.end.toFixed(1)} s cut off, another mic heard this speech more clearly`);
     return { ...seg, end: cut, samples: seg.samples.subarray(0, Math.round((cut - seg.start) * SAMPLE_RATE)) };
   }
 
-  /** @param {Frame[] | null | undefined} frames */
-  #feed(frames) {
+  #feed(frames: Frame[] | null | undefined) {
     frames?.forEach((frame, mic) => this.mics[mic].segmenter.feed(frame));
   }
 
-  /**
-   * A streaming model (ElevenLabs) hears each sentence while it is spoken; its live text replaces the guesses.
-   * @param {Channel} ch
-   * @param {number} id
-   */
-  #openStream(ch, id) {
-    const { start } = /** @type {CurrentSegment} */ (ch.segmenter.current()); // the sentence just started
+  /** A streaming model (ElevenLabs) hears each sentence while it is spoken; its live text replaces the guesses. */
+  #openStream(ch: Channel, id: number) {
+    const { start } = ch.segmenter.current() as CurrentSegment; // the sentence just started
     ch.stream = this.transcriber.stream?.({
       prompt: this.#prompt(),
       onPartial: (raw) => {
@@ -483,13 +442,7 @@ export class Session {
    * once, ever: the end of the last sentence (kept as this one's lead-in) and speech after a split point already went
    * out. The pause that ends a sentence is not sent (`settled`), the same audio a local model would get.
    */
-  /**
-   * @param {Channel} ch
-   * @param {SessionStream} stream
-   * @param {Frame[]} frames
-   * @param {number} end
-   */
-  #sendFrames(ch, stream, frames, end) {
+  #sendFrames(ch: Channel, stream: SessionStream, frames: Frame[], end: number) {
     let from = end;
     while (from > 0 && frames[from - 1].index > ch.sentFrame) from--;
     if (from === end) return;
@@ -497,18 +450,13 @@ export class Session {
     ch.sentFrame = frames[end - 1].index;
   }
 
-  /**
-   * The sentence ended: send it the rest of its audio. Null when it has no stream, or lost it (sent whole instead).
-   * @param {Channel} ch
-   * @param {number} id
-   * @returns {SessionStream | null}
-   */
-  #endStream(ch, id) {
+  /** The sentence ended: send it the rest of its audio. Null when it has no stream, or lost it (sent whole instead). */
+  #endStream(ch: Channel, id: number): SessionStream | null {
     const { stream } = ch;
     if (!stream || ch.streamId !== id) return null;
     ch.stream = null;
     if (!stream.live()) return null; // the model was switched, or the connection failed, mid-sentence
-    const { frames, settled } = /** @type {CurrentSegment} */ (ch.segmenter.current()); // during onSegment the sentence that ended is still current
+    const { frames, settled } = ch.segmenter.current() as CurrentSegment; // during onSegment the sentence that ended is still current
     this.#sendFrames(ch, stream, frames, settled);
     return stream;
   }
@@ -561,7 +509,7 @@ export class Session {
     if (!due) return;
 
     const { ch } = due;
-    const cur = /** @type {CurrentSegment} */ (due.cur); // the filter kept only mics with a sentence
+    const cur = due.cur as CurrentSegment; // the filter kept only mics with a sentence
     const job = this.transcriber.tryTranscribe(cur.samples(), { prompt: this.#prompt(), fallback: false });
     if (!job) return; // model busy; try again on the next audio chunk
     this.partialBusy = true;
@@ -584,41 +532,26 @@ export class Session {
    * and never fewer than already shown; the final line replaces it at the end. The page, the projector and the caption
    * windows all show what is sent here.
    */
-  /**
-   * @param {number} mic
-   * @param {number} id
-   * @param {number} start
-   * @param {string} text
-   */
-  #partial(mic, id, start, text) {
+  #partial(mic: number, id: number, start: number, text: string) {
     if (this.steadyLive) {
       if (!this.steady.has(id)) this.steady.set(id, new SteadyText());
-      const steady = /** @type {SteadyText} */ (this.steady.get(id)).update(text);
+      const steady = (this.steady.get(id) as SteadyText).update(text);
       if (!steady) return;
       text = steady;
     }
     this.send({ type: 'partial', mic, id, start, text });
   }
 
-  /**
-   * The sentence gets no more live guesses: its final line (or none) is next.
-   * @param {number} id
-   */
-  #endLive(id) {
+  /** The sentence gets no more live guesses: its final line (or none) is next. */
+  #endLive(id: number) {
     this.finalized.add(id);
     this.steady.delete(id);
   }
 
-  /**
-   * @param {number} mic
-   * @param {Segment} segment
-   * @param {SessionStream | null} [stream]
-   */
-  async #finalize(mic, { id, samples, start, end }, stream = null) {
+  async #finalize(mic: number, { id, samples, start, end }: Segment, stream: SessionStream | null = null) {
     this.#endLive(id);
     this.finalsPending++;
-    /** @type {Sentence} */
-    const seg = { id, mic, start, end, text: '' };
+    const seg: Sentence = { id, mic, start, end, text: '' };
     this.transcribing.set(id, seg);
     try {
       const whole = () => this.transcriber.transcribe(samples, { prompt: this.#prompt(), fallback: true });
@@ -629,7 +562,7 @@ export class Session {
         const who = this.mics.length > 1 ? ` mic ${mic + 1}` : '';
         console.log(`[final #${id}${who}] ${result.model} ${(end - start).toFixed(1)} s audio, ${seg.ms} ms: ${seg.text || '(empty)'}`);
       }
-    } catch (/** @type {any} */ err) {
+    } catch (err: any) {
       this.send({ type: 'error', message: err.message });
     } finally {
       this.finalsPending--;
@@ -669,7 +602,6 @@ export class Session {
    * is otherwise finished, and written, before a longer one that started earlier on the other. `all` writes every
    * waiting line (Clear).
    */
-  /** @param {boolean} [all] */
   #writeHeld(all = false) {
     if (!this.held.length) return;
     const open = all ? [] : [
@@ -693,8 +625,7 @@ export class Session {
    * else's sentence waited for the rest of their turn, and a line overlapped at its end by the next speaker waited for
    * the whole of their turn. audio() asks again as the other mic's sentence grows.
    */
-  /** @param {Sentence} seg */
-  #waiting(seg) {
+  #waiting(seg: Sentence) {
     const shared = this.gate ? comparedWords(seg.text).length : 0;
     if (!shared) return false;
     // Each overlapping sentence on another mic, with where it ends so far (as it would if it ended now).
@@ -718,12 +649,8 @@ export class Session {
    * tie (the same mic picked twice) keeps the line of the lower mic. A mic the gate does not have (the mics changed
    * since) cannot be compared: the line is kept.
    */
-  /**
-   * @param {number} other
-   * @param {Sentence} seg
-   */
-  #asClear(other, seg) {
-    const gate = /** @type {CrosstalkGate} */ (this.gate); // the callers check that there is one
+  #asClear(other: number, seg: Sentence) {
+    const gate = this.gate as CrosstalkGate; // the callers check that there is one
     const count = gate.floors.length;
     if (other >= count || seg.mic >= count) return false;
     const theirs = gate.louder(other, seg.mic, seg.start, seg.end);
@@ -739,8 +666,7 @@ export class Session {
    * already dropped do not count (one copy always stays), and clarity is compared over this line's own time, allowing
    * for a mic that is late.
    */
-  /** @param {Sentence} seg */
-  #heardBetterElsewhere(seg) {
+  #heardBetterElsewhere(seg: Sentence) {
     if (!this.gate) return false;
     const mics = new Set(this.done.filter((o) => o.mic !== seg.mic && o.text && !o.echo && overlap(seg, o) > 0).map((o) => o.mic));
     for (const mic of mics) {
@@ -766,8 +692,7 @@ export class Session {
    * try, so the file catches up once there is room. The page is told once, and again only after a save has worked,
    * after Start (which hides the page's errors) or after Clear (a new file).
    */
-  /** @param {string} line */
-  #saveLine(line) {
+  #saveLine(line: string) {
     this.unsaved.push(line);
     this.#saveLines();
   }
@@ -777,22 +702,21 @@ export class Session {
     try {
       if (!this.textFile) {
         this.textFile = `${this.#base()}.txt`;
-        this.send({ type: 'file', kind: 'text', name: /** @type {string} */ (this.stamp), path: path.relative(process.cwd(), this.textFile) }); // #base() claimed the name
+        this.send({ type: 'file', kind: 'text', name: this.stamp as string, path: path.relative(process.cwd(), this.textFile) }); // #base() claimed the name
       }
       appendWhole(this.textFile, this.unsaved.join(''));
       this.unsaved = [];
       this.textErrorSent = false;
-    } catch (/** @type {any} */ err) {
+    } catch (err: any) {
       if (!this.textErrorSent) this.send({ type: 'error', message: `Could not save transcript: ${err.message}` });
       this.textErrorSent = true;
     }
   }
 
-  /** @param {Float32Array[]} chunks */
-  #saveAudio(chunks) {
+  #saveAudio(chunks: Float32Array[]) {
     try {
       chunks.forEach((chunk, mic) => this.#audioWriter(mic).append(chunk));
-    } catch (/** @type {any} */ err) {
+    } catch (err: any) {
       // A full disk or a drive that went away stops the recording, never the transcript. The files keep what was
       // written; ticking Save audio again carries on in them.
       this.saveAudio = false;
@@ -801,15 +725,14 @@ export class Session {
     }
   }
 
-  /** @param {number} mic */
-  #audioWriter(mic) {
+  #audioWriter(mic: number) {
     if (!this.audioFiles[mic]) {
       // One file per mic, opened once per transcript, so changing mics never overwrites a recording.
       const file = `${this.#base()}${this.mics.length > 1 ? `-mic${mic + 1}` : ''}.wav`;
       this.audioFiles[mic] = { file, writer: new WavWriter(file, { resume: this.resumed }) };
-      this.send({ type: 'file', kind: 'audio', mic, name: /** @type {string} */ (this.stamp), path: path.relative(process.cwd(), file) }); // #base() claimed the name
+      this.send({ type: 'file', kind: 'audio', mic, name: this.stamp as string, path: path.relative(process.cwd(), file) }); // #base() claimed the name
     }
-    return /** @type {AudioFile} */ (this.audioFiles[mic]).writer;
+    return (this.audioFiles[mic] as AudioFile).writer;
   }
 
   #closeFiles() {

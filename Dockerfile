@@ -41,4 +41,4 @@ COPY . .
 # Listen on all interfaces inside the container; docker-compose.yml publishes it on 127.0.0.1 only.
 ENV HOST=0.0.0.0 PORT=3000 THREADS=8 SETTINGS_FILE=/app/state/settings.json IN_DOCKER=1
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["node", "server.ts"]

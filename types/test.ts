@@ -11,7 +11,7 @@ export interface StartServerOptions {
   maxFileBlocks?: number | null;
 }
 
-/** startServer(): an isolated server.js with its own settings and transcripts folders. */
+/** startServer(): an isolated server.ts with its own settings and transcripts folders. */
 export interface TestServer {
   port: number;
   pid: number | undefined;

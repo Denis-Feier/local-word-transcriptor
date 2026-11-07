@@ -45,7 +45,7 @@ export interface StreamingSentence {
   readonly result: Promise<TranscribeResult>;
 }
 
-/** What a session needs from the transcriber (lib/session.js): the Transcriber, or a test's stand-in. */
+/** What a session needs from the transcriber (lib/session.ts): the Transcriber, or a test's stand-in. */
 export interface TranscriberLike {
   readonly supportsPrompt: boolean;
   /** Moving average of inference time; null before the first sentence. */
@@ -56,7 +56,7 @@ export interface TranscriberLike {
   stream?(opts?: StreamOptions): SessionStream | null;
 }
 
-/** The transcriber's handle on a streamed sentence, as lib/session.js uses it (Transcriber.stream()). */
+/** The transcriber's handle on a streamed sentence, as lib/session.ts uses it (Transcriber.stream()). */
 export interface SessionStream {
   push(samples: Float32Array): void;
   cancel(): void;

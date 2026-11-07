@@ -5,14 +5,13 @@ import { WebSocketServer } from 'ws';
 import { config, ROOT, MODELS_DIR } from './lib/config.ts';
 import { MODELS, SILERO_VAD, isInstalled, isAvailable, installModel, download } from './lib/models.ts';
 import { Transcriber } from './lib/transcriber.ts';
-import { Session } from './lib/session.js';
+import { Session } from './lib/session.ts';
 import { TUNING, tuningFrom, sanitizeTuning, applyTuning } from './lib/tuning.ts';
-/** @import { Settings, TuningPatch } from './types/config.ts' */
-/** @import { ClientMessage, ModelsMessage, ServerMessage, StatusMessage, TuningMessage } from './types/protocol.ts' */
+import type { Settings, TuningPatch } from './types/config.ts';
+import type { ClientMessage, ModelsMessage, ServerMessage, StatusMessage, TuningMessage } from './types/protocol.ts';
 
 const PUBLIC = path.join(ROOT, 'public');
-/** @type {Record<string, [file: string, type: string]>} */
-const STATIC = {
+const STATIC: Record<string, [file: string, type: string]> = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/stage.js': ['stage.js', 'text/javascript; charset=utf-8'],
@@ -25,20 +24,18 @@ const STATIC = {
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
 };
 
-/** @returns {Settings} */
-const readSettings = () => {
+const readSettings = (): Settings => {
   try {
     return JSON.parse(fs.readFileSync(config.settingsFile, 'utf8'));
   } catch {
     return {};
   }
 };
-/** @param {Partial<Settings>} patch */
-const writeSettings = (patch) => {
+const writeSettings = (patch: Partial<Settings>) => {
   try {
     fs.mkdirSync(path.dirname(config.settingsFile), { recursive: true });
     fs.writeFileSync(config.settingsFile, JSON.stringify({ ...readSettings(), ...patch }, null, 2));
-  } catch (/** @type {any} */ err) {
+  } catch (err: any) {
     console.error(`Could not save settings: ${err.message}`);
   }
 };
@@ -49,24 +46,18 @@ applyTuning(config, sanitizeTuning(readSettings().tuning));
 
 // Models this computer can run; the rest are left out of the menu.
 const AVAILABLE = MODELS.filter((m) => isAvailable(m, { whisperBin: config.whisper.bin }));
-/** @param {string} id */
-const findAvailable = (id) => AVAILABLE.find((m) => m.id === id);
+const findAvailable = (id: string) => AVAILABLE.find((m) => m.id === id);
 
 const transcriber = new Transcriber(config);
-/** @type {Map<string, number>} */
-const progress = new Map(); // model id -> download fraction
-/** @type {Set<(msg: ServerMessage) => void>} */
-const clients = new Set();
-/** @type {Set<Session>} */
-const sessions = new Set();
+const progress = new Map<string, number>(); // model id -> download fraction
+const clients = new Set<(msg: ServerMessage) => void>();
+const sessions = new Set<Session>();
 
-/** @param {ServerMessage} msg */
-const broadcast = (msg) => {
+const broadcast = (msg: ServerMessage) => {
   for (const send of clients) send(msg);
 };
 
-/** @returns {ModelsMessage} */
-const modelsMessage = () => ({
+const modelsMessage = (): ModelsMessage => ({
   type: 'models',
   active: transcriber.model?.id ?? null,
   models: AVAILABLE.map((m) => ({
@@ -84,30 +75,25 @@ const modelsMessage = () => ({
   })),
 });
 
-/** @returns {StatusMessage} */
-const statusMessage = () => ({ type: 'status', ...transcriber.status(), language: config.language });
+const statusMessage = (): StatusMessage => ({ type: 'status', ...transcriber.status(), language: config.language });
 
-/** @returns {TuningMessage} */
-const tuningMessage = () => ({ type: 'tuning', values: tuningFrom(config), defaults: DEFAULT_TUNING, ranges: TUNING });
+const tuningMessage = (): TuningMessage => ({ type: 'tuning', values: tuningFrom(config), defaults: DEFAULT_TUNING, ranges: TUNING });
 
-/** @param {{ values?: TuningPatch, reset?: boolean }} msg */
-function updateTuning({ values, reset }) {
+function updateTuning({ values, reset }: { values?: TuningPatch; reset?: boolean }) {
   applyTuning(config, reset ? DEFAULT_TUNING : sanitizeTuning(values));
   writeSettings({ tuning: reset ? undefined : tuningFrom(config) });
   for (const session of sessions) session.retune();
   broadcast(tuningMessage());
 }
 
-/** @param {string} id */
-function selectModel(id) {
+function selectModel(id: string) {
   if (!findAvailable(id)) return;
   writeSettings({ model: id });
   transcriber.select(id);
   broadcast(modelsMessage());
 }
 
-/** @param {string} id */
-async function install(id) {
+async function install(id: string) {
   const model = findAvailable(id);
   if (!model || isInstalled(model) || progress.has(id)) return;
   progress.set(id, 0);
@@ -125,7 +111,7 @@ async function install(id) {
     progress.delete(id);
     console.log(`  ✔ downloaded ${model.label}`);
     selectModel(id);
-  } catch (/** @type {any} */ err) {
+  } catch (err: any) {
     progress.delete(id);
     broadcast({ type: 'error', message: `Download of ${model.label} failed: ${err.message}` });
     broadcast(modelsMessage());
@@ -135,14 +121,13 @@ async function install(id) {
 const MB = 1024 * 1024;
 
 const server = http.createServer((req, res) => {
-  const url = new URL(/** @type {string} */ (req.url), 'http://localhost'); // a request always has one
+  const url = new URL(req.url as string, 'http://localhost'); // a request always has one
   // What the server's memory is made of, for the stress tests (#48): V8's heap, the memory V8 tracks outside it (audio
   // buffers), and, from the total, the native rest (an in-process model and its GPU buffers, the voice detectors).
   // Only with DEBUG, which the tests set.
   if (process.env.DEBUG && req.method === 'GET' && url.pathname === '/debug/memory') {
     const { rss, heapTotal, heapUsed, external, arrayBuffers } = process.memoryUsage();
-    /** @param {number} x */
-    const mb = (x) => Math.round(x / MB);
+    const mb = (x: number) => Math.round(x / MB);
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' })
       .end(JSON.stringify({ rss: mb(rss), heapTotal: mb(heapTotal), heapUsed: mb(heapUsed), external: mb(external), arrayBuffers: mb(arrayBuffers) }));
     return;
@@ -160,8 +145,7 @@ const server = http.createServer((req, res) => {
 
 // Only this server's own page may connect. Any website open in the browser could otherwise reach ws://localhost,
 // switch to the cloud model and so send the room's audio off the computer. Tools that are not browsers send no Origin.
-/** @param {{ origin: string, req: import('node:http').IncomingMessage }} info */
-const sameOrigin = ({ origin, req }) => {
+const sameOrigin = ({ origin, req }: { origin: string; req: http.IncomingMessage }) => {
   if (!origin) return true;
   try {
     return new URL(origin).host === req.headers.host;
@@ -175,9 +159,8 @@ const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 1 << 20, veri
 wss.on('connection', (ws, req) => {
   // The page connects to /ws?mics and prefixes every audio frame with its number of mics;
   // other clients (test/stream-wav.js) send plain mono audio.
-  const framed = new URL(/** @type {string} */ (req.url), 'http://localhost').searchParams.has('mics');
-  /** @param {ServerMessage} msg */
-  const send = (msg) => {
+  const framed = new URL(req.url as string, 'http://localhost').searchParams.has('mics');
+  const send = (msg: ServerMessage) => {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
   };
   const session = new Session({ send, transcriber, config });
@@ -191,7 +174,7 @@ wss.on('connection', (ws, req) => {
   ws.on('message', (data, isBinary) => {
     if (isBinary) {
       // Float32 PCM, 16 kHz. Copy out so the view is 4-byte aligned.
-      const buf = /** @type {Buffer} */ (data); // ws hands binary frames over as one Buffer
+      const buf = data as Buffer; // ws hands binary frames over as one Buffer
       const bytes = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength - (buf.byteLength % 4));
       if (!framed) {
         session.audio(new Float32Array(bytes));
@@ -206,8 +189,7 @@ wss.on('connection', (ws, req) => {
       session.audio(samples.subarray(0, (samples.length / count) * used), used);
       return;
     }
-    /** @type {ClientMessage} */
-    let msg;
+    let msg: ClientMessage;
     try {
       msg = JSON.parse(data.toString());
     } catch {
@@ -231,8 +213,7 @@ wss.on('connection', (ws, req) => {
 
 transcriber.on('state', () => broadcast(statusMessage()));
 
-/** @param {NodeJS.ErrnoException} err */
-const onListenError = (err) => {
+const onListenError = (err: NodeJS.ErrnoException) => {
   console.error(err.code === 'EADDRINUSE'
     ? `\n✖ Port ${config.port} is already in use. Is the transcriber already running in another terminal?\n  Stop it, or pick another port: PORT=${config.port + 1} npm start\n`
     : `\n✖ ${err.message}\n`);
@@ -247,7 +228,7 @@ server.listen(config.port, config.host, async () => {
 
   if (config.vad.engine === 'silero' && !fs.existsSync(config.vad.sileroModel)) {
     console.log('  Downloading Silero VAD (0.6 MB) …');
-    await download(SILERO_VAD.url, path.join(MODELS_DIR, SILERO_VAD.file)).catch((/** @type {any} */ err) => {
+    await download(SILERO_VAD.url, path.join(MODELS_DIR, SILERO_VAD.file)).catch((err: any) => {
       console.error(`  Could not download Silero VAD, using the loudness detector instead: ${err.message}`);
     });
   }

@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import WebSocket from 'ws';
 import { ROOT, SR, startServer, speakers, sleep, suite, fakeElevenLabs } from './helpers.js';
-import { fmtTime } from '../lib/session.js';
+import { fmtTime } from '../lib/session.ts';
 /** @import { TestServer } from '../types/test.ts' */
 
 const t = suite('protocol');
@@ -61,7 +61,7 @@ async function connect(server, { mono = false } = {}) {
 const server = await startServer();
 try {
   // ---------- static files ----------
-  const serverSrc = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  const serverSrc = fs.readFileSync(path.join(ROOT, 'server.ts'), 'utf8');
   const routes = [...serverSrc.matchAll(/'(\/[\w.-]*)': \['([\w.-]+)', '([^']+)'\]/g)].map(([, route, file, type]) => ({ route, file, type }));
   const results = await Promise.all(routes.map(async (r) => {
     const res = await fetch(server.url + r.route);
@@ -69,7 +69,7 @@ try {
   }));
   t.check('PROT-STATIC-01', 'every page file is served with its content type', results.every(Boolean) && routes.length >= 7, `${routes.length} routes`);
   const unserved = fs.readdirSync(path.join(ROOT, 'public')).filter((f) => !routes.some((r) => r.file === f));
-  t.check('PROT-STATIC-02', 'every file in public/ has a route in server.js', unserved.length === 0, unserved.join(', '));
+  t.check('PROT-STATIC-02', 'every file in public/ has a route in server.ts', unserved.length === 0, unserved.join(', '));
   const [missing, post] = await Promise.all([fetch(`${server.url}/nope.js`), fetch(`${server.url}/`, { method: 'POST' })]);
   t.check('PROT-STATIC-03', 'unknown paths and non-GET requests get 404', missing.status === 404 && post.status === 404);
   // What the server's memory is made of, for the stress tests (#48): only with DEBUG, which every test server has.
@@ -187,7 +187,7 @@ try {
   await mono.close();
 
   // ---------- startup and shutdown ----------
-  const clash = spawn(process.execPath, [path.join(ROOT, 'server.js')], { env: { ...process.env, PORT: String(server.port), SETTINGS_FILE: path.join(server.dir, 'clash.json') } });
+  const clash = spawn(process.execPath, [path.join(ROOT, 'server.ts')], { env: { ...process.env, PORT: String(server.port), SETTINGS_FILE: path.join(server.dir, 'clash.json') } });
   let clashOut = '';
   clash.stderr.on('data', (d) => (clashOut += d));
   const clashCode = await new Promise((r) => clash.on('exit', r));

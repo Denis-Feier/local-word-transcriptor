@@ -52,14 +52,14 @@ function freePort() {
   });
 }
 
-/** Starts server.js as a utility process and resolves with its URL once it answers. @returns {Promise<string>} */
+/** Starts server.ts as a utility process and resolves with its URL once it answers. @returns {Promise<string>} */
 async function startServer() {
   const port = await freePort();
   fs.mkdirSync(paths.logs, { recursive: true });
   const log = fs.createWriteStream(path.join(paths.logs, 'server.log'), { flags: 'a' });
   log.write(`\n--- ${new Date().toISOString()} Live Transcriber ${app.getVersion()} ---\n`);
 
-  server = utilityProcess.fork(path.join(ROOT, 'server.js'), [], {
+  server = utilityProcess.fork(path.join(ROOT, 'server.ts'), [], {
     stdio: 'pipe',
     serviceName: 'Live Transcriber server',
     env: /** @type {Record<string, string>} */ ({

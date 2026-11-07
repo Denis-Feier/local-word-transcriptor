@@ -344,7 +344,7 @@ The report (speed, WER, and every model's full transcript) is written to `transc
 ## How it works
 
 ```
-Browser                       Node (server.js)                            Speech model
+Browser                       Node (server.ts)                            Speech model
 mics → AudioWorklet ─WS─▶  Silero VAD + Segmenter per mic        ──▶   whisper-server (whisper.cpp, GPU)
       16 kHz Float32        (crosstalk gate between mics)              transcribe.cpp (GPU, in-process)
                             ├─ while speaking: live guess
@@ -376,10 +376,10 @@ where macOS decides. In Docker there is no GPU, so everything runs on the CPU th
 | `public/order.js` | The order of the lines, the order they were spoken in: one rule for the page, Copy, Download and the saved `.txt` |
 | `public/stage.js` | Projector view: large centred captions, display preferences, full screen; also the caption window (`/?display`) |
 | `public/settings.js` | Settings panel: live speech-detection sliders (`lib/tuning.ts` on the server) and projector display options |
-| `server.js` | Static files, WebSocket (only from its own page), model downloads and switching |
+| `server.ts` | Static files, WebSocket (only from its own page), model downloads and switching |
 | `lib/vad.ts` | Speech detectors: Silero (neural, default) and a loudness fallback |
 | `lib/segmenter.ts` | Turns detector frames into utterances: pre-roll, pause timeout, splits monologues longer than 20 s at the quietest point |
-| `lib/session.js` | One browser tab: a segmenter per mic, schedules live guesses and finals (or streams each sentence to a streaming model), drops a sentence another mic heard more clearly, writes transcript/audio files |
+| `lib/session.ts` | One browser tab: a segmenter per mic, schedules live guesses and finals (or streams each sentence to a streaming model), drops a sentence another mic heard more clearly, writes transcript/audio files |
 | `lib/crosstalk.ts` | With several mics: decides which mic each moment of speech belongs to, by clarity above each mic's own noise |
 | `lib/transcriber.ts` | Owns the active model, serialises requests, switches models, restarts a crashed model (after 4 quick crashes, retries it every 30 s) |
 | `lib/engines/*.ts` | One adapter per runtime: whisper.cpp, transcribe.cpp, Python/NeMo, Apple speech, ElevenLabs (`elevenlabs.ts`: a realtime connection per sentence). `sidecar.ts` is the shared logic for models served by a separate process |

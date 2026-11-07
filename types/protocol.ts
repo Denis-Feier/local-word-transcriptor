@@ -1,4 +1,4 @@
-// The WebSocket contract between server.js / lib/session.js and public/app.js, and the BroadcastChannel contract
+// The WebSocket contract between server.ts / lib/session.ts and public/app.js, and the BroadcastChannel contract
 // between the main window and its caption windows (/?display). Phase 1 of docs/typescript-migration.md: written from
 // every send() site and the page's switch, and read against the PROT-* tests.
 //
@@ -11,7 +11,7 @@ import type { DetectorName } from './audio.ts';
 
 // ---------- server → page ----------
 
-/** One entry of the `models` message: a model as the Model menu shows it (server.js modelsMessage). */
+/** One entry of the `models` message: a model as the Model menu shows it (server.ts modelsMessage). */
 export interface ModelInfo {
   id: string;
   label: string;

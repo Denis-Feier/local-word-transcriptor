@@ -41,7 +41,7 @@ export function scratch(name) {
 }
 
 /**
- * Start server.js on a free port with its own settings and transcripts folders, so a test never touches the
+ * Start server.ts on a free port with its own settings and transcripts folders, so a test never touches the
  * user's files or a copy of the app that is already running. Models come from ./models (MODELS_DIR overrides).
  * model: null starts without MODEL (the saved or default model); env values of undefined are removed.
  * Never the user's .env.local or ElevenLabs key: an ElevenLabs key is allowed only with the stand-in (fakeElevenLabs).
@@ -72,7 +72,7 @@ export async function startServer({ model = process.env.TEST_MODEL ?? 'parakeet-
   }
   for (const key of Object.keys(childEnv)) if (childEnv[key] === undefined) delete childEnv[key];
   delete childEnv.ELECTRON_RUN_AS_NODE;
-  const script = path.join(ROOT, 'server.js');
+  const script = path.join(ROOT, 'server.ts');
   // Past the limit a write is cut short, then fails with EFBIG (Node ignores SIGXFSZ): what a full disk does.
   // exec keeps the pid.
   const [cmd, args] = /** @type {[string, string[]]} */ (maxFileBlocks
@@ -224,14 +224,14 @@ export async function fakeElevenLabs({ key = 'test-key', text = (c) => `propoziÈ
 }
 
 /**
- * A stand-in for server.js, for tests of the page alone: serves the page's files (the routes server.js lists) and
+ * A stand-in for server.ts, for tests of the page alone: serves the page's files (the routes server.ts lists) and
  * sends the page whatever the test wants. On connecting the page gets a ready fake model, then `greet` (e.g. the
  * tuning message), then a limit of two mics. send() goes to the newest connection.
  * @param {FakeServerOptions} [opts]
  * @returns {Promise<FakeServer>}
  */
 export async function fakeServer({ greet = [] } = {}) {
-  const routes = Object.fromEntries([...fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8').matchAll(/'(\/[\w.-]*)': \['([\w.-]+)', '([^']+)'\]/g)].map(([, route, file, type]) => /** @type {[string, [string, string]]} */ ([route, [file, type]])));
+  const routes = Object.fromEntries([...fs.readFileSync(path.join(ROOT, 'server.ts'), 'utf8').matchAll(/'(\/[\w.-]*)': \['([\w.-]+)', '([^']+)'\]/g)].map(([, route, file, type]) => /** @type {[string, [string, string]]} */ ([route, [file, type]])));
   const server = http.createServer((req, res) => {
     const entry = routes[new URL(/** @type {string} */ (req.url), 'http://x').pathname];
     if (!entry) return res.writeHead(404).end();

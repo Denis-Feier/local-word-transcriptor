@@ -15,7 +15,7 @@ import { createDetector } from '../lib/vad.ts';
 import { decodeWav } from '../lib/wav.ts';
 import { resultToText, contextTail } from '../lib/text.ts';
 import { wordErrorRate } from '../lib/wer.ts';
-import { fmtTime } from '../lib/session.js';
+import { fmtTime } from '../lib/session.ts';
 /** @import { Model } from '../types/model.ts' */
 /** @import { Segment } from '../types/audio.ts' */
 

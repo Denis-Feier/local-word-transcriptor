@@ -39,7 +39,7 @@ const env = {
   TRANSCRIPTS_DIR: path.join(tmp, 'transcripts'),
 };
 
-const server = spawn(process.execPath, [path.join(ROOT, 'server.js')], { env, stdio: ['ignore', 'inherit', 'inherit'] });
+const server = spawn(process.execPath, [path.join(ROOT, 'server.ts')], { env, stdio: ['ignore', 'inherit', 'inherit'] });
 let code = 1;
 try {
   for (let i = 0; ; i++) {

@@ -348,6 +348,18 @@ are exported types, so a test's stand-in can name them; the ElevenLabs shapes st
 `NonNullable<StreamOptions['onPartial']>`. The three projects were green on the first run. README's file table
 (`lib/engines/*.ts`) and the types' comments followed.
 
+What happened in N4 (2026-11-07, `ts/3-n4`): `lib/session.ts` and `server.ts`, N1's pattern throughout (the
+session's four `@typedef`s are local types; its twenty-six fields are declared, all set by the constructor). The
+entry's name moved with it: `package.json` (`start`, `build.files`), the Dockerfile's `CMD`, `tsconfig.json`'s
+include, the desktop app's `utilityProcess.fork`, the tests that start a server (`test/helpers.js`, `test/smoke.js`,
+`test/protocol.js`) and `test/run-all.js`, whose `STATIC-02` expects `server.ts` and whose `STATIC-04` reads it; the
+workflow's smoke step (`node test/smoke.js`) did not change. `STATIC-01` no longer lists the entry: `node --check`
+cannot parse `.ts`, and tsc (`STATIC-06`) parses every `.ts` file; N7 extends the walk. The start-up check the plan
+asked for: `node server.ts` reaches its ready line in 64 ms, `node server.js` did in 63 ms (medians of five starts,
+`parakeet-ro-110m` chosen; the stripper was already loaded by the `.ts` modules the server imports since N1). The `.js` mentions followed in README (the diagram and the file table), TESTING.md §5 and §7.1,
+the types' comments, `public/order.js`'s comment, `lib/benchmark/suite.js`'s and the user-manual skill's `git log`
+paths.
+
 ## 7. Phase 4 — the page becomes `.ts`
 
 Branch `ts/4-web`. `public/*.js` move to `web/*.ts` (`git mv`, so history follows), keep `web/order.ts` as the one
@@ -427,6 +439,7 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 | Phase 3 N1 | `ts/3-n1` | done, awaiting merge | 2026-11-07 | nine leaf modules are `.ts`; the three projects green; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-17-05-16_204bd99/`) |
 | Phase 3 N2 | `ts/3-n2` | done, awaiting merge | 2026-11-07 | the detectors, the segmenter, the crosstalk gate, the catalogue, the converter and the sidecar base; full tier 236 / 0 / 5 / 0 (`test-results/2026-11-07-17-15-20_65c785f/`) |
 | Phase 3 N3 | `ts/3-n3` | done, awaiting merge | 2026-11-07 | the five engines and the transcriber; full tier 236 / 0 / 5 / 0 (`test-results/2026-11-07-17-30-35_76f3524/`) |
-| Phase 3 N4 … N7 | `ts/3-<batch>` | not started | | E1 decides `desktop/main.ts` |
+| Phase 3 N4 | `ts/3-n4` | done, awaiting merge | 2026-11-07 | the session and the server entry (`node server.ts`); full tier 176 / 1 / 5 / 0, the one failure the UI suite's teardown hang (TESTING.md §12), then the UI suite alone 60 / 0 / 0 / 0 |
+| Phase 3 N5 … N7 | `ts/3-<batch>` | not started | | E1 decides `desktop/main.ts` |
 | Phase 4 | `ts/4-web` | not started | | D2 confirmed? |
 | Phase 5 | `ts/5-tighten` | not started | | |
