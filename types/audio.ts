@@ -94,7 +94,7 @@ export interface DecodedWav {
   samples: Float32Array;
 }
 
-// ---------- the page's audio backlog (public/backlog.js; here, not in page.ts, because the unit tests import it) ----------
+// ---------- the page's audio backlog (web/backlog.ts; here, not in page.ts, because the unit tests import it) ----------
 
 export interface BacklogTaken {
   /** Oldest first. */

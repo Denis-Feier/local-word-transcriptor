@@ -588,7 +588,7 @@ app.whenReady().then(async () => {
     // ---------- speaking order, from a stand-in server (#50) ----------
     // The rest of a sentence cut for being too long (#7) starts before the sentence the other mic started meanwhile,
     // but gets its id after it, and its live line comes later. The page, Copy and Download put it first, as the .txt
-    // does (the same rule, public/order.js). Before the fix they went by id: Mic 2's line came first.
+    // does (the same rule, web/order.ts). Before the fix they went by id: Mic 2's line came first.
     const stand = await fakeServer();
     fakes.push(stand);
     await win.loadURL(stand.url);

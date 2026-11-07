@@ -1,16 +1,16 @@
 // Settings panel: speech detection (applied live on the server, shared by all windows) and
 // projector display (stored in this browser).
 import { SIZE, THEMES, loadPrefs } from './stage.js';
-/** @import { SettingsHooks, SettingsPanel, Theme } from '../types/page.ts' */
-/** @import { TuningKey, TuningRanges } from '../types/config.ts' */
-/** @import { TuningMessage } from '../types/protocol.ts' */
-/** @import { DetectorName } from '../types/audio.ts' */
+import type { SettingsHooks, SettingsPanel, Theme } from '../types/page.ts';
+import type { TuningKey, TuningRanges } from '../types/config.ts';
+import type { TuningMessage } from '../types/protocol.ts';
+import type { DetectorName } from '../types/audio.ts';
 
-/** @typedef {{ key: TuningKey, label: string, format: (v: number) => string, hint: string }} Field  one slider */
-/** @typedef {{ f: Field, wrap: HTMLElement, input: HTMLInputElement, output: HTMLOutputElement, hint: HTMLElement }} FieldUi */
+/** one slider */
+type Field = { key: TuningKey, label: string, format: (v: number) => string, hint: string };
+type FieldUi = { f: Field, wrap: HTMLElement, input: HTMLInputElement, output: HTMLOutputElement, hint: HTMLElement };
 
-/** @type {Field[]} */
-const FIELDS = [
+const FIELDS: Field[] = [
   {
     key: 'vadThreshold',
     label: 'Speech detection threshold',
@@ -49,27 +49,14 @@ const FIELDS = [
   },
 ];
 
-/**
- * @param {HTMLElement} root  the settings drawer
- * @param {SettingsHooks} hooks  send(msg) to the server, onDisplayPrefs(patch), onOpenDisplay()
- * @returns {SettingsPanel}
- */
-export function createSettings(root, { send, onDisplayPrefs, onOpenDisplay }) {
-  /**
-   * An element of the drawer, by selector; the markup has every one asked for.
-   * @template {HTMLElement} [T=HTMLElement]
-   * @param {string} sel
-   * @returns {T}
-   */
-  const $ = (sel) => /** @type {T} */ (root.querySelector(sel));
+export function createSettings(root: HTMLElement, { send, onDisplayPrefs, onOpenDisplay }: SettingsHooks): SettingsPanel {
+  /** An element of the drawer, by selector; the markup has every one asked for. */
+  const $ = <T extends HTMLElement = HTMLElement>(sel: string): T => root.querySelector(sel) as T;
   const fieldsEl = $('#tuningFields');
-  /** @type {Record<string, FieldUi>} */
-  const fields = {};
-  /** @type {HTMLElement | null} */
-  let returnFocus = null;
+  const fields: Record<string, FieldUi> = {};
+  let returnFocus: HTMLElement | null = null;
 
-  /** @param {TuningRanges} ranges */
-  function build(ranges) {
+  function build(ranges: TuningRanges) {
     for (const f of FIELDS) {
       const range = ranges[f.key];
       if (!range) continue;
@@ -79,10 +66,10 @@ export function createSettings(root, { send, onDisplayPrefs, onOpenDisplay }) {
         <label for="tune-${f.key}"><span></span><output></output></label>
         <input type="range" id="tune-${f.key}" min="${range.min}" max="${range.max}" step="${range.step}">
         <p class="setting-hint"></p>`;
-      /** @type {HTMLElement} */ (wrap.querySelector('span')).textContent = f.label;
-      const input = /** @type {HTMLInputElement} */ (wrap.querySelector('input'));
-      const output = /** @type {HTMLOutputElement} */ (wrap.querySelector('output'));
-      const hint = /** @type {HTMLElement} */ (wrap.querySelector('.setting-hint'));
+      (wrap.querySelector('span') as HTMLElement).textContent = f.label;
+      const input = wrap.querySelector('input') as HTMLInputElement;
+      const output = wrap.querySelector('output') as HTMLOutputElement;
+      const hint = wrap.querySelector('.setting-hint') as HTMLElement;
       input.addEventListener('input', () => (output.textContent = f.format(Number(input.value))));
       // Send on release only: changing the threshold rebuilds the detector.
       input.addEventListener('change', () => send({ type: 'tuning', values: { [f.key]: Number(input.value) } }));
@@ -91,8 +78,7 @@ export function createSettings(root, { send, onDisplayPrefs, onOpenDisplay }) {
     }
   }
 
-  /** @param {TuningMessage} msg */
-  function setTuning({ values, defaults, ranges }) {
+  function setTuning({ values, defaults, ranges }: TuningMessage) {
     if (!Object.keys(fields).length) {
       build(ranges);
       setAvailable();
@@ -105,8 +91,7 @@ export function createSettings(root, { send, onDisplayPrefs, onOpenDisplay }) {
     }
   }
 
-  /** @type {DetectorName | null} */
-  let detector = null;
+  let detector: DetectorName | null = null;
   let mics = 1;
 
   /** Grey out the sliders that do nothing right now: the threshold with the loudness detector, separation with one mic. */
@@ -120,13 +105,10 @@ export function createSettings(root, { send, onDisplayPrefs, onOpenDisplay }) {
   }
 
   // Projector display controls mirror the projector view's own toolbar.
-  /** @type {HTMLInputElement} */
-  const size = $('#displaySize');
+  const size: HTMLInputElement = $('#displaySize');
   const sizeOut = $('#displaySizeOut');
-  /** @type {HTMLSelectElement} */
-  const lines = $('#displayLines');
-  /** @type {HTMLSelectElement} */
-  const theme = $('#displayTheme');
+  const lines: HTMLSelectElement = $('#displayLines');
+  const theme: HTMLSelectElement = $('#displayTheme');
   Object.assign(size, { min: SIZE.min, max: SIZE.max, step: SIZE.step });
   for (let n = 1; n <= 5; n++) lines.add(new Option(String(n), String(n)));
   for (const [value, label] of Object.entries(THEMES)) theme.add(new Option(label, value));
@@ -144,7 +126,7 @@ export function createSettings(root, { send, onDisplayPrefs, onOpenDisplay }) {
     onDisplayPrefs({ size: Number(size.value) });
   });
   lines.addEventListener('change', () => onDisplayPrefs({ lines: Number(lines.value) }));
-  theme.addEventListener('change', () => onDisplayPrefs({ theme: /** @type {Theme} */ (theme.value) })); // its options are THEMES
+  theme.addEventListener('change', () => onDisplayPrefs({ theme: theme.value as Theme })); // its options are THEMES
   $('#openDisplay').addEventListener('click', onOpenDisplay);
   $('#tuningReset').addEventListener('click', () => send({ type: 'tuning', reset: true }));
   $('#settingsClose').addEventListener('click', () => close());
@@ -157,7 +139,7 @@ export function createSettings(root, { send, onDisplayPrefs, onOpenDisplay }) {
   window.addEventListener('storage', (e) => e.key === 'stage' && refreshDisplay());
 
   function open() {
-    returnFocus = /** @type {HTMLElement | null} */ (document.activeElement);
+    returnFocus = document.activeElement as HTMLElement | null;
     refreshDisplay();
     root.hidden = false;
     $('#settingsClose').focus();

@@ -2,16 +2,13 @@
 // Any output the computer lists can be used: its own speakers, a jack, USB or Bluetooth speaker, a projector's HDMI
 // sound. Separate from the transcription: its own streams of the mics, at full quality and with the least delay.
 import { feedMics, openMics } from './mics.js';
-/** @import { Speaker, SpeakerOptions } from '../types/page.ts' */
+import type { Speaker, SpeakerOptions } from '../types/page.ts';
 
 /** Whether a page may pick the output (Chromium, the desktop app). Elsewhere only the system default plays. */
 export const canChooseOutput = typeof AudioContext !== 'undefined' && 'setSinkId' in AudioContext.prototype;
 
-/**
- * Audio outputs, minus "default" and "communications", which repeat a real output under another name.
- * @returns {Promise<MediaDeviceInfo[]>}
- */
-export async function listOutputs() {
+/** Audio outputs, minus "default" and "communications", which repeat a real output under another name. */
+export async function listOutputs(): Promise<MediaDeviceInfo[]> {
   const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
   return devices.filter((d) => d.kind === 'audiooutput' && d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications');
 }
@@ -20,11 +17,8 @@ export async function listOutputs() {
  * Play the given mics (device ids; '' = system default) on the output sinkId ('' = system default) at volume
  * (0–1); a muted mic (per mic in muted) is not played. onChange() runs when a mic disconnects or comes back;
  * reattach() opens it again. Throws if the output or none of the mics can be opened.
- * @param {string[]} deviceIds
- * @param {SpeakerOptions} opts
- * @returns {Promise<Speaker>}
  */
-export async function openSpeaker(deviceIds, { sinkId, volume, muted, onChange }) {
+export async function openSpeaker(deviceIds: string[], { sinkId, volume, muted, onChange }: SpeakerOptions): Promise<Speaker> {
   // Auto gain turns the room up between sentences, which is when a speaker starts to howl. Chromium shares a mic's
   // processing, though: if the transcription opened the mic first, the speaker gets its auto gain too.
   const processing = { noiseSuppression: false, autoGainControl: false };

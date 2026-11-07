@@ -29,8 +29,8 @@ import { loadClips, selectClips, clipSamples } from '../lib/benchmark/dataset.ts
 import { runModel, planStages, STAGES, CONDITIONS, SILENCE_INPUTS } from '../lib/benchmark/suite.ts';
 import { renderReport } from '../lib/benchmark/report.ts';
 import { parseArgs } from '../scripts/benchmark-suite.ts';
-import { createBacklog, lostNote } from '../public/backlog.js';
-import { spokenOrder } from '../public/order.js';
+import { createBacklog, lostNote } from '../web/backlog.ts';
+import { spokenOrder } from '../web/order.ts';
 import { SR, FIXTURE, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs, loadWav, saveWav } from './helpers.ts';
 import { memoryCheck } from './meeting.ts';
 import type { Model } from '../types/model.ts';
@@ -605,7 +605,7 @@ t.check('UNIT-SESS-15', 'mic 2\'s short line is transcribed before mic 1\'s long
 // ---------- the page and the .txt in one order (#50; loudness detector, stand-in model) ----------
 // Mic 1 talks for 5.5 s with one short dip, longer than the longest sentence (5 s here): the session cuts it at the
 // dip, 3 s back, and the rest gets its id only then. Mic 2 started a short sentence after the dip but before the cut,
-// so it has the smaller id and the later start. The page (public/order.js, the rule app.js places lines with) and the
+// so it has the smaller id and the later start. The page (web/order.ts, the rule app.ts places lines with) and the
 // .txt must both put mic 1's rest first. Before the fix the page sorted by id: mic 2's line came first.
 async function splitOrder() {
   const sent: any[] = [];
@@ -650,7 +650,7 @@ const rule = [
   { connection: 0, start: 3.8, id: 4 }, // the same moment as #2
   { start: 0.8, id: 5 }, // the .txt's lines have no connection: the first
 ].sort(spokenOrder).map((l) => `${l.connection ?? '-'}:${l.id}`).join(' ');
-t.check('UNIT-ORDER-02', 'the order rule (public/order.js): by connection, then by start, then by id', rule === '-:5 0:3 0:2 0:4 1:1', rule);
+t.check('UNIT-ORDER-02', 'the order rule (web/order.ts): by connection, then by start, then by id', rule === '-:5 0:3 0:2 0:4 1:1', rule);
 
 // ---------- recordings that start in the same second (#2; loudness detector: deterministic) ----------
 // File names have whole seconds. Two tabs, or the desktop app and `npm start` (they share transcripts/), can start

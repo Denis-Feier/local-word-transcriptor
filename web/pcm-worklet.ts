@@ -4,8 +4,16 @@ const TARGET_RATE = 16000;
 const CHUNK = 1600;
 
 class PcmCapture extends AudioWorkletProcessor {
-  /** @param {{ processorOptions: { mics: number } }} options */
-  constructor({ processorOptions }) {
+  declare mics: number;
+  declare ratio: number;
+  declare phase: number;
+  declare sums: Float32Array;
+  declare count: number;
+  declare length: number;
+  declare buffer: ArrayBuffer;
+  declare chunk: Float32Array;
+
+  constructor({ processorOptions }: { processorOptions: { mics: number } }) {
     super();
     this.mics = processorOptions.mics;
     this.ratio = sampleRate / TARGET_RATE; // sampleRate is a global in AudioWorkletGlobalScope
@@ -17,15 +25,12 @@ class PcmCapture extends AudioWorkletProcessor {
   }
 
   newChunk() {
-    /** @type {ArrayBuffer} */
     this.buffer = new ArrayBuffer(4 + this.mics * CHUNK * 4);
     new Uint32Array(this.buffer, 0, 1)[0] = this.mics;
-    /** @type {Float32Array} */
     this.chunk = new Float32Array(this.buffer, 4);
   }
 
-  /** @param {Float32Array[][]} inputs  one per mic, each its channels */
-  process(inputs) {
+  process(inputs: Float32Array[][]) {
     // A mic that is not connected (yet, or any more) has no channels: it records silence, so the others stay in step.
     const channels = inputs.map((input) => input[0]);
     const frames = channels.find(Boolean)?.length ?? 128;

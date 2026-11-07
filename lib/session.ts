@@ -7,7 +7,7 @@ import { resultToText, contextTail } from './text.ts';
 import { SteadyText } from './steady.ts';
 import { sharedWords, comparedWords, words } from './wer.ts';
 import { WavWriter, concatFloat32, SAMPLE_RATE } from './wav.ts';
-import { spokenOrder } from '../public/order.js';
+import { spokenOrder } from '../web/order.ts';
 import type { Config } from '../types/config.ts';
 import type { ServerMessage } from '../types/protocol.ts';
 import type { CurrentSegment, Frame, NoiseFloor, Segment } from '../types/audio.ts';
@@ -597,7 +597,7 @@ export class Session {
   }
 
   /**
-   * Lines go to the .txt in the order they were spoken, by the page's own rule (public/order.js; #7, #50): a line
+   * Lines go to the .txt in the order they were spoken, by the page's own rule (web/order.ts; #7, #50): a line
    * waits until every sentence that started before it, on any mic, is published (or dropped). A short line on one mic
    * is otherwise finished, and written, before a longer one that started earlier on the other. `all` writes every
    * waiting line (Clear).

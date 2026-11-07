@@ -548,7 +548,7 @@ async function connections() {
 
 /**
  * Flaky Wi-Fi (#10, D2): the connection drops many times during a meeting and the page reconnects at once, telling the
- * server the transcript's name and how much audio it had sent (public/app.js: `resume`), so the same .txt and WAVs go
+ * server the transcript's name and how much audio it had sent (web/app.ts: `resume`), so the same .txt and WAVs go
  * on. One Room plays the meeting on through every connection: the server hears what one steady page would send. A
  * sentence cut by a drop is finished by the old connection (its line goes to the .txt; no page gets it) and the rest
  * by the new one, so those utterances are not judged.

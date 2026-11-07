@@ -1,26 +1,23 @@
 // Projector view: the last few sentences in large type, centred, plus the sentence being spoken.
 // Used by the main page (Projector button) and by the caption-only window (/?display).
 
-/** @import { Stage, StageHooks, StagePrefs, StageSnapshot, Theme } from '../types/page.ts' */
+import type { Stage, StageHooks, StagePrefs, StageSnapshot, Theme } from '../types/page.ts';
 
 const PREFS_KEY = 'stage';
-/** @type {StagePrefs} */
-const DEFAULTS = { size: 4.5, lines: 3, theme: 'dark' }; // size in % of the screen width
+const DEFAULTS: StagePrefs = { size: 4.5, lines: 3, theme: 'dark' }; // size in % of the screen width
 export const SIZE = { min: 2.5, max: 10, step: 0.5 };
 export const THEMES = { dark: 'White on black', contrast: 'Yellow on black', light: 'Black on white' };
 const IDLE_MS = 2500;
 
-/** @returns {StagePrefs} */
-export function loadPrefs() {
+export function loadPrefs(): StagePrefs {
   try {
-    return { ...DEFAULTS, ...JSON.parse(/** @type {string} */ (localStorage.getItem(PREFS_KEY))) }; // nothing saved: null, which parses to null and spreads to nothing
+    return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(PREFS_KEY) as string) }; // nothing saved: null, which parses to null and spreads to nothing
   } catch {
     return { ...DEFAULTS };
   }
 }
 
-/** @param {StagePrefs} prefs */
-export function savePrefs(prefs) {
+export function savePrefs(prefs: StagePrefs) {
   try {
     localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); // other windows pick this up via the storage event
   } catch {
@@ -28,23 +25,15 @@ export function savePrefs(prefs) {
   }
 }
 
-/**
- * @param {HTMLElement} root  the .stage element
- * @param {StageHooks} [hooks]  onToggle (start/stop), onSettings, onClose; omitted ones hide their buttons
- * @returns {Stage}
- */
-export function createStage(root, hooks = {}) {
-  const linesEl = /** @type {HTMLElement} */ (root.querySelector('.stage-lines'));
-  const frame = /** @type {HTMLElement} */ (root.querySelector('.stage-frame'));
-  const hint = /** @type {HTMLElement} */ (root.querySelector('.stage-hint'));
-  const toolbar = /** @type {HTMLElement} */ (root.querySelector('.stage-toolbar'));
-  /** @param {string} action */
-  const button = (action) => /** @type {HTMLButtonElement} */ (toolbar.querySelector(`[data-action="${action}"]`));
+export function createStage(root: HTMLElement, hooks: StageHooks = {}): Stage {
+  const linesEl = root.querySelector('.stage-lines') as HTMLElement;
+  const frame = root.querySelector('.stage-frame') as HTMLElement;
+  const hint = root.querySelector('.stage-hint') as HTMLElement;
+  const toolbar = root.querySelector('.stage-toolbar') as HTMLElement;
+  const button = (action: string) => toolbar.querySelector(`[data-action="${action}"]`) as HTMLButtonElement;
   let prefs = loadPrefs();
-  /** @type {StageSnapshot} */
-  let snap = { finals: [], partials: [], recording: false, speaking: false };
-  /** @type {ReturnType<typeof setTimeout> | null} */
-  let idleTimer = null;
+  let snap: StageSnapshot = { finals: [], partials: [], recording: false, speaking: false };
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let leavingFullscreen = false;
 
   button('toggle').hidden = !hooks.onToggle;
@@ -59,8 +48,7 @@ export function createStage(root, hooks = {}) {
     render();
   }
 
-  /** @param {Partial<StagePrefs>} patch */
-  function setPrefs(patch) {
+  function setPrefs(patch: Partial<StagePrefs>) {
     prefs = { ...prefs, ...patch };
     savePrefs(prefs);
     applyPrefs();
@@ -68,15 +56,14 @@ export function createStage(root, hooks = {}) {
 
   function render() {
     const finals = snap.finals.slice(-prefs.lines);
-    /** @type {{ key: number | string, text: string, mic?: number | null, kind: string }[]} */
-    const rows = finals.map((l, i) => ({ ...l, kind: i === finals.length - 1 ? 'latest' : 'older' }));
+    const rows: { key: number | string, text: string, mic?: number | null, kind: string }[] = finals.map((l, i) => ({ ...l, kind: i === finals.length - 1 ? 'latest' : 'older' }));
     // Live sentences go underneath (one per mic when people talk at once); an empty row keeps the block from
     // jumping when someone starts talking.
     if (snap.partials.length) rows.push(...snap.partials.map((p) => ({ ...p, kind: 'partial' })));
     else rows.push({ key: 'next', text: '', kind: 'placeholder' });
 
     // Reuse elements by key so a live sentence turns final in place instead of being redrawn.
-    const existing = new Map(/** @type {HTMLElement[]} */ ([...linesEl.children]).map((el) => /** @type {[string, HTMLElement]} */ ([el.dataset.key, el])));
+    const existing = new Map(([...linesEl.children] as HTMLElement[]).map((el) => [el.dataset.key, el] as [string, HTMLElement]));
     const wanted = new Set(rows.map((r) => String(r.key)));
     for (const [key, el] of existing) if (!wanted.has(key)) el.remove();
     rows.forEach((row, i) => {
@@ -127,11 +114,9 @@ export function createStage(root, hooks = {}) {
     }
   }
 
-  /** @param {KeyboardEvent} e */
-  function onKey(e) {
-    if (root.hidden || /** @type {Element | null} */ (e.target)?.closest?.('input, select, textarea, .drawer')) return;
-    /** @type {Record<string, () => void>} */
-    const keys = {
+  function onKey(e: KeyboardEvent) {
+    if (root.hidden || (e.target as Element | null)?.closest?.('input, select, textarea, .drawer')) return;
+    const keys: Record<string, () => void> = {
       '+': () => setPrefs({ size: Math.min(SIZE.max, prefs.size + SIZE.step) }),
       '=': () => setPrefs({ size: Math.min(SIZE.max, prefs.size + SIZE.step) }),
       '-': () => setPrefs({ size: Math.max(SIZE.min, prefs.size - SIZE.step) }),
@@ -147,14 +132,13 @@ export function createStage(root, hooks = {}) {
     wake();
   }
 
-  /** @returns {Theme} */
-  const nextTheme = () => {
-    const names = /** @type {Theme[]} */ (Object.keys(THEMES));
+  const nextTheme = (): Theme => {
+    const names = Object.keys(THEMES) as Theme[];
     return names[(names.indexOf(prefs.theme) + 1) % names.length];
   };
 
   toolbar.addEventListener('click', (e) => {
-    const action = /** @type {Element} */ (e.target).closest('button')?.dataset.action;
+    const action = (e.target as Element).closest('button')?.dataset.action;
     if (action === 'toggle') hooks.onToggle?.(); // a button without its hook is hidden (above)
     else if (action === 'smaller') setPrefs({ size: Math.max(SIZE.min, prefs.size - SIZE.step) });
     else if (action === 'bigger') setPrefs({ size: Math.min(SIZE.max, prefs.size + SIZE.step) });
@@ -164,7 +148,7 @@ export function createStage(root, hooks = {}) {
     else if (action === 'fullscreen') toggleFullscreen();
     else if (action === 'close') hooks.onClose?.();
   });
-  root.addEventListener('dblclick', (e) => !(/** @type {Element} */ (e.target)).closest('.stage-toolbar') && toggleFullscreen());
+  root.addEventListener('dblclick', (e) => !(e.target as Element).closest('.stage-toolbar') && toggleFullscreen());
   root.addEventListener('pointermove', wake);
   document.addEventListener('keydown', onKey);
   document.addEventListener('fullscreenchange', () => {

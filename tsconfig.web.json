@@ -1,21 +1,24 @@
 {
-  // The page: public/*.js today, web/*.ts from Phase 4 on (then emitted into public/). No Node types here: the page must
-  // not see process or Buffer. The audio worklet's globals (AudioWorkletProcessor, sampleRate, registerProcessor) come
-  // from @types/audioworklet.
+  // The page: web/*.ts, checked here without emitting (npm run typecheck, STATIC-06) and emitted into the committed
+  // public/*.js by scripts/build-web.ts (npm run build:web; STATIC-07 fails when public/ is stale). No Node types here:
+  // the page must not see process or Buffer. The audio worklet's globals (AudioWorkletProcessor, sampleRate,
+  // registerProcessor) come from @types/audioworklet. rootDir is the repository because the page imports the shared
+  // types in types/ and tsc wants every source file under rootDir; the build script copies web/'s output into public/.
   "compilerOptions": {
     "strict": true,
-    "allowJs": true,
-    "checkJs": true,
     "noEmit": true,
+    "rootDir": ".",
+    "newLine": "lf",
     "module": "esnext",
     "moduleResolution": "bundler",
     "target": "es2022",
     "lib": ["es2024", "dom", "dom.iterable"],
     "types": ["audioworklet"],
     "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
     "verbatimModuleSyntax": true,
     "erasableSyntaxOnly": true,
     "skipLibCheck": true
   },
-  "include": ["public", "types/page.ts"]
+  "include": ["web", "types/page.ts"]
 }

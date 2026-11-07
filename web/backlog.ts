@@ -1,17 +1,12 @@
 // Audio recorded while the server is unreachable, kept until it is back. An outage longer than the limit keeps the
 // newest audio and drops the oldest, so the page catches up on what is being said now, and says how much was lost (#11).
 
-/** @import { Backlog, BacklogTaken } from '../types/audio.ts' */
+import type { Backlog, BacklogTaken } from '../types/audio.ts';
 
-export const CHUNK_SEC = 0.1; // pcm-worklet.js sends 1600 samples at 16 kHz per chunk
+export const CHUNK_SEC = 0.1; // pcm-worklet.ts sends 1600 samples at 16 kHz per chunk
 
-/**
- * @param {number} max  chunks kept
- * @returns {Backlog}
- */
-export function createBacklog(max) {
-  /** @type {ArrayBuffer[]} */
-  let chunks = [];
+export function createBacklog(max: number): Backlog {
+  let chunks: ArrayBuffer[] = [];
   let dropped = 0;
   return {
     push(chunk) {
@@ -34,11 +29,8 @@ export function createBacklog(max) {
   };
 }
 
-/**
- * "4 min 12 s", "45 s", "5 min"
- * @param {number} sec
- */
-export function duration(sec) {
+/** "4 min 12 s", "45 s", "5 min" */
+export function duration(sec: number) {
   const s = Math.round(sec);
   const min = Math.floor(s / 60);
   const rest = s % 60;
@@ -46,11 +38,8 @@ export function duration(sec) {
   return rest ? `${min} min ${rest} s` : `${min} min`;
 }
 
-/**
- * What the page says after an outage that outlasted the backlog; '' when nothing was lost.
- * @param {BacklogTaken} taken
- */
-export function lostNote({ chunks, dropped }) {
+/** What the page says after an outage that outlasted the backlog; '' when nothing was lost. */
+export function lostNote({ chunks, dropped }: BacklogTaken) {
   if (!dropped) return '';
   const lost = dropped * CHUNK_SEC;
   const total = (chunks.length + dropped) * CHUNK_SEC;

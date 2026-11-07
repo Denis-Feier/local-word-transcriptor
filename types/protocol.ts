@@ -1,4 +1,4 @@
-// The WebSocket contract between server.ts / lib/session.ts and public/app.js, and the BroadcastChannel contract
+// The WebSocket contract between server.ts / lib/session.ts and web/app.ts, and the BroadcastChannel contract
 // between the main window and its caption windows (/?display). Phase 1 of docs/typescript-migration.md: written from
 // every send() site and the page's switch, and read against the PROT-* tests.
 //
@@ -205,7 +205,7 @@ export type ClientMessageType = ClientMessage['type'];
 // ---------- shared by the server and the page ----------
 
 /**
- * What spokenOrder() (public/order.js) compares: the page's lines and the server's held lines both have these, so
+ * What spokenOrder() (web/order.ts) compares: the page's lines and the server's held lines both have these, so
  * the transcript and the .txt come out in one order (#7, #50).
  */
 export interface Spoken {
@@ -226,7 +226,7 @@ export interface CaptionRow {
   mic: number | null;
 }
 
-/** What the projector view and the caption windows show (public/app.js snapshot(), public/stage.js update()). */
+/** What the projector view and the caption windows show (web/app.ts snapshot(), web/stage.ts update()). */
 export interface StageSnapshot {
   /** The newest final lines, oldest first. */
   finals: CaptionRow[];

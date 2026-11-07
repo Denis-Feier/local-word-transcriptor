@@ -1,4 +1,4 @@
-// The page's shapes (public/*.js): the projector view, the settings panel, mics, speaker, backlog and transcript lines.
+// The page's shapes (web/*.ts): the projector view, the settings panel, mics, speaker, backlog and transcript lines.
 // Web project only (tsconfig.web.json): these use the DOM's types. Phase 1 of docs/typescript-migration.md.
 import type { ClientMessage, Spoken, StageSnapshot, TuningMessage } from './protocol.ts';
 import type { DetectorName } from './audio.ts';
@@ -7,7 +7,7 @@ export type { Backlog, BacklogTaken } from './audio.ts';
 
 declare global {
   interface AudioContext {
-    /** Chromium's choice of audio output (speaker.js); the page checks for it first (`canChooseOutput`). */
+    /** Chromium's choice of audio output (speaker.ts); the page checks for it first (`canChooseOutput`). */
     setSinkId(sinkId: string | { type: 'none' }): Promise<void>;
   }
 }
@@ -15,7 +15,7 @@ import type { TranscriberState } from './engine.ts';
 
 export type { CaptionRow, Spoken, StageSnapshot } from './protocol.ts';
 
-// ---------- projector view (stage.js) ----------
+// ---------- projector view (stage.ts) ----------
 
 export type Theme = 'dark' | 'contrast' | 'light';
 
@@ -46,7 +46,7 @@ export interface Stage {
   setPrefs(patch: Partial<StagePrefs>): void;
 }
 
-// ---------- settings panel (settings.js) ----------
+// ---------- settings panel (settings.ts) ----------
 
 export interface SettingsHooks {
   send(msg: ClientMessage): void;
@@ -66,7 +66,7 @@ export interface SettingsPanel {
   setMics(count: number): void;
 }
 
-// ---------- microphones and speaker (mics.js, speaker.js) ----------
+// ---------- microphones and speaker (mics.ts, speaker.ts) ----------
 
 /** A chosen mic, in order (Mic 1, Mic 2, …); id '' is the system default. Remembered without its mute. */
 export interface MicPick {
@@ -114,7 +114,7 @@ export interface CaptureOptions {
   noiseSuppression: boolean;
   /** Per mic. */
   muted: boolean[];
-  /** Each ~100 ms chunk (see pcm-worklet.js): a Uint32 mic count, then each mic's 1600 samples. */
+  /** Each ~100 ms chunk (see pcm-worklet.ts): a Uint32 mic count, then each mic's 1600 samples. */
   onChunk(buffer: ArrayBuffer): void;
   /** A mic disconnected or came back. */
   onChange(): void;
@@ -149,7 +149,7 @@ export interface Inputs {
   defaultId: string;
 }
 
-// ---------- transcript (app.js, order.js) ----------
+// ---------- transcript (app.ts, order.ts) ----------
 
 /** One line of the transcript as the page keeps it (the `lines` map), live or final. */
 export interface Line extends Spoken {
