@@ -10,18 +10,18 @@ import { normalize, resultToText, contextTail } from '../lib/text.ts';
 import { wordErrorRate, sharedWords } from '../lib/wer.ts';
 import { TUNING, sanitizeTuning, applyTuning, tuningFrom } from '../lib/tuning.ts';
 import { encodeWav, decodeWav, WavWriter } from '../lib/wav.ts';
-import { Segmenter } from '../lib/segmenter.js';
-import { EnergyDetector, SileroDetector, VadPool, createDetector } from '../lib/vad.js';
-import { CrosstalkGate } from '../lib/crosstalk.js';
+import { Segmenter } from '../lib/segmenter.ts';
+import { EnergyDetector, SileroDetector, VadPool, createDetector } from '../lib/vad.ts';
+import { CrosstalkGate } from '../lib/crosstalk.ts';
 import { Session, fileStamp, fmtTime } from '../lib/session.js';
 import { SteadyText } from '../lib/steady.ts';
 import { Transcriber } from '../lib/transcriber.js';
 import { TranscribeCppEngine, describeDevice } from '../lib/engines/transcribe-cpp.js';
-import { SidecarEngine } from '../lib/engines/sidecar.js';
+import { SidecarEngine } from '../lib/engines/sidecar.ts';
 import { WhisperCppEngine } from '../lib/engines/whisper-cpp.js';
 import { PythonNemoEngine } from '../lib/engines/python-nemo.js';
 import { config, ROOT } from '../lib/config.ts';
-import { MODELS, findModel } from '../lib/models.js';
+import { MODELS, findModel } from '../lib/models.ts';
 import { liveSteadiness, sumSteadiness } from '../lib/benchmark/metrics.ts';
 import { withNoise, withGain, inRoom, silence as benchSilence, joinClips, rms, db } from '../lib/benchmark/audio.ts';
 import { machineInfo, describeMachine } from '../lib/benchmark/machine.js';
@@ -770,7 +770,7 @@ function piece(input, audio) {
 async function cloud(audio, fakeOptions = {}, { close = false } = {}) {
   const fake = await fakeElevenLabs(fakeOptions);
   const keep = { ...config.elevenlabs };
-  Object.assign(config.elevenlabs, { apiKey: 'test-key', baseUrl: fake.url }); // models.js looks for the key here
+  Object.assign(config.elevenlabs, { apiKey: 'test-key', baseUrl: fake.url }); // models.ts looks for the key here
   const out = scratch('cloud');
   const conf = { ...structuredClone(config), transcriptsDir: out, vad: { ...config.vad, engine: 'energy' } };
   const transcriber = new Transcriber(conf);
@@ -1074,7 +1074,7 @@ http.createServer((req, res) => res.end(JSON.stringify({ status: 'ok' }))).liste
   missing.bin = path.join(dir, 'no-such-program');
   const missingError = await missing.load().then(() => null, (err) => err.message);
   t.check('UNIT-GPU-04', 'a model process that fails to start on the GPU is started again on the CPU; a missing program is reported, not retried',
-    sidecar.commands.join() === 'gpu,cpu' && sidecar.device === 'CPU' && /GPU init failed/.test(sidecar.fallback)
+    sidecar.commands.join() === 'gpu,cpu' && sidecar.device === 'CPU' && /GPU init failed/.test(String(sidecar.fallback))
       && missingError === 'fake program missing' && missing.commands.join() === 'gpu',
     `started ${sidecar.commands.join(' then ')} -> ${sidecar.device}; missing program: ${missingError} after ${missing.commands.join()}`);
 
@@ -1484,7 +1484,7 @@ if (!silero) {
 
 // ---------- voice detectors are reused, not rebuilt (#4) ----------
 // A Silero detector holds ~3 MB of native memory that V8 does not see, so a dropped one stayed until V8 happened to
-// collect it. Detectors now go back to a pool (lib/vad.js) when a connection closes, the mics change or the threshold
+// collect it. Detectors now go back to a pool (lib/vad.ts) when a connection closes, the mics change or the threshold
 // changes. Without the fix every connection made 3 and every threshold change 2, and they stayed in memory.
 
 // The pool's rules, with stand-ins for sherpa-onnx's detectors.

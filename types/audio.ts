@@ -1,5 +1,5 @@
 // The audio pipeline's shapes: frames, sentences, detectors, the crosstalk gate's noise floors and WAV files
-// (lib/vad.js, lib/segmenter.js, lib/crosstalk.js, lib/wav.js). Phase 1 of docs/typescript-migration.md.
+// (lib/vad.ts, lib/segmenter.js, lib/crosstalk.ts, lib/wav.js). Phase 1 of docs/typescript-migration.md.
 
 /** One detector frame (512 samples, 32 ms at 16 kHz) as Segmenter.analyze() returns it and CrosstalkGate.push() reads it. */
 export interface Frame {
@@ -35,7 +35,7 @@ export interface CurrentSegment {
 
 export type DetectorName = 'silero' | 'energy';
 
-/** A frame-level speech detector (SileroDetector, EnergyDetector in lib/vad.js). */
+/** A frame-level speech detector (SileroDetector, EnergyDetector in lib/vad.ts). */
 export interface Detector {
   readonly name: DetectorName;
   /** Loud frames in a row that start a sentence. */
@@ -70,7 +70,7 @@ export interface SegmenterOptions extends SegmentTiming {
 }
 
 /**
- * A mic's background noise as the crosstalk gate learned it (lib/crosstalk.js NoiseFloor), kept when the mics change
+ * A mic's background noise as the crosstalk gate learned it (lib/crosstalk.ts NoiseFloor), kept when the mics change
  * and across a reconnect (#44).
  */
 export interface NoiseFloor {

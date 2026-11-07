@@ -36,8 +36,8 @@ cannot be prepared without it.
 3. **What changed for users** since the text last changed:
    ```bash
    since=$(git log -1 --format=%H -- docs/manual/manual.en.html)
-   git log --oneline $since..HEAD -- public desktop/main.mjs lib/tuning.ts lib/config.ts lib/models.js server.js package.json .github/release-notes.md README.md
-   git diff $since..HEAD -- public desktop/main.mjs lib/tuning.ts lib/config.ts lib/models.js
+   git log --oneline $since..HEAD -- public desktop/main.mjs lib/tuning.ts lib/config.ts lib/models.ts server.js package.json .github/release-notes.md README.md
+   git diff $since..HEAD -- public desktop/main.mjs lib/tuning.ts lib/config.ts lib/models.ts
    ```
    Look for anything a user can see or do: new, renamed or removed controls, labels, hints, menu items, keys,
    defaults, ranges, warnings, behaviours, supported systems, install or first-start steps, models in the desktop

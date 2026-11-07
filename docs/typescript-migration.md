@@ -327,6 +327,19 @@ before, the stripper's one-time load, well under the 100 ms budget and nothing a
 (`lib/tuning.ts:36:44`, checked against the source). `node --check` cannot parse `.ts`, so `STATIC-01` keeps
 parsing the `.js` files and `STATIC-06` (tsc) is the syntax check for `.ts` until N7 extends the walk.
 
+What happened in N2 (2026-11-07, `ts/3-n2`): six files, N1's pattern, with one addition: a field the constructor
+does not set (`SidecarEngine`'s `url`, `ready`, `device` and `fallback`, which `load()` sets; `Segmenter`'s four frame
+counts, which `setTiming()` sets; `Transcriber`'s `device` and `lastCrashAt` in N3) is a `declare` field. Node strips
+it like a type, so the running class defines no property the old code did not; a plain field declaration would
+define it as `undefined` from the constructor on. `VadPool<V extends { reset(): void } = Vad>` replaces the
+`@template`. Two things typed differently once the file was TypeScript: `Object.entries` of a `JSON.parse` result
+is `[string, unknown][]` in a `.ts` file where the `.js` file got `any`, so `convert-whisper.ts` names the safetensors
+header (`SafeTensor`) and the vocabulary (`Record<string, number>`); and `SidecarEngine.fallback` is
+`string | undefined` where the JavaScript inference had `any`, so `UNIT-GPU-04` wraps it in `String()` as
+`UNIT-GPU-03` already did. The `.js` mentions followed in README's file table, TESTING.md §7, the types' comments,
+`public/app.js`'s one comment and the user-manual skill's `git log` paths; the history rows of TESTING.md §13 and
+§14 keep the names the files had then.
+
 ## 7. Phase 4 — the page becomes `.ts`
 
 Branch `ts/4-web`. `public/*.js` move to `web/*.ts` (`git mv`, so history follows), keep `web/order.ts` as the one
@@ -404,6 +417,7 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 | Phase 2 N8 | `ts/2-n8` | merged | 2026-11-07 | `checkJs` on everywhere, no pragmas; quick tier 149 / 0 / 1 / 0. **Phase 2 complete.** |
 | Phases 0–2 | `main` | merged, `1541a37` | 2026-11-07 | twelve fast-forwards (`ts/0-tooling` … `ts/2-n8`); full tier on `main` 236 / 0 / 5 / 0 (TESTING.md §12) |
 | Phase 3 N1 | `ts/3-n1` | done, awaiting merge | 2026-11-07 | nine leaf modules are `.ts`; the three projects green; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-17-05-16_204bd99/`) |
-| Phase 3 N2 … N7 | `ts/3-<batch>` | not started | | E1 decides `desktop/main.ts` |
+| Phase 3 N2 | `ts/3-n2` | done, awaiting merge | 2026-11-07 | the detectors, the segmenter, the crosstalk gate, the catalogue, the converter and the sidecar base; full tier 236 / 0 / 5 / 0 (`test-results/2026-11-07-17-15-20_65c785f/`) |
+| Phase 3 N3 … N7 | `ts/3-<batch>` | not started | | E1 decides `desktop/main.ts` |
 | Phase 4 | `ts/4-web` | not started | | D2 confirmed? |
 | Phase 5 | `ts/5-tighten` | not started | | |

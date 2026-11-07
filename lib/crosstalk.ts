@@ -1,6 +1,6 @@
-import { FRAME } from './vad.js';
+import { FRAME } from './vad.ts';
 import { SAMPLE_RATE } from './wav.ts';
-/** @import { Frame, NoiseFloor as Floor } from '../types/audio.ts' */
+import type { Frame, NoiseFloor as Floor } from '../types/audio.ts';
 
 const FRAME_SEC = FRAME / SAMPLE_RATE; // 32 ms
 const HOLD = 8; // frames either side (~0.25 s): a Bluetooth mic delivers its audio up to this much later than a wired one
@@ -12,15 +12,12 @@ const HISTORY = Math.round(120 / FRAME_SEC); // clarity is kept for 2 minutes, f
 const QUIET_FRAMES = 50; // ~1.6 s of moments in which no mic heard speech: each mic's noise level is taken from these
 const GLUED = 8; // frames (~0.25 s, a word): the least of another person's speech theirsFrom() cuts off, and of one's own it keeps
 
-/** @param {number} level */
-const db = (level) => 20 * Math.log10(Math.max(level, 1e-9));
-/** @param {number[]} xs */
-const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor((xs.length - 1) / 2)];
-/** @param {number} count */
-const frames0 = (count) => Array.from({ length: count }, () => ({ speech: 0, kept: 0 }));
+const db = (level: number) => 20 * Math.log10(Math.max(level, 1e-9));
+const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor((xs.length - 1) / 2)];
+const frames0 = (count: number) => Array.from({ length: count }, () => ({ speech: 0, kept: 0 }));
 
 /** A moment waiting for look-ahead: one frame per mic, the detector's verdicts and each mic's clarity. */
-/** @typedef {{ frames: Frame[], speech: boolean[], clarity: number[] }} Entry */
+type Entry = { frames: Frame[]; speech: boolean[]; clarity: number[] };
 
 /**
  * A mic's background noise in dB: the 20th percentile of its levels (where the quietest fifth ends) over the last
@@ -33,16 +30,10 @@ const frames0 = (count) => Array.from({ length: count }, () => ({ speech: 0, kep
 class NoiseFloor {
   db = db(MIN_FLOOR);
   learned = false;
-  /** @type {number[]} */
-  levels = []; // dB, oldest first
-  /** @type {number[]} */
-  frames = []; // the frame index of each level
+  levels: number[] = []; // dB, oldest first
+  frames: number[] = []; // the frame index of each level
 
-  /**
-   * @param {number} level
-   * @param {number} index
-   */
-  push(level, index) {
+  push(level: number, index: number) {
     if (level < NO_SIGNAL) return;
     this.levels.push(db(Math.max(level, MIN_FLOOR)));
     this.frames.push(index);
@@ -53,14 +44,11 @@ class NoiseFloor {
     this.#update();
   }
 
-  /**
-   * Speech noticed at frame `index`: the frames just before it were probably its start, not the room.
-   * @param {number} index
-   */
-  forget(index) {
+  /** Speech noticed at frame `index`: the frames just before it were probably its start, not the room. */
+  forget(index: number) {
     // No frames: at(-1) is undefined, which compares false, as wanted.
-    if (!(/** @type {number} */ (this.frames.at(-1)) >= index)) return;
-    while (/** @type {number} */ (this.frames.at(-1)) >= index) {
+    if (!((this.frames.at(-1) as number) >= index)) return;
+    while ((this.frames.at(-1) as number) >= index) {
       this.levels.pop();
       this.frames.pop();
     }
@@ -83,36 +71,33 @@ class NoiseFloor {
  * is still compared with the same moment on the others.
  */
 export class CrosstalkGate {
-  /**
-   * @param {number} count  mics
-   * @param {number} marginDb
-   * @param {Floor[]} [floors]  each mic's noise as learned before the mics changed (the same devices, most likely), kept if given
-   */
-  constructor(count, marginDb, floors = []) {
+  marginDb: number;
+  floors: Floor[];
+  history: Float32Array[];
+  heard: Uint8Array[];
+  latest: number;
+  past: Entry[];
+  ahead: Entry[];
+  counts: { speech: number; kept: number }[];
+
+  /** floors: each mic's noise as learned before the mics changed (the same devices, most likely), kept if given. */
+  constructor(count: number, marginDb: number, floors: Floor[] = []) {
     this.marginDb = marginDb;
-    /** @type {Floor[]} */
     this.floors = Array.from({ length: count }, (_, mic) => floors[mic] ?? new NoiseFloor());
     this.history = Array.from({ length: count }, () => new Float32Array(HISTORY).fill(NaN));
     this.heard = Array.from({ length: count }, () => new Uint8Array(HISTORY)); // the detector's verdict, before the gate
     this.latest = -1; // index of the newest frame in history
-    /** @type {Entry[]} */
     this.past = []; // decided entries, kept as look-back
-    /** @type {Entry[]} */
     this.ahead = []; // entries waiting for look-ahead
     this.counts = frames0(count); // speech frames per mic, and how many were kept, for report()
   }
 
-  /** @param {number} marginDb */
-  setMargin(marginDb) {
+  setMargin(marginDb: number) {
     this.marginDb = marginDb;
   }
 
-  /**
-   * One frame per mic, all from the same moment (Segmenter.analyze). Returns the frames from HOLD frames ago, decided, or null.
-   * @param {Frame[]} frames
-   * @returns {Frame[] | null}
-   */
-  push(frames) {
+  /** One frame per mic, all from the same moment (Segmenter.analyze). Returns the frames from HOLD frames ago, decided, or null. */
+  push(frames: Frame[]): Frame[] | null {
     const speech = frames.map((f) => f.loud);
     const clarity = frames.map((f, mic) => {
       const value = db(f.level) - this.floors[mic].db;
@@ -126,13 +111,9 @@ export class CrosstalkGate {
     return this.ahead.length > HOLD ? this.#decide() : null;
   }
 
-  /**
-   * Decide the frames still waiting for look-ahead (Stop pressed).
-   * @returns {Frame[][]}
-   */
-  drain() {
-    /** @type {Frame[][]} */
-    const out = [];
+  /** Decide the frames still waiting for look-ahead (Stop pressed). */
+  drain(): Frame[][] {
+    const out: Frame[][] = [];
     while (this.ahead.length) out.push(this.#decide());
     return out;
   }
@@ -155,12 +136,7 @@ export class CrosstalkGate {
    * moment come out well above zero (5–10 dB in the tests), the mic's own speech below zero even where it overlaps the
    * other person, and the same audio on two mics exactly 0.
    */
-  /**
-   * @param {number} mic
-   * @param {number} start
-   * @param {number} end
-   */
-  deficit(mic, start, end) {
+  deficit(mic: number, start: number, end: number) {
     const gaps = this.#gaps(mic, start, end).map(({ gap }) => gap);
     return gaps.length ? median(gaps) : NaN;
   }
@@ -175,14 +151,7 @@ export class CrosstalkGate {
    * this mic heard at least GLUED frames of speech nearly as clearly as the other mic. Someone who goes on softly while
    * another person talks louder keeps their level, and their words.
    */
-  /**
-   * @param {number} mic
-   * @param {number} start
-   * @param {number} end
-   * @param {number} limitDb
-   * @returns {number | null}
-   */
-  theirsFrom(mic, start, end, limitDb) {
+  theirsFrom(mic: number, start: number, end: number, limitDb: number): number | null {
     const gaps = this.#gaps(mic, start, end);
     let score = 0;
     let best = 0;
@@ -202,25 +171,15 @@ export class CrosstalkGate {
    * At every frame between two session times where this mic's detector heard speech: how much more clearly the
    * clearest other mic heard that moment (dB), each mic at its clearest within HOLD frames, allowing for lag.
    */
-  /**
-   * @param {number} mic
-   * @param {number} start
-   * @param {number} end
-   */
-  #gaps(mic, start, end) {
+  #gaps(mic: number, start: number, end: number) {
     const from = Math.max(Math.floor(start / FRAME_SEC), this.latest - HISTORY + 1 + HOLD);
     const to = Math.min(Math.ceil(end / FRAME_SEC), this.latest + 1 - HOLD);
-    /**
-     * @param {number} m
-     * @param {number} i
-     */
-    const peak = (m, i) => {
+    const peak = (m: number, i: number) => {
       let best = -Infinity;
       for (let k = i - HOLD; k <= i + HOLD; k++) best = Math.max(best, this.history[m][k % HISTORY]);
       return best;
     };
-    /** @type {{ index: number, own: number, gap: number }[]} */
-    const gaps = [];
+    const gaps: { index: number; own: number; gap: number }[] = [];
     for (let i = from; i < to; i++) {
       if (!this.heard[mic][i % HISTORY]) continue;
       const own = peak(mic, i);
@@ -235,17 +194,10 @@ export class CrosstalkGate {
    * average power of each mic's clarity over that time, widened by the lag a mic may have. The same audio on both
    * mics gives exactly 0.
    */
-  /**
-   * @param {number} a
-   * @param {number} b
-   * @param {number} start
-   * @param {number} end
-   */
-  louder(a, b, start, end) {
+  louder(a: number, b: number, start: number, end: number) {
     const from = Math.max(Math.floor(start / FRAME_SEC) - HOLD, this.latest - HISTORY + 1);
     const to = Math.min(Math.ceil(end / FRAME_SEC) + HOLD, this.latest + 1);
-    /** @param {number} mic */
-    const power = (mic) => {
+    const power = (mic: number) => {
       let sum = 0;
       for (let i = from; i < to; i++) sum += 10 ** ((this.history[mic][i % HISTORY] || 0) / 10);
       return 10 * Math.log10(sum / Math.max(1, to - from));
@@ -257,24 +209,16 @@ export class CrosstalkGate {
    * Each mic's background noise, from frames in which no mic hears speech, now or in the next HOLD frames: the detector
    * often notices speech a little after it starts (and after speech it stays on a little longer by itself).
    */
-  /**
-   * @param {Frame[]} frames
-   * @param {boolean[]} speech
-   */
-  #learn(frames, speech) {
+  #learn(frames: Frame[], speech: boolean[]) {
     if (speech.some(Boolean)) this.floors.forEach((floor) => floor.forget(this.latest - HOLD));
     else frames.forEach((f, mic) => this.floors[mic].push(f.level, f.index));
   }
 
   #decide() {
-    const entry = /** @type {Entry} */ (this.ahead.shift()); // only called while something waits
+    const entry = this.ahead.shift() as Entry; // only called while something waits
     const window = [...this.past, entry, ...this.ahead];
     // Each mic's clearest moment in the whole window (allowing for lag), against this mic's own current syllable.
-    /**
-     * @param {Entry[]} w
-     * @param {number} mic
-     */
-    const peak = (w, mic) => Math.max(...w.map((x) => x.clarity[mic]));
+    const peak = (w: Entry[], mic: number) => Math.max(...w.map((x) => x.clarity[mic]));
     const at = this.past.length;
     const near = window.slice(Math.max(0, at - OWN), at + OWN + 1);
     entry.frames.forEach((frame, mic) => {

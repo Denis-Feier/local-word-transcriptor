@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { WebSocketServer } from 'ws';
 import { config, ROOT, MODELS_DIR } from './lib/config.ts';
-import { MODELS, SILERO_VAD, isInstalled, isAvailable, installModel, download } from './lib/models.js';
+import { MODELS, SILERO_VAD, isInstalled, isAvailable, installModel, download } from './lib/models.ts';
 import { Transcriber } from './lib/transcriber.js';
 import { Session } from './lib/session.js';
 import { TUNING, tuningFrom, sanitizeTuning, applyTuning } from './lib/tuning.ts';

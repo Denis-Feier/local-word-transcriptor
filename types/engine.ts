@@ -82,7 +82,7 @@ export interface Engine {
   stream?(opts?: StreamOptions): StreamingSentence;
 }
 
-/** How an engine served by a separate process is started (lib/engines/sidecar.js command()). */
+/** How an engine served by a separate process is started (lib/engines/sidecar.ts command()). */
 export interface SidecarCommand {
   /** For the log lines. */
   name: string;

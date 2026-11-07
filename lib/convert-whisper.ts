@@ -7,8 +7,7 @@ import { spawnSync } from 'node:child_process';
 const GGML_MAGIC = 0x67676d6c;
 
 // Hugging Face layer names -> whisper.cpp (OpenAI) names.
-/** @type {Record<string, string>} */
-const LAYER_MAP = {
+const LAYER_MAP: Record<string, string> = {
   'self_attn.k_proj': 'attn.key',
   'self_attn.q_proj': 'attn.query',
   'self_attn.v_proj': 'attn.value',
@@ -23,8 +22,7 @@ const LAYER_MAP = {
   fc2: 'mlp.2',
   final_layer_norm: 'mlp_ln',
 };
-/** @type {Record<string, string>} */
-const TOP_MAP = {
+const TOP_MAP: Record<string, string> = {
   'encoder.layer_norm.bias': 'encoder.ln_post.bias',
   'encoder.layer_norm.weight': 'encoder.ln_post.weight',
   'encoder.embed_positions.weight': 'encoder.positional_embedding',
@@ -36,8 +34,7 @@ const TOP_MAP = {
 // Tensors whisper.cpp wants in f32 even in an f16 model.
 const KEEP_F32 = new Set(['encoder.conv1.bias', 'encoder.conv2.bias', 'encoder.positional_embedding', 'decoder.positional_embedding']);
 
-/** @param {string} hfName */
-function ggmlName(hfName) {
+function ggmlName(hfName: string) {
   const parts = hfName.split('.').slice(1); // drop leading "model."
   if (parts[1] !== 'layers') return TOP_MAP[parts.join('.')] ?? parts.join('.');
   const layer = parts.slice(3, -1).join('.');
@@ -48,8 +45,7 @@ function ggmlName(hfName) {
 
 /** GPT-2 byte-level BPE: the unicode character standing for each byte, reversed. */
 function byteDecoder() {
-  /** @type {number[]} */
-  const bs = [];
+  const bs: number[] = [];
   for (let b = 33; b <= 126; b++) bs.push(b);
   for (let b = 161; b <= 172; b++) bs.push(b);
   for (let b = 174; b <= 255; b++) bs.push(b);
@@ -64,12 +60,8 @@ function byteDecoder() {
   return new Map(cs.map((c, i) => [String.fromCodePoint(c), bs[i]]));
 }
 
-/**
- * Read one float32 array out of a numpy .npz archive (OpenAI's mel_filters.npz).
- * @param {string} npz
- * @param {string} member
- */
-function readNpzFloat32(npz, member) {
+/** Read one float32 array out of a numpy .npz archive (OpenAI's mel_filters.npz). */
+function readNpzFloat32(npz: string, member: string) {
   const res = spawnSync('unzip', ['-p', npz, member], { maxBuffer: 1 << 26 });
   if (res.status !== 0 || !res.stdout?.length) throw new Error(`Could not read ${member} from ${npz}`);
   const buf = res.stdout;
@@ -79,18 +71,13 @@ function readNpzFloat32(npz, member) {
   const headerStart = major === 1 ? 10 : 12;
   const header = buf.toString('latin1', headerStart, headerStart + headerLen);
   if (!header.includes("'<f4'") || header.includes("'fortran_order': True")) throw new Error(`Unsupported .npy layout: ${header}`);
-  const shape = /** @type {RegExpMatchArray} */ (header.match(/'shape': \(([^)]*)\)/))[1].split(',').filter((s) => s.trim()).map(Number);
+  const shape = (header.match(/'shape': \(([^)]*)\)/) as RegExpMatchArray)[1].split(',').filter((s) => s.trim()).map(Number);
   const start = headerStart + headerLen;
   const data = new Float32Array(buf.buffer.slice(buf.byteOffset + start, buf.byteOffset + start + shape[0] * shape[1] * 4));
   return { shape, data };
 }
 
-/**
- * @param {ArrayBuffer} raw
- * @param {string} dtype
- * @returns {Float32Array}
- */
-function toFloat32(raw, dtype) {
+function toFloat32(raw: ArrayBuffer, dtype: string): Float32Array {
   if (dtype === 'F32') return new Float32Array(raw);
   if (dtype === 'F16') return Float32Array.from(new Float16Array(raw));
   if (dtype === 'BF16') {
@@ -102,19 +89,15 @@ function toFloat32(raw, dtype) {
   throw new Error(`Unsupported tensor dtype ${dtype}`);
 }
 
-/** @param {...number} values */
-const int32 = (...values) => Buffer.from(new Int32Array(values).buffer);
+const int32 = (...values: number[]) => Buffer.from(new Int32Array(values).buffer);
 
-/**
- * @param {object} o
- * @param {string} o.sourceDir    folder with model.safetensors, config.json, vocab.json
- * @param {string} o.melFilters   path to OpenAI's mel_filters.npz
- * @param {string} o.out          output ggml file (f16)
- * @param {(fraction: number) => void} [o.onProgress]
- */
-export async function convertHfWhisper({ sourceDir, melFilters, out, onProgress = () => {} }) {
+/** One tensor of a safetensors header: its element type, shape and byte range in the file. */
+type SafeTensor = { dtype: string; shape: number[]; data_offsets: [number, number] };
+
+/** sourceDir: the folder with model.safetensors, config.json and vocab.json; melFilters: OpenAI's mel_filters.npz; out: the ggml file (f16). */
+export async function convertHfWhisper({ sourceDir, melFilters, out, onProgress = () => {} }: { sourceDir: string; melFilters: string; out: string; onProgress?: (fraction: number) => void }) {
   const hp = JSON.parse(fs.readFileSync(path.join(sourceDir, 'config.json'), 'utf8'));
-  const vocab = JSON.parse(fs.readFileSync(path.join(sourceDir, 'vocab.json'), 'utf8'));
+  const vocab = JSON.parse(fs.readFileSync(path.join(sourceDir, 'vocab.json'), 'utf8')) as Record<string, number>; // token -> id
   const filters = readNpzFloat32(melFilters, `mel_${hp.num_mel_bins}.npy`);
 
   const src = await fs.promises.open(path.join(sourceDir, 'model.safetensors'), 'r');
@@ -125,7 +108,8 @@ export async function convertHfWhisper({ sourceDir, melFilters, out, onProgress 
     const headerLen = Number(lenBuf.readBigUInt64LE(0));
     const headerBuf = Buffer.alloc(headerLen);
     await src.read(headerBuf, 0, headerLen, 8);
-    const tensors = Object.entries(JSON.parse(headerBuf.toString('utf8'))).filter(([name]) => name !== '__metadata__');
+    const header = JSON.parse(headerBuf.toString('utf8')) as Record<string, SafeTensor>;
+    const tensors = Object.entries(header).filter(([name]) => name !== '__metadata__');
     const dataStart = 8 + headerLen;
 
     // Header: magic, hyperparameters, mel filterbank, vocabulary.
@@ -159,7 +143,7 @@ export async function convertHfWhisper({ sourceDir, melFilters, out, onProgress 
       if (hfName === 'proj_out.weight') continue; // tied to the token embedding
 
       const name = ggmlName(hfName);
-      let shape = t.shape.filter((/** @type {number} */ d) => d !== 1); // numpy squeeze()
+      let shape = t.shape.filter((d) => d !== 1); // numpy squeeze()
       if (name === 'encoder.conv1.bias' || name === 'encoder.conv2.bias') shape = [shape[0], 1];
       const f32 = shape.length < 2 || KEEP_F32.has(name);
 

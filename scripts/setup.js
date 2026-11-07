@@ -6,7 +6,7 @@
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { config, MODELS_DIR, ROOT } from '../lib/config.ts';
-import { MODELS, SILERO_VAD, findModel, isInstalled, installModel, modelPath, download } from '../lib/models.js';
+import { MODELS, SILERO_VAD, findModel, isInstalled, installModel, modelPath, download } from '../lib/models.ts';
 import fs from 'node:fs';
 /** @import { OnProgress } from '../types/model.ts' */
 

@@ -1,21 +1,20 @@
 import { spawn } from 'node:child_process';
 import net from 'node:net';
-/** @import { OnCrash, SidecarCommand, SidecarResponse } from '../../types/engine.ts' */
+import type { ChildProcess } from 'node:child_process';
+import type { OnCrash, SidecarCommand, SidecarResponse } from '../../types/engine.ts';
 
 export const HOST = '127.0.0.1';
-/** @param {number} ms */
-export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // A request whose connection broke waits this long for the process to be seen exiting, so a crash is reported first.
 const EXIT_WAIT_MS = 3000;
 
-/** @returns {Promise<number>} */
-export function freePort() {
+export function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const probe = net.createServer();
     probe.on('error', reject);
     probe.listen(0, HOST, () => {
-      const { port } = /** @type {import('node:net').AddressInfo} */ (probe.address()); // listening on a TCP port
+      const { port } = probe.address() as net.AddressInfo; // listening on a TCP port
       probe.close(() => resolve(port));
     });
   });
@@ -31,36 +30,35 @@ export function freePort() {
 export class SidecarEngine {
   /** Subclasses that can run on the CPU set it: a process that fails to start on the GPU is started again there. */
   cpuFallback = false;
-  /** The device when the process says nothing about it. @type {string | undefined} */
-  defaultDevice = undefined;
+  /** The device when the process says nothing about it. */
+  defaultDevice: string | undefined = undefined;
+  port: number;
+  onCrash: OnCrash | undefined;
+  child: ChildProcess | null;
+  logTail: string[];
+  // Set once the process is started.
+  declare url: string;
+  declare ready: boolean;
+  declare device: string | null;
+  declare fallback: string | undefined;
 
-  /** @param {{ port?: number, onCrash?: OnCrash }} [opts] */
-  constructor({ port = 0, onCrash } = {}) {
+  constructor({ port = 0, onCrash }: { port?: number; onCrash?: OnCrash } = {}) {
     this.port = port;
     this.onCrash = onCrash;
-    /** @type {import('node:child_process').ChildProcess | null} */
     this.child = null;
-    /** @type {string[]} */
     this.logTail = [];
   }
 
-  /**
-   * How to start the process; every subclass says.
-   * @param {number} port
-   * @param {{ cpu?: boolean }} [opts]
-   * @returns {SidecarCommand}
-   */
-  command(port, opts) {
+  /** How to start the process; every subclass says. */
+  command(port: number, opts?: { cpu?: boolean }): SidecarCommand {
     throw new Error(`${this.constructor.name} does not say how to start its process`);
   }
 
   /**
    * The device named in a start-up log line, or null when the line says nothing about it; subclasses that can tell
    * override it.
-   * @param {string} line
-   * @returns {string | null}
    */
-  deviceFromLog(line) {
+  deviceFromLog(line: string): string | null {
     return null;
   }
 
@@ -71,7 +69,7 @@ export class SidecarEngine {
   async load() {
     try {
       await this.#start({ cpu: false });
-    } catch (/** @type {any} */ err) {
+    } catch (err: any) {
       if (!this.cpuFallback || err.missing) throw err;
       this.fallback = err.message;
       if (process.env.DEBUG) console.log(`[sidecar] GPU start failed, retrying on the CPU: ${err.message}`);
@@ -80,20 +78,17 @@ export class SidecarEngine {
     }
   }
 
-  /** @param {{ cpu: boolean }} opts */
-  async #start({ cpu }) {
+  async #start({ cpu }: { cpu: boolean }) {
     if (!this.port) this.port = await freePort();
     this.url = `http://${HOST}:${this.port}`;
     const { bin, args, name, missing, env } = this.command(this.port, { cpu });
-    /** @type {string | null} */
-    let failure = null;
+    let failure: string | null = null;
     let isMissing = false;
     this.ready = false;
     this.device = cpu ? 'CPU' : null;
     const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } });
     this.child = child;
-    /** @param {Buffer} chunk */
-    const onLog = (chunk) => {
+    const onLog = (chunk: Buffer) => {
       for (const line of chunk.toString().split('\n')) {
         if (!line.trim()) continue;
         this.logTail.push(line);
@@ -105,7 +100,7 @@ export class SidecarEngine {
     };
     child.stdout.on('data', onLog);
     child.stderr.on('data', onLog);
-    child.on('error', (/** @type {NodeJS.ErrnoException} */ err) => {
+    child.on('error', (err: NodeJS.ErrnoException) => {
       isMissing = err.code === 'ENOENT';
       failure = isMissing ? missing : `Could not start ${name}: ${err.message}`;
     });
@@ -121,7 +116,7 @@ export class SidecarEngine {
         const res = await fetch(`${this.url}/health`);
         if (res.ok) {
           // The NeMo server says where it put the model; whisper-server says it in its log.
-          const health = /** @type {{ device?: string, fallback?: string }} */ (await res.json().catch(() => ({})));
+          const health = (await res.json().catch(() => ({}))) as { device?: string; fallback?: string };
           if (health.device) this.device = health.device;
           if (health.fallback) this.fallback = health.fallback; // it moved to the CPU while it started
           this.device ??= cpu ? 'CPU' : this.defaultDevice ?? 'CPU';
@@ -141,12 +136,7 @@ export class SidecarEngine {
    * killed, or crashes on the GPU), the request fails only once its exit is seen and onCrash has been called, so the
    * transcriber knows to send the sentence again when the model is back (#45).
    */
-  /**
-   * @param {string} path
-   * @param {RequestInit} [init]
-   * @returns {Promise<SidecarResponse>}
-   */
-  async post(path, init) {
+  async post(path: string, init?: RequestInit): Promise<SidecarResponse> {
     try {
       const res = await fetch(`${this.url}${path}`, { method: 'POST', ...init });
       return { ok: res.ok, status: res.status, text: await res.text() };
@@ -157,12 +147,10 @@ export class SidecarEngine {
   }
 
   /** Resolves when the process has exited (and its exit was handled), or after ms if it is still running. */
-  /** @param {number} ms */
-  async #exited(ms) {
+  async #exited(ms: number) {
     const { child } = this;
     if (!child || child.exitCode !== null || child.signalCode !== null) return;
-    /** @type {NodeJS.Timeout | undefined} */
-    let timer;
+    let timer: NodeJS.Timeout | undefined;
     await Promise.race([new Promise((resolve) => child.once('exit', resolve)), new Promise((resolve) => (timer = setTimeout(resolve, ms)))]);
     clearTimeout(timer);
   }

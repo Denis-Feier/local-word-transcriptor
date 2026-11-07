@@ -1,13 +1,12 @@
 import { SAMPLE_RATE, concatFloat32 } from './wav.ts';
-import { FRAME } from './vad.js';
-/** @import { CurrentSegment, Frame, SegmentTiming, SegmenterOptions } from '../types/audio.ts' */
+import { FRAME } from './vad.ts';
+import type { CurrentSegment, Detector, Frame, Segment, SegmentTiming, SegmenterOptions } from '../types/audio.ts';
 
 const FRAME_MS = (FRAME / SAMPLE_RATE) * 1000; // 32 ms
 const KEEP_TAIL_FRAMES = 6; // keep ~200 ms of trailing silence so the last word isn't clipped
 const SPLIT_SEARCH_FRAMES = Math.round(5000 / FRAME_MS); // look back 5 s for a quiet spot when splitting
 
-/** @param {Float32Array} samples */
-function rms(samples) {
+function rms(samples: Float32Array) {
   let sum = 0;
   for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
   return Math.sqrt(sum / samples.length);
@@ -15,9 +14,9 @@ function rms(samples) {
 
 /**
  * Cuts a continuous 16 kHz stream into utterances, using a frame-level speech detector
- * (see vad.js) plus pre-roll, a pause timeout and a maximum utterance length.
+ * (see vad.ts) plus pre-roll, a pause timeout and a maximum utterance length.
  * push() does everything; with several mics the session calls analyze() and feed() separately,
- * so it can compare the mics' frames before they are fed (see crosstalk.js).
+ * so it can compare the mics' frames before they are fed (see crosstalk.ts).
  *
  * Events:
  *   onSpeechStart(id)
@@ -25,8 +24,25 @@ function rms(samples) {
  *   onDiscard(id)                             too little speech, e.g. a click or a cough
  */
 export class Segmenter {
-  /** @param {SegmenterOptions} opts */
-  constructor({ detector, onSpeechStart, onSegment, onDiscard, startFrame = 0, leftover, newId, ...timing }) {
+  detector: Detector;
+  onSpeechStart: (id: number) => void;
+  onSegment: (segment: Segment) => void;
+  onDiscard: (id: number) => void;
+  leftover: Float32Array;
+  frameIndex: number;
+  newId: () => number;
+  preRoll: Frame[];
+  frames: Frame[] | null;
+  loudRun: number;
+  silentRun: number;
+  id: number;
+  // The timing, in frames; setTiming() sets them.
+  declare hangFrames: number;
+  declare preRollFrames: number;
+  declare minSpeechFrames: number;
+  declare maxFrames: number;
+
+  constructor({ detector, onSpeechStart, onSegment, onDiscard, startFrame = 0, leftover, newId, ...timing }: SegmenterOptions) {
     this.detector = detector;
     this.setTiming(timing);
     this.onSpeechStart = onSpeechStart ?? (() => {});
@@ -37,61 +53,43 @@ export class Segmenter {
     this.frameIndex = startFrame; // a mic added mid-session starts at the session's current time
     let nextId = 1;
     this.newId = newId ?? (() => nextId++); // several mics share one id sequence
-    /** @type {Frame[]} */
     this.preRoll = []; // recent frames while idle
-    /** @type {Frame[] | null} */
     this.frames = null; // frames of the current segment; null when idle
     this.loudRun = 0;
     this.silentRun = 0;
     this.id = 0;
   }
 
-  /**
-   * Pause length, pre-roll, minimum speech and maximum utterance length; can change mid-session.
-   * @param {SegmentTiming} timing
-   */
-  setTiming({ silenceMs, preRollMs, minSpeechMs, maxSegmentSec }) {
-    /** @type {number} */
+  /** Pause length, pre-roll, minimum speech and maximum utterance length; can change mid-session. */
+  setTiming({ silenceMs, preRollMs, minSpeechMs, maxSegmentSec }: SegmentTiming) {
     this.hangFrames = Math.round(silenceMs / FRAME_MS);
-    /** @type {number} */
     this.preRollFrames = Math.round(preRollMs / FRAME_MS);
-    /** @type {number} */
     this.minSpeechFrames = Math.round(minSpeechMs / FRAME_MS);
-    /** @type {number} */
     this.maxFrames = Math.round((maxSegmentSec * 1000) / FRAME_MS);
   }
 
-  /**
-   * The utterance currently being spoken, or null. During onSegment/onDiscard: the one that just ended, all of it.
-   * @returns {CurrentSegment | null}
-   */
-  current() {
+  /** The utterance currently being spoken, or null. During onSegment/onDiscard: the one that just ended, all of it. */
+  current(): CurrentSegment | null {
     if (!this.frames) return null;
     return {
       id: this.id,
       duration: (this.frames.length * FRAME_MS) / 1000,
       start: (this.frames[0].index * FRAME_MS) / 1000,
-      samples: () => concatFloat32(/** @type {Frame[]} */ (this.frames).map((f) => f.samples)),
+      samples: () => concatFloat32((this.frames as Frame[]).map((f) => f.samples)),
       frames: this.frames, // read only
       // The first `settled` frames stay in the sentence whatever comes next; the rest is a pause that may end it.
       settled: this.frames.length - Math.max(0, this.silentRun - KEEP_TAIL_FRAMES),
     };
   }
 
-  /** @param {Float32Array} samples */
-  push(samples) {
+  push(samples: Float32Array) {
     for (const frame of this.analyze(samples)) this.feed(frame);
   }
 
-  /**
-   * Cut audio into detector frames: { samples, level, loud, index }.
-   * @param {Float32Array} samples
-   * @returns {Frame[]}
-   */
-  analyze(samples) {
+  /** Cut audio into detector frames: { samples, level, loud, index }. */
+  analyze(samples: Float32Array): Frame[] {
     const data = this.leftover.length ? concatFloat32([this.leftover, samples]) : samples;
-    /** @type {Frame[]} */
-    const frames = [];
+    const frames: Frame[] = [];
     let offset = 0;
     for (; offset + FRAME <= data.length; offset += FRAME) {
       const frame = data.slice(offset, offset + FRAME);
@@ -109,11 +107,8 @@ export class Segmenter {
     this.#end();
   }
 
-  /**
-   * Advance by one frame from analyze().
-   * @param {Frame} frame
-   */
-  feed(frame) {
+  /** Advance by one frame from analyze(). */
+  feed(frame: Frame) {
     const { loud } = frame;
     if (!this.frames) {
       this.preRoll.push(frame);
@@ -129,8 +124,7 @@ export class Segmenter {
     else if (this.frames.length >= this.maxFrames) this.#split();
   }
 
-  /** @param {Frame[]} frames */
-  #start(frames) {
+  #start(frames: Frame[]) {
     this.frames = frames;
     this.preRoll = [];
     this.loudRun = 0;
@@ -140,7 +134,7 @@ export class Segmenter {
   }
 
   #end() {
-    const frames = /** @type {Frame[]} */ (this.frames); // only called while speaking
+    const frames = this.frames as Frame[]; // only called while speaking
     const keep = frames.length - this.silentRun + Math.min(this.silentRun, KEEP_TAIL_FRAMES);
     this.#emit(this.id, frames.slice(0, keep));
     this.frames = null;
@@ -151,7 +145,7 @@ export class Segmenter {
 
   /** Utterance is too long for one Whisper window: cut at the quietest recent frame and keep going. */
   #split() {
-    const frames = /** @type {Frame[]} */ (this.frames); // only called while speaking
+    const frames = this.frames as Frame[]; // only called while speaking
     let cut = frames.length - 2; // always leave at least one frame for the continuation
     for (let i = Math.max(1, frames.length - SPLIT_SEARCH_FRAMES); i < frames.length - 1; i++) {
       if (frames[i].level < frames[cut].level) cut = i;
@@ -160,11 +154,7 @@ export class Segmenter {
     this.#start(frames.slice(cut + 1));
   }
 
-  /**
-   * @param {number} id
-   * @param {Frame[]} frames
-   */
-  #emit(id, frames) {
+  #emit(id: number, frames: Frame[]) {
     const voiced = frames.reduce((n, f) => n + (f.loud ? 1 : 0), 0);
     if (voiced < this.minSpeechFrames) {
       this.onDiscard(id);

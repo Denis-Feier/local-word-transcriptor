@@ -50,7 +50,7 @@ awake?.unref();
 process.env.ENV_FILE ??= os.devNull; // the runner itself never reads the user's .env.local either (TESTING.md §2 rule 9); lib/config.ts loads it on import
 const { machineInfo, describeMachine, describeSoftware } = await import('../lib/benchmark/machine.js');
 const machine = await machineInfo();
-const { MODELS, isInstalled } = await import('../lib/models.js');
+const { MODELS, isInstalled } = await import('../lib/models.ts');
 const installedModels = MODELS.filter((m) => !m.cloud && isInstalled(m)).map((m) => m.id); // the cloud model needs the user's key, which the tests never read
 console.log(`run ${RUN_ID}\non ${describeMachine(machine)}\nwith ${describeSoftware(machine)}`);
 
@@ -254,7 +254,7 @@ const plan = [
   ['scenarios', 'standard', () => run('scenarios', node, ['test/scenarios.js'], { minutes: 15 })],
   ['ui', 'standard', () => run('ui', electron, ['test/ui/run.mjs'], { minutes: 10, env: { NODE_BIN: node, UI_OUT: path.join(OUT, 'screenshots') } })],
   ['engines', 'full', async () => {
-    const { MODELS, isInstalled, isAvailable } = await import('../lib/models.js');
+    const { MODELS, isInstalled, isAvailable } = await import('../lib/models.ts');
     for (const id of ENGINES) {
       const m = MODELS.find((x) => x.id === id);
       if (!m || !isAvailable(m) || !isInstalled(m)) {

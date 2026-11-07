@@ -9,7 +9,7 @@ declare namespace NodeJS {
 }
 
 declare module 'sherpa-onnx-node' {
-  /** The Silero voice detector's settings, as lib/vad.js builds them. */
+  /** The Silero voice detector's settings, as lib/vad.ts builds them. */
   export interface SileroVadConfig {
     model: string;
     threshold: number;

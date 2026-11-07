@@ -12,7 +12,7 @@ import WebSocket from 'ws';
 /** @import { Model } from '../types/model.ts' */
 /** @import { TestServer } from '../types/test.ts' */
 import { config } from '../lib/config.ts';
-import { MODELS, isInstalled, isAvailable } from '../lib/models.js';
+import { MODELS, isInstalled, isAvailable } from '../lib/models.ts';
 import { wordKey } from '../lib/steady.ts';
 import { TUNING, sanitizeTuning } from '../lib/tuning.ts';
 import { sharedWords } from '../lib/wer.ts';

@@ -5,9 +5,9 @@ import { spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { MODELS_DIR, ROOT, config } from './config.ts';
-import { convertHfWhisper } from './convert-whisper.js';
+import { convertHfWhisper } from './convert-whisper.ts';
 import { ensurePythonEnv, pythonReady } from './python-env.ts';
-/** @import { Model, ModelFile, OnProgress, SileroVadFile, WhisperConvert } from '../types/model.ts' */
+import type { Model, ModelFile, OnProgress, SileroVadFile, WhisperConvert } from '../types/model.ts';
 
 const HF_WHISPER = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/';
 const HF = 'https://huggingface.co/';
@@ -15,8 +15,7 @@ const SHERPA = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-mode
 
 const APPLE_SPEECH_SRC = path.join(ROOT, 'native', 'apple-speech'); // from source only: not in the installers
 
-/** @type {SileroVadFile} */
-export const SILERO_VAD = { label: 'Silero VAD', url: `${SHERPA}silero_vad.onnx`, file: 'silero_vad.onnx' };
+export const SILERO_VAD: SileroVadFile = { label: 'Silero VAD', url: `${SHERPA}silero_vad.onnx`, file: 'silero_vad.onnx' };
 const MEL_FILTERS_URL = 'https://raw.githubusercontent.com/openai/whisper/main/whisper/assets/mel_filters.npz';
 
 /**
@@ -39,8 +38,7 @@ const MEL_FILTERS_URL = 'https://raw.githubusercontent.com/openai/whisper/main/w
  * Models with `convert` are Hugging Face Whisper fine-tunes: the safetensors are downloaded,
  * converted to whisper.cpp's format and quantized once, then only the result is kept.
  */
-/** @type {Model[]} */
-export const MODELS = [
+export const MODELS: Model[] = [
   {
     id: 'canary-1b-v2',
     label: 'NVIDIA Canary 1B v2',
@@ -201,18 +199,14 @@ export const MODELS = [
   },
 ];
 
-/** @param {string} id */
-export const findModel = (id) => MODELS.find((m) => m.id === id);
+export const findModel = (id: string) => MODELS.find((m) => m.id === id);
 
-/** @param {Model} model */
-export const modelPath = (model) => path.join(MODELS_DIR, /** @type {string} */ (model.file ?? model.dir)); // every model has one of the two
+export const modelPath = (model: Model) => path.join(MODELS_DIR, (model.file ?? model.dir) as string); // every model has one of the two
 
-/** @param {Model} model */
-export const isInstalled = (model) => (model.cloud ? Boolean(config.elevenlabs.apiKey)
+export const isInstalled = (model: Model) => (model.cloud ? Boolean(config.elevenlabs.apiKey)
   : fs.existsSync(modelPath(model)) && (!model.python || pythonReady()));
 
-/** @param {string} cmd */
-function onPath(cmd) {
+function onPath(cmd: string) {
   if (path.isAbsolute(cmd)) return fs.existsSync(cmd);
   const exts = process.platform === 'win32' ? ['', '.exe', '.cmd'] : [''];
   return (process.env.PATH ?? '').split(path.delimiter).some((dir) => exts.some((ext) => fs.existsSync(path.join(dir, cmd + ext))));
@@ -223,11 +217,7 @@ function onPath(cmd) {
  * to set it up). The desktop app ships neither, so on a plain computer only the transcribe.cpp models (Canary,
  * Parakeet...) are offered.
  */
-/**
- * @param {Model} model
- * @param {{ whisperBin?: string }} [opts]
- */
-export function isAvailable(model, { whisperBin = 'whisper-server' } = {}) {
+export function isAvailable(model: Model, { whisperBin = 'whisper-server' }: { whisperBin?: string } = {}) {
   if (model.cloud) return isInstalled(model); // without a key it would only be a menu entry that cannot work
   if (model.engine === 'whisper.cpp') return onPath(whisperBin);
   // SpeechAnalyzer is macOS 26 (Darwin 25) and later. Building the helper needs the Xcode command-line tools and its
@@ -240,39 +230,27 @@ export function isAvailable(model, { whisperBin = 'whisper-server' } = {}) {
   return true;
 }
 
-/** @type {Map<string, Promise<void>>} */
-const downloads = new Map(); // id -> the install in progress
+const downloads = new Map<string, Promise<void>>(); // id -> the install in progress
 
-/**
- * Download (and unpack) a model. onProgress(fraction 0..1). Concurrent calls share one download.
- * @param {Model} model
- * @param {OnProgress} [onProgress]
- * @returns {Promise<void>}
- */
-export function installModel(model, onProgress = () => {}) {
+/** Download (and unpack) a model. onProgress(fraction 0..1). Concurrent calls share one download. */
+export function installModel(model: Model, onProgress: OnProgress = () => {}): Promise<void> {
   if (isInstalled(model)) return Promise.resolve();
   if (model.cloud) return Promise.reject(new Error('Nothing to download: put your API key in .env.local as ELEVENLABS_API_KEY=… (see .env.example).'));
   if (!downloads.has(model.id)) {
-    /** @type {(model: Model, onProgress: OnProgress) => Promise<void>} */
-    const install = model.engine === 'apple-speech' ? buildAppleSpeech
+    const install: (model: Model, onProgress: OnProgress) => Promise<void> = model.engine === 'apple-speech' ? buildAppleSpeech
       : model.convert ? installConverted
       : model.files ? installFiles
-      : (m, p) => download(/** @type {string} */ (m.url), modelPath(m), p); // the rest have a url
+      : (m, p) => download(m.url as string, modelPath(m), p); // the rest have a url
     const job = install(model, onProgress).finally(() => downloads.delete(model.id));
     downloads.set(model.id, job);
   }
-  return /** @type {Promise<void>} */ (downloads.get(model.id));
+  return downloads.get(model.id) as Promise<void>;
 }
 
-/** @param {Model} model */
-export const isDownloading = (model) => downloads.has(model.id);
+export const isDownloading = (model: Model) => downloads.has(model.id);
 
-/**
- * Compiles native/apple-speech into models/apple-speech-server (a few seconds; nothing is downloaded).
- * @param {Model} model
- * @param {OnProgress} onProgress
- */
-async function buildAppleSpeech(model, onProgress) {
+/** Compiles native/apple-speech into models/apple-speech-server (a few seconds; nothing is downloaded). */
+async function buildAppleSpeech(model: Model, onProgress: OnProgress) {
   const src = APPLE_SPEECH_SRC;
   const dest = modelPath(model);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
@@ -287,7 +265,7 @@ async function buildAppleSpeech(model, onProgress) {
     let log = '';
     child.stdout.on('data', (d) => (log += d));
     child.stderr.on('data', (d) => (log += d));
-    child.on('error', (/** @type {NodeJS.ErrnoException} */ err) => reject(err.code === 'ENOENT' ? new Error('swiftc not found. Install the Xcode command-line tools: xcode-select --install') : err));
+    child.on('error', (err: NodeJS.ErrnoException) => reject(err.code === 'ENOENT' ? new Error('swiftc not found. Install the Xcode command-line tools: xcode-select --install') : err));
     child.on('exit', (code) => (code === 0 ? resolve(log) : reject(new Error(`Building the Apple speech helper failed:\n${log.slice(-2000)}`))));
   });
   if (process.env.DEBUG && output) console.log(output);
@@ -295,18 +273,13 @@ async function buildAppleSpeech(model, onProgress) {
   onProgress(1);
 }
 
-/**
- * @param {string} url
- * @param {string} dest
- * @param {OnProgress} [onProgress]
- */
-export async function download(url, dest, onProgress = () => {}) {
+export async function download(url: string, dest: string, onProgress: OnProgress = () => {}) {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Download failed: HTTP ${res.status} ${url}`);
   const total = Number(res.headers.get('content-length')) || 0;
   let received = 0;
-  const body = Readable.fromWeb(/** @type {import('node:stream/web').ReadableStream} */ (res.body)); // fetch's stream is the same stream
+  const body = Readable.fromWeb(res.body as import('node:stream/web').ReadableStream); // fetch's stream is the same stream
   body.on('data', (chunk) => {
     received += chunk.length;
     if (total) onProgress(received / total);
@@ -317,12 +290,7 @@ export async function download(url, dest, onProgress = () => {}) {
   fs.renameSync(tmp, dest);
 }
 
-/**
- * @param {string} cmd
- * @param {string[]} args
- * @returns {Promise<void>}
- */
-function run(cmd, args) {
+function run(cmd: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: 'ignore' });
     child.on('error', reject);
@@ -330,26 +298,16 @@ function run(cmd, args) {
   });
 }
 
-/**
- * Hugging Face Whisper fine-tune -> whisper.cpp ggml, quantized. Sources are kept until the end, so a retry resumes.
- * @param {Model} model
- * @param {OnProgress} onProgress
- */
-async function installConverted(model, onProgress) {
-  const { repo, revision, quantize } = /** @type {WhisperConvert} */ (model.convert);
+/** Hugging Face Whisper fine-tune -> whisper.cpp ggml, quantized. Sources are kept until the end, so a retry resumes. */
+async function installConverted(model: Model, onProgress: OnProgress) {
+  const { repo, revision, quantize } = model.convert as WhisperConvert;
   const sources = path.join(MODELS_DIR, '.sources', model.id);
   fs.mkdirSync(sources, { recursive: true });
-  /**
-   * @param {string} name
-   * @param {string} url
-   * @param {OnProgress} [progress]
-   */
-  const fetchSource = async (name, url, progress) => {
+  const fetchSource = async (name: string, url: string, progress?: OnProgress) => {
     const dest = path.join(sources, name);
     if (!fs.existsSync(dest)) await download(url, dest, progress);
   };
-  /** @param {string} name */
-  const hf = (name) => `${HF}${repo}/resolve/${encodeURIComponent(revision)}/${name}`;
+  const hf = (name: string) => `${HF}${repo}/resolve/${encodeURIComponent(revision)}/${name}`;
   await fetchSource('config.json', hf('config.json'));
   await fetchSource('vocab.json', hf('vocab.json'));
   await fetchSource('mel_filters.npz', MEL_FILTERS_URL);
@@ -363,7 +321,7 @@ async function installConverted(model, onProgress) {
     try {
       await run(process.env.WHISPER_QUANTIZE_BIN ?? 'whisper-quantize', [f16, quantized, quantize]);
       result = quantized;
-    } catch (/** @type {any} */ err) {
+    } catch (err: any) {
       console.error(`  Could not quantize (${err.message}); keeping the larger f16 model.`);
     }
   }
@@ -377,17 +335,13 @@ async function installConverted(model, onProgress) {
   onProgress(1);
 }
 
-/**
- * A model made of several files in one folder (e.g. NeMo model + language model), plus the Python env if needed.
- * @param {Model} model
- * @param {OnProgress} onProgress
- */
-async function installFiles(model, onProgress) {
+/** A model made of several files in one folder (e.g. NeMo model + language model), plus the Python env if needed. */
+async function installFiles(model: Model, onProgress: OnProgress) {
   const dest = modelPath(model);
   if (!fs.existsSync(dest)) {
     const staging = path.join(MODELS_DIR, `.download-${model.id}-${process.pid}`);
     fs.mkdirSync(staging, { recursive: true });
-    const files = /** @type {ModelFile[]} */ (model.files); // installModel picks this installer for models that have them
+    const files = model.files as ModelFile[]; // installModel picks this installer for models that have them
     const total = files.reduce((n, f) => n + f.mb, 0);
     let done = 0;
     for (const f of files) {

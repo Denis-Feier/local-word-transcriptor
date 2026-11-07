@@ -1,4 +1,4 @@
-// The speech models the app can switch between (lib/models.js MODELS), one shape per engine. Phase 1 of
+// The speech models the app can switch between (lib/models.ts MODELS), one shape per engine. Phase 1 of
 // docs/typescript-migration.md: written from the catalogue as it is.
 
 /** The five runtimes; lib/transcriber.js builds one engine per kind. */
@@ -15,7 +15,7 @@ export interface ModelFile {
   url: string;
 }
 
-/** A Hugging Face Whisper fine-tune: downloaded, converted to whisper.cpp's format and quantized once (lib/convert-whisper.js). */
+/** A Hugging Face Whisper fine-tune: downloaded, converted to whisper.cpp's format and quantized once (lib/convert-whisper.ts). */
 export interface WhisperConvert {
   repo: string;
   revision: string;
@@ -115,7 +115,7 @@ export interface ElevenLabsModel extends ModelBase {
 
 export type Model = TranscribeCppModel | WhisperCppModel | PythonNemoModel | AppleSpeechModel | ElevenLabsModel;
 
-/** The voice detector's model file (lib/models.js SILERO_VAD). */
+/** The voice detector's model file (lib/models.ts SILERO_VAD). */
 export interface SileroVadFile {
   label: string;
   url: string;

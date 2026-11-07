@@ -3,9 +3,9 @@ import { createRequire } from 'node:module';
 import v8 from 'node:v8';
 import vm from 'node:vm';
 import { SAMPLE_RATE } from './wav.ts';
-/** @import { Detector, DetectorName } from '../types/audio.ts' */
-/** @import { VadConfig } from '../types/config.ts' */
-/** @import { Vad } from 'sherpa-onnx-node' */
+import type { Detector, DetectorName } from '../types/audio.ts';
+import type { VadConfig } from '../types/config.ts';
+import type { Vad } from 'sherpa-onnx-node';
 
 const require = createRequire(import.meta.url);
 
@@ -15,14 +15,9 @@ const CALIBRATION_FRAMES = 10; // measure the room for ~320 ms before detecting 
 const MAX_CALIBRATED_FLOOR = 0.01; // -40 dBFS; anything louder at startup is the user already talking
 const MAX_IDLE = 4; // spare Silero detectors kept for reuse: a reconnect with up to four mics takes them all back
 
-/**
- * A new Silero detector (sherpa-onnx's Vad): ~10 ms to load the model, ~3 MB of native memory.
- * @param {string} model
- * @param {number} threshold
- * @returns {Vad}
- */
-function createVad(model, threshold) {
-  const { Vad } = /** @type {typeof import('sherpa-onnx-node')} */ (require('sherpa-onnx-node'));
+/** A new Silero detector (sherpa-onnx's Vad): ~10 ms to load the model, ~3 MB of native memory. */
+function createVad(model: string, threshold: number): Vad {
+  const { Vad } = require('sherpa-onnx-node') as typeof import('sherpa-onnx-node');
   return new Vad({
     sileroVad: { model, threshold, minSilenceDuration: 0.1, minSpeechDuration: 0.1, windowSize: FRAME, maxSpeechDuration: 30 },
     sampleRate: SAMPLE_RATE,
@@ -33,8 +28,7 @@ function createVad(model, threshold) {
   }, 30);
 }
 
-/** @type {(() => void) | null} */
-let gc = null;
+let gc: (() => void) | null = null;
 let gcSoon = false;
 
 /**
@@ -53,8 +47,7 @@ function collectSoon() {
   });
 }
 
-/** @returns {() => void} */
-function exposeGc() {
+function exposeGc(): () => void {
   if (typeof globalThis.gc === 'function') return globalThis.gc;
   try {
     v8.setFlagsFromString('--expose-gc');
@@ -74,32 +67,28 @@ function exposeGc() {
  * a detector's threshold either, and the threshold is one setting for every mic, so spares with another threshold are
  * dropped when a detector is asked for, as are spares beyond `maxIdle`; whatever is dropped is collected at once.
  */
-/**
- * @template V
- * @typedef {{ model: string, threshold: number, vad: V }} IdleDetector
- */
+type IdleDetector<V> = { model: string; threshold: number; vad: V };
 
-/**
- * @template {{ reset(): void }} [V=Vad]  what create() makes: sherpa's detectors, or a test's stand-ins
- */
-export class VadPool {
-  /** @param {{ create?: (model: string, threshold: number) => V, maxIdle?: number, collect?: () => void }} [opts] */
-  constructor({ create = /** @type {(model: string, threshold: number) => V} */ (/** @type {unknown} */ (createVad)), maxIdle = MAX_IDLE, collect = collectSoon } = {}) { // without create, V is Vad
+/** V: what create() makes: sherpa's detectors, or a test's stand-ins. */
+export class VadPool<V extends { reset(): void } = Vad> {
+  create: (model: string, threshold: number) => V;
+  maxIdle: number;
+  collect: () => void;
+  idle: IdleDetector<V>[];
+  created: number;
+  dropped: number;
+
+  constructor({ create = createVad as unknown as (model: string, threshold: number) => V, maxIdle = MAX_IDLE, collect = collectSoon }: { create?: (model: string, threshold: number) => V; maxIdle?: number; collect?: () => void } = {}) { // without create, V is Vad
     this.create = create;
     this.maxIdle = maxIdle;
     this.collect = collect;
-    /** @type {IdleDetector<V>[]} */
     this.idle = []; // oldest first
     this.created = 0;
     this.dropped = 0;
   }
 
-  /**
-   * A detector with this threshold: the one given back last, or a new one.
-   * @param {string} model
-   * @param {number} threshold
-   */
-  acquire(model, threshold) {
+  /** A detector with this threshold: the one given back last, or a new one. */
+  acquire(model: string, threshold: number) {
     this.#drop((d) => d.model !== model || d.threshold !== threshold);
     const spare = this.idle.pop();
     if (spare) return spare.vad;
@@ -108,21 +97,15 @@ export class VadPool {
     return vad;
   }
 
-  /**
-   * Take a detector back. reset() makes it as good as new and frees the speech it was holding.
-   * @param {V} vad
-   * @param {string} model
-   * @param {number} threshold
-   */
-  release(vad, model, threshold) {
+  /** Take a detector back. reset() makes it as good as new and frees the speech it was holding. */
+  release(vad: V, model: string, threshold: number) {
     vad.reset();
     this.idle.push({ model, threshold, vad });
     const extra = this.idle.length - this.maxIdle;
     if (extra > 0) this.#drop((d, i) => i < extra);
   }
 
-  /** @param {(d: IdleDetector<V>, i: number) => boolean} which */
-  #drop(which) {
+  #drop(which: (d: IdleDetector<V>, i: number) => boolean) {
     const keep = this.idle.filter((d, i) => !which(d, i));
     if (keep.length === this.idle.length) return;
     this.dropped += this.idle.length - keep.length;
@@ -138,33 +121,30 @@ export const vadPool = new VadPool();
  * picks up quieter, farther-away voices than a loudness threshold.
  */
 export class SileroDetector {
-  /** @type {DetectorName} */
-  name = 'silero';
+  name: DetectorName = 'silero';
   onsetFrames = 1; // Silero already debounces with minSpeechDuration
+  model: string;
+  pool: VadPool<Vad>;
+  threshold: number;
+  vad: Vad | null;
 
-  /** @param {{ model: string, threshold: number, pool?: VadPool<Vad> }} opts */
-  constructor({ model, threshold, pool = vadPool }) {
+  constructor({ model, threshold, pool = vadPool }: { model: string; threshold: number; pool?: VadPool<Vad> }) {
     this.model = model;
     this.pool = pool;
     this.threshold = threshold;
-    /** @type {Vad | null} */
     this.vad = pool.acquire(model, threshold);
   }
 
-  /**
-   * sherpa-onnx cannot change a detector's threshold, so this swaps in one that has the new one; it re-settles within ~0.1 s.
-   * @param {number} threshold
-   */
-  setThreshold(threshold) {
+  /** sherpa-onnx cannot change a detector's threshold, so this swaps in one that has the new one; it re-settles within ~0.1 s. */
+  setThreshold(threshold: number) {
     if (threshold === this.threshold || !this.vad) return;
     this.release();
     this.threshold = threshold;
     this.vad = this.pool.acquire(this.model, threshold);
   }
 
-  /** @param {Float32Array} samples */
-  isSpeech(samples) {
-    const vad = /** @type {Vad} */ (this.vad); // a released detector is not asked again
+  isSpeech(samples: Float32Array) {
+    const vad = this.vad as Vad; // a released detector is not asked again
     vad.acceptWaveform(samples);
     // We only use the detector's on/off state; segments are cut by our own Segmenter.
     while (!vad.isEmpty()) vad.pop();
@@ -183,24 +163,21 @@ export class SileroDetector {
  * Loudness detector with an adaptive background-noise floor. Fallback when the Silero model is missing.
  */
 export class EnergyDetector {
-  /** @type {DetectorName} */
-  name = 'energy';
+  name: DetectorName = 'energy';
   onsetFrames = 3; // ~100 ms of loud audio starts a segment
+  minRms: number;
+  noiseRatio: number;
+  noiseFloor: number;
+  calibration: number[] | null;
 
-  /** @param {{ minRms: number, noiseRatio: number }} opts */
-  constructor({ minRms, noiseRatio }) {
+  constructor({ minRms, noiseRatio }: { minRms: number; noiseRatio: number }) {
     this.minRms = minRms;
     this.noiseRatio = noiseRatio;
     this.noiseFloor = minRms / noiseRatio;
-    /** @type {number[] | null} */
     this.calibration = []; // levels of the first frames; null once calibrated
   }
 
-  /**
-   * @param {Float32Array} samples
-   * @param {number} level
-   */
-  isSpeech(samples, level) {
+  isSpeech(samples: Float32Array, level: number) {
     if (this.calibration) {
       // The quietest early frame is a good noise estimate even if the user starts talking right away.
       this.calibration.push(level);
@@ -217,15 +194,11 @@ export class EnergyDetector {
   }
 }
 
-/**
- * @param {VadConfig} vadConfig
- * @returns {Detector}
- */
-export function createDetector(vadConfig) {
+export function createDetector(vadConfig: VadConfig): Detector {
   if (vadConfig.engine !== 'energy' && existsSync(vadConfig.sileroModel)) {
     try {
       return new SileroDetector({ model: vadConfig.sileroModel, threshold: vadConfig.sileroThreshold });
-    } catch (/** @type {any} */ err) {
+    } catch (err: any) {
       // e.g. sherpa-onnx's native library can't load (missing Visual C++ runtime on Windows): keep working.
       console.error(`Silero voice detector unavailable (${err.message}); using the loudness detector.`);
     }

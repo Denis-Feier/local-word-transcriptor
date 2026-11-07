@@ -407,7 +407,7 @@ function toggleMute(mic) {
 const syncMutes = (open) => open.slots.forEach((_, mic) => open.mute(mic, Boolean(picks[mic]?.muted)));
 const mutedMics = () => used().map((pick) => Boolean(pick.muted));
 
-const NO_SIGNAL = 1e-5; // -100 dBFS: digital silence, below any real mic's own noise (lib/crosstalk.js)
+const NO_SIGNAL = 1e-5; // -100 dBFS: digital silence, below any real mic's own noise (lib/crosstalk.ts)
 const SILENT_MS = 5000;
 
 /**
