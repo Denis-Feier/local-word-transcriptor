@@ -23,5 +23,6 @@ The test plan is TESTING.md, written for agents. Follow its rules (§2) whenever
 
 The app is moving to TypeScript step by step; the plan is `docs/typescript-migration.md`. Follow its phase order and
 batch sizes, keep its decisions (§2) unless the owner changes them, and update its progress log (§11) in the same
-branch as each step. Node runs `.ts` files directly (no build step on the server side); the page is emitted into
-`public/` by `tsc` from Phase 4 on.
+branch as each step. Node runs `.ts` files directly (no build step on the server side); the page's sources are `web/*.ts`,
+and `tsc` emits them into the committed `public/*.js`: run `npm run build:web` after editing them (`STATIC-07` fails
+while `public/` is stale).

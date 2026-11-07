@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { ROOT } from './helpers.ts';
+import { staleWebFiles } from '../scripts/build-web.ts';
 import type { RunResult, TestCase } from '../types/test.ts';
 
 const require = createRequire(import.meta.url);
@@ -109,7 +110,7 @@ function staticChecks() {
       else if (/\.(c|m)?[jt]s$/.test(e.name)) files.push(rel);
     }
   };
-  for (const dir of ['lib', 'public', 'scripts', 'desktop', 'test']) walk(dir);
+  for (const dir of ['lib', 'public', 'web', 'scripts', 'desktop', 'test']) walk(dir);
   const scripts = files.filter((f) => /\.(c|m)?js$/.test(f)); // node --check reads JavaScript only; tsc (STATIC-06) parses the .ts files
   const broken = scripts.filter((f) => {
     try {
@@ -123,7 +124,7 @@ function staticChecks() {
 
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   const packaged = pkg.build.files;
-  check('STATIC-02', 'the installers include server.ts, lib/ and public/', ['server.ts', 'lib/**', 'public/**', 'desktop/main.ts'].every((p) => packaged.includes(p)), packaged.join(' '));
+  check('STATIC-02', 'the installers include server.ts, lib/, public/ and web/', ['server.ts', 'lib/**', 'public/**', 'web/**', 'desktop/main.ts'].every((p) => packaged.includes(p)), packaged.join(' '));
 
   // A new version needs its manual rebuilt (npm run manual, or the user-manual skill) before it is tagged.
   let manual: { version?: string } = {};
@@ -142,7 +143,7 @@ function staticChecks() {
   check('STATIC-04', 'the server serves every file in public/', unserved.length === 0, unserved.join(', ') || 'all listed in server.ts');
 
   // The types (docs/typescript-migration.md): every project passes tsc without emitting: the server side (tsconfig.json:
-  // server.ts, lib/, scripts/, desktop/, types/), the page (tsconfig.web.json: public/) and the tests (tsconfig.test.json:
+  // server.ts, lib/, scripts/, desktop/, types/), the page (tsconfig.web.json: web/) and the tests (tsconfig.test.json:
   // test/). Node runs .ts files itself and node --check cannot parse them, so this is also the syntax check for every .ts file.
   const tsc = path.join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
   const typeErrors = ['tsconfig.json', 'tsconfig.web.json', 'tsconfig.test.json'].flatMap((project) => {
@@ -155,6 +156,16 @@ function staticChecks() {
     }
   });
   check('STATIC-06', 'the types check: tsc passes on the server side, the page and the tests', typeErrors.length === 0, typeErrors.join('; ') || 'tsconfig.json, tsconfig.web.json, tsconfig.test.json');
+
+  // The page is emitted from web/*.ts into public/*.js, which is committed (docs/typescript-migration.md, D2): a stale file
+  // would ship old code while the source says otherwise. A fresh emit (into a temporary folder) is compared with public/.
+  let stale: string[];
+  try {
+    stale = staleWebFiles();
+  } catch (err: any) {
+    stale = [err.message]; // tsc failed: STATIC-06 says where
+  }
+  check('STATIC-07', 'the committed page (public/*.js) is a fresh emit of web/*.ts', stale.length === 0, stale.length ? `${stale.join(', ')}; npm run build:web` : `${fs.readdirSync(path.join(ROOT, 'web')).length} files`);
 
   // The plan and the tests must agree: every test id in the code is described in TESTING.md, and every
   // automated id in TESTING.md exists in the code.

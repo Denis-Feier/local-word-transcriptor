@@ -36,8 +36,8 @@ cannot be prepared without it.
 3. **What changed for users** since the text last changed:
    ```bash
    since=$(git log -1 --format=%H -- docs/manual/manual.en.html)
-   git log --oneline $since..HEAD -- public desktop/main.ts lib/tuning.ts lib/config.ts lib/models.ts server.ts package.json .github/release-notes.md README.md
-   git diff $since..HEAD -- public desktop/main.ts lib/tuning.ts lib/config.ts lib/models.ts
+   git log --oneline $since..HEAD -- web public desktop/main.ts lib/tuning.ts lib/config.ts lib/models.ts server.ts package.json .github/release-notes.md README.md
+   git diff $since..HEAD -- web public desktop/main.ts lib/tuning.ts lib/config.ts lib/models.ts
    ```
    Look for anything a user can see or do: new, renamed or removed controls, labels, hints, menu items, keys,
    defaults, ranges, warnings, behaviours, supported systems, install or first-start steps, models in the desktop
@@ -48,13 +48,13 @@ cannot be prepared without it.
    - Something changed: update the text in both languages (rules below), add or change screenshots if a screen or
      control is new or looks different, then `npm run manual`.
 5. **Check every fact against the code**, not against memory:
-   - labels and tooltips: `public/index.html`; setting names and hints: `FIELDS` in `public/settings.js`;
-     projector keys and colour names: `public/stage.js`; menus: `buildMenu()` in `desktop/main.ts`;
+   - labels and tooltips: `public/index.html`; setting names and hints: `FIELDS` in `web/settings.ts`;
+     projector keys and colour names: `web/stage.ts`; menus: `buildMenu()` in `desktop/main.ts`;
    - defaults: `lib/config.ts`; slider ranges: `TUNING` in `lib/tuning.ts` (every recommended value must lie inside
      its range); first start and systems: `.github/release-notes.md`.
    - Every `<b class="ui">` label must appear in the UI exactly as written. A quick check:
      ```bash
-     grep -o '<b class="ui">[^<]*' docs/manual/manual.en.html | sed 's/.*">//' | sort -u | while read -r l; do grep -rqF "$l" public desktop/main.ts || echo "not in the UI: $l"; done
+     grep -o '<b class="ui">[^<]*' docs/manual/manual.en.html | sed 's/.*">//' | sort -u | while read -r l; do grep -rqF "$l" public web desktop/main.ts || echo "not in the UI: $l"; done
      ```
 6. **Build:** `npm run manual` (about 40 s; needs `models/canary-1b-v2-Q8_0.gguf`, `npm run setup` downloads it).
    It starts its own server on a free port, so a running copy of the app is not touched.

@@ -368,14 +368,15 @@ where macOS decides. In Docker there is no GPU, so everything runs on the CPU th
 
 | File | Role |
 |---|---|
-| `public/pcm-worklet.js` | Takes one input per mic, downsamples to 16 kHz mono, sends 100 ms chunks with every mic's audio side by side |
-| `public/mics.js` | Lists the audio inputs and records one or more of them together; reconnects a mic that comes back |
-| `public/speaker.js` | Plays the mics on the speaker chosen for the room: full quality, low delay, separate from the transcription |
-| `public/app.js` | UI: models, mic and speaker choice, live and final lines (coloured per mic), wake lock, reconnect buffering |
-| `public/backlog.js` | The audio kept while the server is unreachable: the newest 5 minutes, and what a longer outage lost |
-| `public/order.js` | The order of the lines, the order they were spoken in: one rule for the page, Copy, Download and the saved `.txt` |
-| `public/stage.js` | Projector view: large centred captions, display preferences, full screen; also the caption window (`/?display`) |
-| `public/settings.js` | Settings panel: live speech-detection sliders (`lib/tuning.ts` on the server) and projector display options |
+| `web/pcm-worklet.ts` | Takes one input per mic, downsamples to 16 kHz mono, sends 100 ms chunks with every mic's audio side by side |
+| `web/mics.ts` | Lists the audio inputs and records one or more of them together; reconnects a mic that comes back |
+| `web/speaker.ts` | Plays the mics on the speaker chosen for the room: full quality, low delay, separate from the transcription |
+| `web/app.ts` | UI: models, mic and speaker choice, live and final lines (coloured per mic), wake lock, reconnect buffering |
+| `web/backlog.ts` | The audio kept while the server is unreachable: the newest 5 minutes, and what a longer outage lost |
+| `web/order.ts` | The order of the lines, the order they were spoken in: one rule for the page, Copy, Download and the saved `.txt` |
+| `web/stage.ts` | Projector view: large centred captions, display preferences, full screen; also the caption window (`/?display`) |
+| `web/settings.ts` | Settings panel: live speech-detection sliders (`lib/tuning.ts` on the server) and projector display options |
+| `public/` | The page as the browser loads it: `index.html`, `style.css` and the JavaScript `tsc` emits from `web/*.ts` (`npm run build:web`; committed, so no build step is needed to run the app) |
 | `server.ts` | Static files, WebSocket (only from its own page), model downloads and switching |
 | `lib/vad.ts` | Speech detectors: Silero (neural, default) and a loudness fallback |
 | `lib/segmenter.ts` | Turns detector frames into utterances: pre-roll, pause timeout, splits monologues longer than 20 s at the quietest point |
@@ -430,7 +431,8 @@ Any of these can also go in `.env.local` (git ignores it; see `.env.example`), o
 `npm test` runs the test plan in [TESTING.md](TESTING.md) (~5 min; `npm run test:quick` ~1 min, `npm run test:full`
 ~15 min with every speech engine). Each run writes a signed report to `test-results/` (the exact moment it started as its id, the computer's hardware and software, one row per test). The plan, the per-merge routine and
 the checklist for testing with real microphones are in TESTING.md. `npm run typecheck` runs the TypeScript checker
-alone; every tier runs it as `STATIC-06`. The code is moving to TypeScript step by step: [docs/typescript-migration.md](docs/typescript-migration.md).
+alone; every tier runs it as `STATIC-06`. The page's sources are `web/*.ts`: after editing them, `npm run build:web` emits them into `public/`
+(`npm run watch:web` does it on every save), and `STATIC-07` fails while `public/` is stale. The code is moving to TypeScript step by step: [docs/typescript-migration.md](docs/typescript-migration.md).
 
 ## Testing without a microphone
 

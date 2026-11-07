@@ -415,6 +415,25 @@ build stage in the Dockerfile, a build step in the workflow, and `public/*.js` i
 `web/pcm-worklet.ts` is emitted like the others (`@types/audioworklet` for its globals). The tests that read page
 files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 
+What happened (2026-11-07, `ts/4-web`): the eight page files moved to `web/*.ts` (`git mv`) and N7's converter turned
+their 220 tags into inline types; three things were left to the hand (a `@template` with a constraint and a default,
+`<T extends HTMLElement = HTMLElement>`; the multi-line `@type` cast on `els`, now its annotation; the worklet
+processor's eight fields, `declare`d), and the project passed `tsc` with no other error, the JSDoc of Phase 2 having
+been complete. **One deviation from the plan above:** `tsc` refuses to emit when a source file lies outside `rootDir`
+(TS6059), and the page imports the shared types in `types/`, so `outDir: public` with `rootDir: web` is impossible and
+`rootDir` is the repository. `scripts/build-web.ts` (`npm run build:web`) therefore emits into a temporary folder and
+copies `web/`'s output into `public/`; `--check` is what `STATIC-07` runs, and `npm run watch:web` reruns the build
+on every save (`node --watch-path`). `tsconfig.web.json` stays a checking project (`noEmit`; the script passes
+`--noEmit false --outDir`), with `rootDir: .`, `newLine: lf` (so the emit is the same on Windows) and
+`rewriteRelativeImportExtensions` (`./stage.ts` is emitted as `./stage.js`); `allowJs`/`checkJs` are gone from it,
+nothing JavaScript being left in the page project. The emitted `public/*.js` is `tsc`'s formatting, not the
+hand-written one: four-space indentation, no blank lines, one-line `if`s split in two, the doc comments kept and the
+tags gone, so this batch rewrites the eight files once (same code, the browser runs the same program; `node --check`
+and the UI suite agree) and later diffs are local again. Two commits, so that `git log --follow web/app.ts` reaches
+`public/app.js`: the move with the types first (the page is not served at that commit), then the emit and its checks. `lib/session.ts` and the unit tests import the sources
+(`web/order.ts`, `web/backlog.ts`), so the installers get `web/**` (`STATIC-02`); the UI suite, the manual and the
+server keep reading `public/`. Nothing changes for `npm start`, Docker or CI: the emitted files are committed (D2).
+
 ## 8. Phase 5 — tighten and clean up
 
 - Remove `allowJs`/`checkJs` from `tsconfig.json` except for `test/ui/preload.cjs`; consider
@@ -482,5 +501,5 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 | Phase 3 N6 | `ts/3-n6` | merged | 2026-11-07 | `desktop/main.ts` is the app's `"main"`; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-18-31-03_8fe032c/`); the app started and quit once (`electron .` from source, `LT_TEST=1`) |
 | Phase 3 N7 | `ts/3-n7` | merged | 2026-11-07 | the eleven test files; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-18-36-31_e42855e/`), run by `node test/run-all.ts`. **Phase 3 complete.** |
 | Phase 3 | `main` | merged, `085236f` | 2026-11-07 | eight fast-forwards (`ts/3-n1` … `ts/3-n7`, `fix/ui-teardown` between N4 and N5); full tier on `main` 236 / 0 / 5 / 0 in 12 min 12 s (TESTING.md §12) |
-| Phase 4 | `ts/4-web` | not started | | D2 confirmed? |
+| Phase 4 | `ts/4-web` | done, awaiting merge | 2026-11-07 | `web/*.ts` emitted into the committed `public/*.js` (`npm run build:web`, `STATIC-07`); the three projects green; standard tier 217 / 0 / 2 / 0 (`test-results/2026-11-07-19-12-45_4180608/`; the one check more is `STATIC-07`). **Phase 4 complete.** |
 | Phase 5 | `ts/5-tighten` | not started | | |
