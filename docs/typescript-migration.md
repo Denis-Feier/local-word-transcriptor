@@ -474,12 +474,13 @@ files (`test/ui/*`, `scripts/manual.mjs`) keep reading `public/`.
 | Phase 2 B1, B2, B3 | `ts/2-b1`, `ts/2-b2`, `ts/2-b3` | merged | 2026-11-07 | the page; one standard tier on the tip: 216 / 0 / 2 / 0 |
 | Phase 2 N8 | `ts/2-n8` | merged | 2026-11-07 | `checkJs` on everywhere, no pragmas; quick tier 149 / 0 / 1 / 0. **Phase 2 complete.** |
 | Phases 0–2 | `main` | merged, `1541a37` | 2026-11-07 | twelve fast-forwards (`ts/0-tooling` … `ts/2-n8`); full tier on `main` 236 / 0 / 5 / 0 (TESTING.md §12) |
-| Phase 3 N1 | `ts/3-n1` | done, awaiting merge | 2026-11-07 | nine leaf modules are `.ts`; the three projects green; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-17-05-16_204bd99/`) |
-| Phase 3 N2 | `ts/3-n2` | done, awaiting merge | 2026-11-07 | the detectors, the segmenter, the crosstalk gate, the catalogue, the converter and the sidecar base; full tier 236 / 0 / 5 / 0 (`test-results/2026-11-07-17-15-20_65c785f/`) |
-| Phase 3 N3 | `ts/3-n3` | done, awaiting merge | 2026-11-07 | the five engines and the transcriber; full tier 236 / 0 / 5 / 0 (`test-results/2026-11-07-17-30-35_76f3524/`) |
-| Phase 3 N4 | `ts/3-n4` | done, awaiting merge | 2026-11-07 | the session and the server entry (`node server.ts`); full tier 176 / 1 / 5 / 0, the one failure the UI suite's teardown hang (TESTING.md §12), then the UI suite alone 60 / 0 / 0 / 0 |
-| Phase 3 N5 | `ts/3-n5` | done, awaiting merge | 2026-11-07 | the benchmark library, the scripts and the manual script; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-18-25-33_e30b57b/`); each script smoked |
-| Phase 3 N6 | `ts/3-n6` | done, awaiting merge | 2026-11-07 | `desktop/main.ts` is the app's `"main"`; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-18-31-03_8fe032c/`); the app started and quit once (`electron .` from source, `LT_TEST=1`) |
-| Phase 3 N7 | `ts/3-n7` | done, awaiting merge | 2026-11-07 | the eleven test files; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-18-36-31_e42855e/`), run by `node test/run-all.ts`. **Phase 3 complete.** |
+| Phase 3 N1 | `ts/3-n1` | merged | 2026-11-07 | nine leaf modules are `.ts`; the three projects green; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-17-05-16_204bd99/`) |
+| Phase 3 N2 | `ts/3-n2` | merged | 2026-11-07 | the detectors, the segmenter, the crosstalk gate, the catalogue, the converter and the sidecar base; full tier 236 / 0 / 5 / 0 (`test-results/2026-11-07-17-15-20_65c785f/`) |
+| Phase 3 N3 | `ts/3-n3` | merged | 2026-11-07 | the five engines and the transcriber; full tier 236 / 0 / 5 / 0 (`test-results/2026-11-07-17-30-35_76f3524/`) |
+| Phase 3 N4 | `ts/3-n4` | merged | 2026-11-07 | the session and the server entry (`node server.ts`); full tier 176 / 1 / 5 / 0, the one failure the UI suite's teardown hang (TESTING.md §12), then the UI suite alone 60 / 0 / 0 / 0 |
+| Phase 3 N5 | `ts/3-n5` | merged | 2026-11-07 | the benchmark library, the scripts and the manual script; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-18-25-33_e30b57b/`); each script smoked |
+| Phase 3 N6 | `ts/3-n6` | merged | 2026-11-07 | `desktop/main.ts` is the app's `"main"`; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-18-31-03_8fe032c/`); the app started and quit once (`electron .` from source, `LT_TEST=1`) |
+| Phase 3 N7 | `ts/3-n7` | merged | 2026-11-07 | the eleven test files; standard tier 216 / 0 / 2 / 0 (`test-results/2026-11-07-18-36-31_e42855e/`), run by `node test/run-all.ts`. **Phase 3 complete.** |
+| Phase 3 | `main` | merged, `085236f` | 2026-11-07 | eight fast-forwards (`ts/3-n1` … `ts/3-n7`, `fix/ui-teardown` between N4 and N5); full tier on `main` 236 / 0 / 5 / 0 in 12 min 12 s (TESTING.md §12) |
 | Phase 4 | `ts/4-web` | not started | | D2 confirmed? |
 | Phase 5 | `ts/5-tighten` | not started | | |
