@@ -207,6 +207,9 @@ the same 100 FLEURS Romanian clips, through the app itself; the ranking rules ar
 | Other | Parakeet Romanian 110M (Politehnica)⁴: fastest, lowercase, no punctuation | 12.6 % / 11.9 % | 10.6 % | 216× | 0.31 | 18 % | 0 / 4 | 135 MB | GPU, transcribe.cpp |
 | Other | Apple on-device dictation (macOS 26)⁵: collapses in noise, no punctuation | 16.7 % / 16.4 % | none | 62× | 0.04 | 53 % | 1 / 4 | kept by macOS | Mac only, Apple's Speech framework |
 | Other | Whisper small Romanian (readerbench)³: invents text on silence, fails on long sentences | 19.4 % / 19.1 % | 10.9 % | 26× | 0.31 | 50 % | 4 / 4 | 260 MB | GPU, whisper.cpp |
+| Other | NVIDIA Nemotron unified 0.6B⁸: needs Python | not measured yet | 9.4 % (3 sets) | — | — | — | — | 2.5 GB | GPU (MPS), Python/NeMo |
+| Other | Parakeet Redux (Moondream)⁸: CPU only | not measured yet | 10.3 % (authors) | — | — | — | — | 2.5 GB | CPU, sherpa-onnx |
+| Other | Fun-ASR-MLT-Nano 0.8B (Alibaba)⁸: LLM decoder, license unclear | not measured yet | none | — | — | — | — | 891 MB | GPU, transcribe.cpp |
 | Other | ElevenLabs Scribe v2 Realtime (cloud)⁷: costs money, the audio leaves | not measured | ≤ 5 % (ElevenLabs' group) | ~150 ms per sentence (ElevenLabs) | — | — | — | nothing | ElevenLabs' servers, over the internet |
 
 ¹ Measured on this M5 on 2026-11-02 with `npm run benchmark:suite` (one hour, open audio): WER = word error rate on 100 FLEURS Romanian clips (read, close-mic speech; lower is better; the 883-clip numbers in `benchmarks/results/fleurs-ro.md` agree within a point). Speed = seconds of audio per second of compute on the GPU. Live text rewrites = words shown as live text and then taken back, per word of the final line, with Steady live text on (0 = never; raw guesses rewrite 5–10× more). Noise = WER (diacritics ignored) with white noise at 10 dB SNR. Silence = of 4 inputs with no speech, how many got invented text. A room with several speakers will score worse for every model.
@@ -216,6 +219,7 @@ the same 100 FLEURS Romanian clips, through the app itself; the ranking rules ar
 ⁵ Apple's own recognizer (the macOS 26 `DictationTranscriber`), fully on the Mac; macOS downloads and keeps the Romanian model itself. Not the default and not recommended for Romanian: on FLEURS Romanian (883 sentences, `npm run benchmark`) it scored 17.6 % WER against 6.6 % for Canary, because it leaves words out and adds no punctuation (Apple's newer `SpeechTranscriber` has no Romanian). The menu offers it on macOS 26 or later, from source with the Xcode command-line tools: choosing it, or `npm run setup -- apple-dictation`, compiles a small Swift helper (`native/apple-speech/`, ~11 s). The desktop app does not ship the helper.
 ⁶ `upb-nlp/ro-fast-conformer`, a NeMo FastConformer fine-tuned on Romanian (MDPI Applied Sciences 16(4):1928). The authors report 3.0 % WER on their own test sets, but no FLEURS score; on FLEURS Romanian (883 sentences, `npm run benchmark`) it scored 11.6 % here, about the same as Parakeet Romanian 110M, against 6.6 % for Canary. Some of that is numbers written as words ("o sută" for "100"): without the sentences that have digits, 8.0 % against Canary's 6.2 %. Like Parakeet Romanian 110M it writes lowercase without punctuation. Its RNNT decoder is used; its CTC head scored 13.7 %. Needs Python (installed with it, like Jackrabbit), so the desktop app does not offer it.
 ⁷ The only model that sends audio off the computer, and only offered when you add your own API key. See *ElevenLabs, in the cloud*.
+⁸ Added in November 2026 ([#60](https://github.com/Denis-Feier/local-word-transcriptor/issues/60)) and not benchmarked here yet; they stay in Other until `npm run benchmark:suite` places them. **Nemotron unified 0.6B** (`nvidia/nemotron-labs-unified-asr-0.6b`) is NVIDIA's one checkpoint for offline and streaming recognition in 25 languages; the app runs it offline and tells it the audio is Romanian (NeMo's `target_lang="ro"`). NVIDIA's 9.4 % is averaged over FLEURS, Common Voice and MLS (no FLEURS-only number). Needs Python, like Jackrabbit. **Parakeet Redux** (`moondream/parakeet-redux`) is Parakeet TDT v3 compressed to 1.58 bits; the app uses its fp32 sherpa-onnx export (`csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-redux`), which stores the weights unpacked, so it is as big as Parakeet v3 in fp32 (the int8 export is much less accurate). sherpa-onnx runs it on the CPU, inside the app. **Fun-ASR-MLT-Nano** (`FunAudioLLM/Fun-ASR-MLT-Nano-2512`, GGUF by `handy-computer`) pairs a SenseVoice encoder with a Qwen3-0.6B language-model decoder, in 31 languages; nobody has published a Romanian score for it.
 
 ### ElevenLabs, in the cloud
 
@@ -253,7 +257,7 @@ What to know before using it:
 
 ### Where models come from and where they live
 
-Everything is stored in the project's `models/` folder (ignored by git; about 7 GB with all nine models). Files are downloaded from public links, with no account or token:
+Everything is stored in the project's `models/` folder (ignored by git; about 13 GB with every model). Files are downloaded from public links, with no account or token:
 
 | Model | Source | Stored as |
 |---|---|---|
@@ -265,6 +269,9 @@ Everything is stored in the project's `models/` folder (ignored by git; about 7 
 | Parakeet Ultra | Hugging Face `handy-computer/parakeet-ultra-gguf` | `models/parakeet-ultra-Q8_0.gguf` |
 | Parakeet Romanian 110M | Hugging Face `jonah1024/Sped_ParakeetRomanian_110M_TDT-CTC_gguf` | `models/Sped_ParakeetRomanian_110M_TDT-CTC-Q8_0.gguf` |
 | FastConformer Romanian 114M | Hugging Face `upb-nlp/ro-fast-conformer` | `models/ro-fast-conformer/` |
+| Nemotron unified 0.6B | Hugging Face `nvidia/nemotron-labs-unified-asr-0.6b` | `models/nemotron-unified-0.6b/` |
+| Parakeet Redux | Hugging Face `csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-redux` (fp32) | `models/parakeet-redux/` |
+| Fun-ASR-MLT-Nano | Hugging Face `handy-computer/Fun-ASR-MLT-Nano-2512-gguf` | `models/Fun-ASR-MLT-Nano-2512-Q8_0.gguf` |
 | Parakeet TDT v3 | Hugging Face `handy-computer/parakeet-tdt-0.6b-v3-gguf` | `models/parakeet-tdt-0.6b-v3-Q8_0.gguf` (the older CPU build in `models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/` is no longer used and can be deleted) |
 | Apple on-device dictation | built on this Mac from `native/apple-speech/` (nothing downloaded); macOS keeps the language model | `models/apple-speech-server` |
 | ElevenLabs Scribe v2 Realtime | ElevenLabs' servers, with your API key (nothing downloaded) | nothing; the key in `.env.local` |
@@ -272,13 +279,14 @@ Everything is stored in the project's `models/` folder (ignored by git; about 7 
 
 Each model is downloaded once and then used from disk; nothing is fetched while transcribing, so the app works offline. To remove a model, delete its file or folder; the menu then offers it for download again. Download from the command line with `npm run setup -- <id>`, all at once with `npm run setup -- --all`, and see the list with `npm run setup -- --list`.
 
-Licenses: Whisper, BuzzASR: MIT. readerbench, Parakeet Romanian 110M: Apache-2.0. Canary, Parakeet v3, Parakeet Ultra: CC-BY-4.0. Orukeet: CC-BY-SA-4.0. All allow commercial use. The FastConformer Romanian 114M has no license on Hugging Face (no model card), so it is not clear that it may be used at all; ask its authors before using it for work.
+Licenses: Whisper, BuzzASR: MIT. readerbench, Parakeet Romanian 110M: Apache-2.0. Canary, Parakeet v3, Parakeet Ultra, Parakeet Redux: CC-BY-4.0. Orukeet: CC-BY-SA-4.0. Nemotron unified: OpenMDW-1.1 (NVIDIA: commercial and non-commercial use). All allow commercial use. The FastConformer Romanian 114M has no license on Hugging Face (no model card), so it is not clear that it may be used at all; ask its authors before using it for work. Fun-ASR-MLT-Nano is unclear: its base card is tagged Apache-2.0 but ships no license file, while the GGUF and FunASR's own repository carry the *FunASR Model Open Source License v1.1*, which allows use, copying, changes and sharing with the source and model name kept, calls the model "for reference and learning purposes", and says nothing about commercial use; ask before using it for work.
 
-Not included, as of October 2026:
+Not included, as of November 2026:
 - **Meta Seamless M4T v2** (8.9 %): only available as PyTorch weights (~9 GB), so it would need a Python runtime; non-commercial license; less accurate than Canary.
 - **Other cloud services**: need an API key and send the audio off the machine, like ElevenLabs (which is included, as an option).
-- **Qwen3-ASR** (20–44 %) and **NVIDIA Nemotron streaming** (26–32 %): much worse on Romanian. **Meta Omnilingual**: its strong variant is a 7B model with no Mac runtime.
-- **Voxtral, Phi-4, Granite Speech, Kyutai, Cohere Transcribe**: no Romanian.
+- **Qwen3-ASR** (20–44 %) and **NVIDIA Nemotron 3.5 streaming** (26–32 %): much worse on Romanian. **Meta Omnilingual**: its strong variant is a 7B model with no Mac runtime.
+- **NVIDIA Nemotron 3.5 Transcribe 30B** (6.0 % on FLEURS Romanian): 34B parameters, offline only, for data-center GPUs. **Microsoft VibeVoice-ASR**: 9B, and its live version has no Romanian.
+- **Voxtral (also Realtime), Phi-4, Granite Speech, Kyutai, Moonshine, Cohere Transcribe**: no Romanian.
 
 ## Benchmarking this app on your computer
 
@@ -421,7 +429,7 @@ Any of these can also go in `.env.local` (git ignores it; see `.env.example`), o
 | `MAX_MICS` | `2` | How many microphones can be used at the same time |
 | `CROSSTALK_DB` | `8` | With several mics: a mic ignores speech it hears this many dB less clearly than another mic (Settings → *Mic separation*) |
 | `INITIAL_PROMPT` | empty | Whisper only: names or jargon to prime the first sentence, e.g. `INITIAL_PROMPT="Ședința cu Andrei și Mihaela despre Kubernetes."` Later sentences use the previous text as context automatically |
-| `THREADS` | `4` | CPU threads for the models |
+| `THREADS` | `4` | CPU threads for the models (Parakeet Redux runs on the CPU only) |
 | `NEMO_DEVICE` | `auto` | Where the NeMo models run: `auto` (the GPU, MPS on a Mac, else the CPU), `mps` or `cpu`. Only to compare speeds; the CPU is used anyway when the GPU fails |
 | `DEBUG` | unset | `DEBUG=1` prints model logs and per-sentence timings |
 | `ELEVENLABS_API_KEY` | unset | Your ElevenLabs key: offers the cloud model, which sends the speech to ElevenLabs (*ElevenLabs, in the cloud*) |

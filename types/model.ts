@@ -1,8 +1,8 @@
 // The speech models the app can switch between (lib/models.ts MODELS), one shape per engine. Phase 1 of
 // docs/typescript-migration.md: written from the catalogue as it is.
 
-/** The five runtimes; lib/transcriber.ts builds one engine per kind. */
-export type EngineKind = 'whisper.cpp' | 'transcribe.cpp' | 'python-nemo' | 'apple-speech' | 'elevenlabs';
+/** The six runtimes; lib/transcriber.ts builds one engine per kind. */
+export type EngineKind = 'whisper.cpp' | 'transcribe.cpp' | 'python-nemo' | 'sherpa-onnx' | 'apple-speech' | 'elevenlabs';
 
 /** The Model menu's two groups (#28): 'recommended' first, then 'other', each in ranking order. */
 export type Tier = 'recommended' | 'other';
@@ -30,6 +30,21 @@ export interface NemoSpec {
   /** A language model (.nemo) for the ctc-lm decoder. */
   lm?: string;
   decoder: 'ctc-lm' | 'ctc' | 'rnnt';
+  /**
+   * The language to tell a multilingual model that takes one (`--lang`, NeMo's `target_lang`), e.g. 'ro' for Nemotron
+   * unified; Romanian-only models take none.
+   */
+  lang?: string;
+}
+
+/** The ONNX files of a NeMo transducer exported for sherpa-onnx, inside the model's folder. */
+export interface SherpaSpec {
+  encoder: string;
+  decoder: string;
+  joiner: string;
+  tokens: string;
+  /** sherpa-onnx's name for the model family. */
+  modelType: 'nemo_transducer';
 }
 
 /** The Apple speech helper's module and preset (native/apple-speech). */
@@ -63,6 +78,7 @@ export interface ModelBase {
   files?: ModelFile[];
   convert?: WhisperConvert;
   nemo?: NemoSpec;
+  sherpa?: SherpaSpec;
   /** Needs python/.venv (set up by npm run setup). */
   python?: boolean;
   apple?: AppleSpec;
@@ -99,6 +115,14 @@ export interface PythonNemoModel extends ModelBase {
   python: true;
 }
 
+/** ONNX files in a folder, run in-process by sherpa-onnx on the CPU. */
+export interface SherpaOnnxModel extends ModelBase {
+  engine: 'sherpa-onnx';
+  dir: string;
+  files: ModelFile[];
+  sherpa: SherpaSpec;
+}
+
 /** Apple's on-device recognizer, run by a helper compiled into `file` (macOS 26, from source only). */
 export interface AppleSpeechModel extends ModelBase {
   engine: 'apple-speech';
@@ -113,7 +137,7 @@ export interface ElevenLabsModel extends ModelBase {
   elevenlabs: ElevenLabsSpec;
 }
 
-export type Model = TranscribeCppModel | WhisperCppModel | PythonNemoModel | AppleSpeechModel | ElevenLabsModel;
+export type Model = TranscribeCppModel | WhisperCppModel | PythonNemoModel | SherpaOnnxModel | AppleSpeechModel | ElevenLabsModel;
 
 /** Download progress, 0..1. */
 export type OnProgress = (fraction: number) => void;

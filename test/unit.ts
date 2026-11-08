@@ -20,8 +20,9 @@ import { TranscribeCppEngine, describeDevice } from '../lib/engines/transcribe-c
 import { SidecarEngine } from '../lib/engines/sidecar.ts';
 import { WhisperCppEngine } from '../lib/engines/whisper-cpp.ts';
 import { PythonNemoEngine } from '../lib/engines/python-nemo.ts';
+import { SherpaOnnxEngine } from '../lib/engines/sherpa-onnx.ts';
 import { config, ROOT } from '../lib/config.ts';
-import { MODELS, findModel } from '../lib/models.ts';
+import { MODELS, findModel, modelPath } from '../lib/models.ts';
 import { liveSteadiness, sumSteadiness } from '../lib/benchmark/metrics.ts';
 import { withNoise, withGain, inRoom, silence as benchSilence, joinClips, rms, db } from '../lib/benchmark/audio.ts';
 import { machineInfo, describeMachine } from '../lib/benchmark/machine.ts';
@@ -79,13 +80,36 @@ t.check('UNIT-TUNE-03', 'every setting has a range for the Settings sliders', Ob
     `recommended ${recommended.join(', ')}; ${longReason.length ? `reasons too long: ${longReason.map((m) => m.id).join(', ')}` : 'every reason fits'}`);
 }
 // python/nemo_server.py refuses a decoder it does not know, but only once someone picks the model.
-const nemoDecoders = (fs.readFileSync(path.join(ROOT, 'python', 'nemo_server.py'), 'utf8').match(/"--decoder", choices=\[([^\]]*)\]/) as RegExpMatchArray)[1].match(/[\w-]+/g) as string[]; // the server has the option
+const nemoServer = fs.readFileSync(path.join(ROOT, 'python', 'nemo_server.py'), 'utf8');
+const nemoDecoders = (nemoServer.match(/"--decoder", choices=\[([^\]]*)\]/) as RegExpMatchArray)[1].match(/[\w-]+/g) as string[]; // the server has the option
+const nemoLang = /add_argument\("--lang"/.test(nemoServer);
 const nemoModels = MODELS.filter((m) => m.engine === 'python-nemo');
 const badNemo = nemoModels.filter(({ nemo, files }) => !nemoDecoders.includes(nemo.decoder)
   || (nemo.decoder === 'ctc-lm') !== Boolean(nemo.lm)
+  || (nemo.lang !== undefined && (!nemoLang || !/^[a-z]{2}$/.test(nemo.lang)))
   || ![nemo.model, nemo.lm].filter(Boolean).every((f) => files.some((x) => x.file === f)));
-t.check('UNIT-MODEL-01', 'every NeMo model uses a decoder nemo_server.py accepts and downloads the files it loads', nemoModels.length > 0 && !badNemo.length,
-  `decoders ${nemoDecoders.join('/')}; ${nemoModels.map((m) => `${m.id}: ${m.nemo.decoder}`).join(', ')}${badNemo.length ? `; wrong: ${badNemo.map((m) => m.id).join(', ')}` : ''}`);
+t.check('UNIT-MODEL-01', 'every NeMo model uses a decoder nemo_server.py accepts, a language only where the server takes --lang, and downloads the files it loads', nemoModels.length > 0 && !badNemo.length,
+  `decoders ${nemoDecoders.join('/')}, --lang ${nemoLang ? 'yes' : 'no'}; ${nemoModels.map((m) => `${m.id}: ${m.nemo.decoder}${m.nemo.lang ? ` ${m.nemo.lang}` : ''}`).join(', ')}${badNemo.length ? `; wrong: ${badNemo.map((m) => m.id).join(', ')}` : ''}`);
+
+// The three models of #60, as the issue asks for them: Nemotron unified told it hears Romanian, Parakeet Redux in the
+// fp32 sherpa-onnx export (the int8 one is much less accurate), Fun-ASR-MLT-Nano as a Q8_0 GGUF; none recommended
+// before the benchmark.
+{
+  const [nemotron, redux, funasr] = ['nemotron-unified-0.6b', 'parakeet-redux', 'fun-asr-mlt-nano'].map(findModel);
+  const cmd = (m: Model | undefined) => (m?.engine === 'python-nemo'
+    ? new PythonNemoEngine({ id: m.id, modelDir: 'd', nemo: m.nemo, threads: 4 }).command(1).args : []);
+  const langArg = (args: string[]) => (args.includes('--lang') ? args[args.indexOf('--lang') + 1] : null);
+  const reduxFiles = redux?.engine === 'sherpa-onnx' ? redux.files.map((f) => f.file) : [];
+  const reduxOk = redux?.engine === 'sherpa-onnx' && redux.sherpa.modelType === 'nemo_transducer'
+    && [redux.sherpa.encoder, redux.sherpa.decoder, redux.sherpa.joiner, redux.sherpa.tokens, 'encoder.weights'].every((f) => reduxFiles.includes(f))
+    && !reduxFiles.some((f) => /int8/.test(f)) && redux.files.every((f) => f.url.endsWith(`/${f.file}`));
+  const ids = MODELS.map((m) => m.id);
+  t.check('UNIT-MODEL-03', 'the #60 models: Nemotron unified on NeMo (RNNT) started with --lang ro (Jackrabbit without it), Parakeet Redux on sherpa-onnx with every fp32 file it loads (no int8), Fun-ASR-MLT-Nano a Q8_0 GGUF on transcribe.cpp; all three in Other; ids unique',
+    nemotron?.engine === 'python-nemo' && nemotron.nemo.decoder === 'rnnt' && langArg(cmd(nemotron)) === 'ro' && langArg(cmd(findModel('jackrabbit-110m-ro'))) === null
+      && reduxOk && funasr?.engine === 'transcribe.cpp' && /-Q8_0\.gguf$/.test(funasr.file) && funasr.url.endsWith(`/${funasr.file}`)
+      && [nemotron, redux, funasr].every((m) => m?.tier === 'other') && new Set(ids).size === ids.length,
+    `Nemotron ${nemotron?.engine} --lang ${langArg(cmd(nemotron))}; Redux ${redux?.engine}: ${reduxFiles.join(', ')}; Fun-ASR ${funasr?.engine} ${funasr?.file}; tiers ${[nemotron, redux, funasr].map((m) => m?.tier).join('/')}`);
+}
 
 // ---------- the page's backlog while the server is unreachable (#11) ----------
 {
@@ -1137,11 +1161,13 @@ http.createServer((req, res) => {
 {
   const GPU_ENGINES = ['transcribe.cpp', 'whisper.cpp', 'python-nemo', 'apple-speech'];
   const local = MODELS.filter((m) => !m.cloud);
+  // sherpa-onnx has no GPU path (#60): its models are allowed, as long as they are never recommended and say so.
   const cpuOnly = local.filter((m) => !GPU_ENGINES.includes(m.engine));
+  const unsaid = cpuOnly.filter((m) => m.engine !== 'sherpa-onnx' || m.tier !== 'other' || !/\bCPU\b/.test(m.reason));
   const parakeet = MODELS.find((m) => m.id === 'parakeet-tdt-0.6b-v3');
-  t.check('UNIT-GPU-01', 'every local model runs on an engine that uses the GPU; Parakeet TDT v3 keeps its id and is on transcribe.cpp',
-    !cpuOnly.length && parakeet?.engine === 'transcribe.cpp' && /\.gguf$/.test(parakeet.file) && parakeet.url.endsWith(parakeet.file),
-    `${local.length} local models; CPU-only: ${cpuOnly.map((m) => `${m.id} (${m.engine})`).join(', ') || 'none'}; Parakeet TDT v3 on ${parakeet?.engine}`);
+  t.check('UNIT-GPU-01', 'every local model runs on an engine that uses the GPU, except sherpa-onnx ones, which are in Other and say CPU in their reason; Parakeet TDT v3 keeps its id and is on transcribe.cpp',
+    !unsaid.length && parakeet?.engine === 'transcribe.cpp' && /\.gguf$/.test(parakeet.file) && parakeet.url.endsWith(parakeet.file),
+    `${local.length} local models; CPU-only: ${cpuOnly.map((m) => `${m.id} (${m.engine})`).join(', ') || 'none'}${unsaid.length ? `; not allowed: ${unsaid.map((m) => m.id).join(', ')}` : ''}; Parakeet TDT v3 on ${parakeet?.engine}`);
 
   // transcribe.cpp: "auto" (the GPU) first; the CPU only when that load throws.
   const fakeModel = (backend, deviceType) => ({ backend, device: { deviceType, name: backend }, capabilities: { languages: ['ro'] }, supports: () => false, dispose() {}, transcribe: async () => ({ text: backend }) });
@@ -1228,6 +1254,42 @@ http.createServer((req, res) => res.end(JSON.stringify({ status: 'ok' }))).liste
     moved.text === 'CPU' && moved.device === 'CPU' && /Metal failed/.test(String(moved.fallback)) && moved.disposed === 'Metal'
       && stayed.text === 'threw stand-in: Metal failed' && stayed.device === 'GPU (Metal)' && !stayed.fallback && stayed.disposed === 'CPU',
     `CPU works: "${moved.text}" on ${moved.device}, disposed ${moved.disposed}; CPU fails too: ${stayed.text}, on ${stayed.device}, disposed ${stayed.disposed}`);
+
+  // sherpa-onnx (#60, Parakeet Redux): the engine the transcriber builds for it, with a stand-in recognizer.
+  {
+    const redux = findModel('parakeet-redux') as Model;
+    const built = new Transcriber(config).createEngine(redux, () => {}) as SherpaOnnxEngine;
+    const configs: any[] = [];
+    const heard: { samples: number; sampleRate: number }[] = [];
+    const engine = new SherpaOnnxEngine({
+      modelDir: '/m/parakeet-redux', sherpa: redux.sherpa as NonNullable<Model['sherpa']>, threads: 4,
+      create: async (c) => (configs.push(c), {
+        createStream: () => ({ acceptWaveform: (w) => heard.push({ samples: w.samples.length, sampleRate: w.sampleRate }) }),
+        decodeAsync: async () => ({ text: ' Bună ziua. ' }),
+      }),
+    });
+    await engine.load();
+    const result = await engine.transcribe(new Float32Array(SR * 2));
+    const mc = configs[0]?.modelConfig ?? {};
+    const killed = new SherpaOnnxEngine({ modelDir: 'd', sherpa: redux.sherpa as NonNullable<Model['sherpa']>, threads: 4, create: async () => { configs.push('never'); return null as any; } });
+    killed.kill();
+    const refused = await killed.load().then(() => 'loaded', (err) => err.message);
+    t.check('UNIT-SHERPA-01', 'sherpa-onnx (Parakeet Redux): the transcriber builds its engine from the model folder; the recognizer gets the encoder, decoder, joiner and tokens from that folder as a NeMo transducer on the CPU with THREADS threads; a sentence goes in whole at 16 kHz and its text comes back trimmed; it runs on the CPU and takes no prompt; killed before it loads, it never loads',
+      built instanceof SherpaOnnxEngine && built.config.modelConfig.transducer.encoder === path.join(modelPath(redux), 'encoder.onnx') && built.config.modelConfig.numThreads === config.threads
+        && mc.transducer?.encoder === '/m/parakeet-redux/encoder.onnx' && mc.transducer?.decoder === '/m/parakeet-redux/decoder.onnx' && mc.transducer?.joiner === '/m/parakeet-redux/joiner.onnx'
+        && mc.tokens === '/m/parakeet-redux/tokens.txt' && mc.modelType === 'nemo_transducer' && mc.provider === 'cpu' && mc.numThreads === 4
+        && configs[0]?.featConfig?.sampleRate === SR && heard.length === 1 && heard[0].samples === SR * 2 && heard[0].sampleRate === SR
+        && result.text === 'Bună ziua.' && engine.device === 'CPU' && !engine.supportsPrompt && /not loaded: the server is stopping/.test(refused) && configs.length === 1,
+      `built ${built.constructor.name} from ${path.relative(ROOT, built.config.modelConfig.transducer.encoder)}; ${mc.modelType} on ${mc.provider}, ${mc.numThreads} threads; heard ${heard.map((h) => `${h.samples} samples at ${h.sampleRate} Hz`).join()}; "${result.text}" on ${engine.device}; killed: ${refused}`);
+
+    // The real sherpa-onnx with the model's files missing (a download cut short, a folder emptied by hand): the load
+    // fails with an error the page can show, and the server, which runs the recognizer in its own process, goes on.
+    const empty = scratch('sherpa-missing');
+    const missing = new SherpaOnnxEngine({ modelDir: empty, sherpa: redux.sherpa as NonNullable<Model['sherpa']>, threads: 1 });
+    const failed = await missing.load().then(() => 'loaded', (err) => err.message);
+    t.check('UNIT-SHERPA-02', 'the real sherpa-onnx with Parakeet Redux\'s files missing: the load fails with an error, this process goes on, nothing is loaded',
+      failed !== 'loaded' && missing.recognizer === null && missing.device === null, `load: ${failed}`);
+  }
 
   // The page is told where the model runs, and when it moves to the CPU mid-meeting (a stand-in engine).
   const keepKey = config.elevenlabs.apiKey;

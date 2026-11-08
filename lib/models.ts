@@ -38,6 +38,8 @@ const MEL_FILTERS_URL = 'https://raw.githubusercontent.com/openai/whisper/main/w
  *   engine 'transcribe.cpp': a GGUF file run in-process by transcribe.cpp on the GPU (Metal); CPU if that fails.
  *   engine 'python-nemo':    NVIDIA NeMo files run by python/nemo_server.py (needs python/.venv), on the GPU through
  *                            PyTorch MPS, CPU if that fails; a language-model beam search stays on the CPU.
+ *   engine 'sherpa-onnx':    a NeMo transducer exported to ONNX, run in-process by sherpa-onnx on the CPU: the one
+ *                            engine without a GPU path (#60), so its models say "CPU" in their reason.
  *   engine 'apple-speech':   Apple's on-device recognizer (macOS 26), run by a small Swift helper that is
  *                            compiled once on this Mac; macOS downloads and manages the language model itself.
  *   engine 'elevenlabs':     ElevenLabs' realtime speech-to-text, in the cloud (`cloud`): the audio leaves the
@@ -192,6 +194,53 @@ export const MODELS: Model[] = [
     file: 'ggml-small-ro-readerbench-q8_0.bin',
     convert: { repo: 'readerbench/whisper-ro', revision: 'refs/pr/2', quantize: 'q8_0' }, // PR 2 = safetensors
     noPrompt: true, // previous-text context makes this small model invent words ("in afecțiunea")
+  },
+  // #60: added from the November 2026 scan and not measured here yet, so they wait at the end of the local models
+  // until `npm run benchmark:suite` places them by the #28 rules.
+  {
+    id: 'nemotron-unified-0.6b',
+    label: 'NVIDIA Nemotron unified 0.6B',
+    tier: 'other',
+    reason: 'not measured here yet; 9.4 % WER (NVIDIA); needs Python',
+    engine: 'python-nemo',
+    size: '2.5 GB',
+    notes: 'NVIDIA offline + streaming RNNT model (Oct 2026), 25 languages, told it hears Romanian. Romanian WER 9.4 % offline (NVIDIA, FLEURS, MCV and MLS averaged). OpenMDW-1.1. Python/NeMo on the GPU (MPS).',
+    dir: 'nemotron-unified-0.6b',
+    files: [
+      { file: 'nemotron-labs-unified-asr-0.6b.nemo', mb: 2508, url: `${HF}nvidia/nemotron-labs-unified-asr-0.6b/resolve/main/nemotron-labs-unified-asr-0.6b.nemo` },
+    ],
+    nemo: { model: 'nemotron-labs-unified-asr-0.6b.nemo', decoder: 'rnnt', lang: 'ro' }, // target_lang="ro"; "auto" detects
+    python: true,
+  },
+  {
+    id: 'parakeet-redux',
+    label: 'Parakeet Redux (Moondream)',
+    tier: 'other',
+    reason: 'not measured here yet; runs on the CPU (sherpa-onnx); CC-BY',
+    engine: 'sherpa-onnx',
+    size: '2.5 GB',
+    notes: "Moondream's 1.58-bit Parakeet TDT v3 (Sept 2026), in sherpa-onnx's fp32 export (its int8 export is much less accurate). FLEURS Romanian WER 10.3 % (authors). CC-BY-4.0. CPU only.",
+    dir: 'parakeet-redux',
+    // fp32: the weights are stored dequantized, so the 1.58-bit model is as big on disk as Parakeet v3 in fp32.
+    files: [
+      { file: 'encoder.onnx', mb: 42, url: `${HF}csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-redux/resolve/main/encoder.onnx` },
+      { file: 'encoder.weights', mb: 2435, url: `${HF}csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-redux/resolve/main/encoder.weights` }, // encoder.onnx's external data
+      { file: 'decoder.onnx', mb: 47, url: `${HF}csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-redux/resolve/main/decoder.onnx` },
+      { file: 'joiner.onnx', mb: 25, url: `${HF}csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-redux/resolve/main/joiner.onnx` },
+      { file: 'tokens.txt', mb: 0.1, url: `${HF}csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-redux/resolve/main/tokens.txt` },
+    ],
+    sherpa: { encoder: 'encoder.onnx', decoder: 'decoder.onnx', joiner: 'joiner.onnx', tokens: 'tokens.txt', modelType: 'nemo_transducer' },
+  },
+  {
+    id: 'fun-asr-mlt-nano',
+    label: 'Fun-ASR-MLT-Nano 0.8B (Alibaba)',
+    tier: 'other',
+    reason: 'not measured here yet; LLM decoder; license unclear',
+    engine: 'transcribe.cpp',
+    size: '891 MB',
+    notes: 'SenseVoice encoder + Qwen3-0.6B decoder, 31 languages (Dec 2025). No Romanian WER published. FunASR Model License v1.1 (the base card says Apache-2.0). GPU.',
+    file: 'Fun-ASR-MLT-Nano-2512-Q8_0.gguf',
+    url: `${HF}handy-computer/Fun-ASR-MLT-Nano-2512-gguf/resolve/main/Fun-ASR-MLT-Nano-2512-Q8_0.gguf`,
   },
   {
     id: 'elevenlabs-scribe-v2',

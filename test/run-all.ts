@@ -61,7 +61,7 @@ const installedModels = MODELS.filter((m) => !m.cloud && isInstalled(m)).map((m)
 console.log(`run ${RUN_ID}\non ${describeMachine(machine)}\nwith ${describeSoftware(machine)}`);
 
 // One engine per runtime, for the full tier.
-const ENGINES = ['canary-1b-v2', 'whisper-large-v3-turbo', 'jackrabbit-110m-ro'];
+const ENGINES = ['canary-1b-v2', 'whisper-large-v3-turbo', 'jackrabbit-110m-ro', 'parakeet-redux']; // the last on sherpa-onnx (#60), on the CPU
 
 /** One suite as a child process; its result file joins the report. */
 function run(name: string, cmd: string, cmdArgs: string[], { minutes, env = {}, tag = false }: { minutes?: number, env?: Record<string, string>, tag?: boolean } = {}): Promise<void> {
