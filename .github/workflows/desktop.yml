@@ -1,5 +1,5 @@
 # Builds the desktop installers on real machines: a Mac (.dmg, Apple Silicon) and a Windows PC (.exe).
-# Each job first runs test/smoke.js, which transcribes a Romanian clip with the speech engine on that OS.
+# Each job first runs test/smoke.ts, which transcribes a Romanian clip with the speech engine on that OS.
 #
 #   Actions tab → "Desktop app" → Run workflow     installers appear under the run's Artifacts
 #   git tag v1.0.0 && git push origin v1.0.0       also publishes them on the GitHub Releases page
@@ -33,8 +33,10 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Types and the page (tsc on the three projects; public/ is a fresh emit of web/)
+        run: npm run typecheck && node scripts/build-web.ts --check
       - name: Smoke test (voice detector + speech engine on this OS)
-        run: node test/smoke.js
+        run: node test/smoke.ts
       - name: Build installer
         run: npm run ${{ matrix.dist }} -- --publish never
         env:

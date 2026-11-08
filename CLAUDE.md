@@ -18,3 +18,12 @@ The test plan is TESTING.md, written for agents. Follow its rules (§2) whenever
 - After every merge into main: run `npm run test:full` on main and add the result to TESTING.md §12.
 - Tests never use the user's `transcripts/`, `.settings.json` or a real microphone; `transcripts/*.wav` are private
   recordings and never leave this computer.
+
+## TypeScript
+
+The code is TypeScript; `docs/typescript-migration.md` holds the decisions behind the setup (§2) and how it got there.
+Node runs `.ts` files directly (no build step on the server side), so relative imports name the real `.ts` extension
+and only erasable syntax is used (no enums, namespaces or parameter properties; `tsc` enforces both). The page's sources
+are `web/*.ts`, and `tsc` emits them into the committed `public/*.js`: run `npm run build:web` after editing them
+(`STATIC-07` fails while `public/` is stale). Keep `npm run typecheck` green (`STATIC-06`); the contracts shared between
+modules live in `types/`, a shape one module alone uses lives in that module.

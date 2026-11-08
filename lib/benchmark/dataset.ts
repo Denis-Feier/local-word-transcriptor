@@ -1,0 +1,51 @@
+// The open audio the benchmarks run on: the FLEURS Romanian test set (Google, CC-BY-4.0; 883 read sentences with
+// checked transcripts, ~500 MB), downloaded once into benchmarks/data/fleurs-ro. Every computer gets the same clips.
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { ROOT } from '../config.ts';
+import { download } from '../models.ts';
+import { decodeWav } from '../wav.ts';
+
+/** One clip of the set: its file in test/, the checked transcript, and its length. */
+export type Clip = { file: string; ref: string; seconds: number };
+
+export const FLEURS_DIR = path.join(ROOT, 'benchmarks', 'data', 'fleurs-ro');
+const FLEURS_URL = 'https://huggingface.co/datasets/google/fleurs/resolve/main/data/ro_ro/';
+
+export const datasetReady = (dir = FLEURS_DIR) => fs.existsSync(path.join(dir, 'test.tsv')) && fs.existsSync(path.join(dir, 'test'));
+
+/** Downloads and unpacks the set the first time (needs `tar`, which macOS, Windows 10+ and Linux all have). */
+export async function ensureDataset(dir = FLEURS_DIR, log: (line: string) => void = console.log) {
+  if (datasetReady(dir)) return;
+  log('Downloading the FLEURS Romanian test set (~500 MB, once)…');
+  await download(`${FLEURS_URL}test.tsv`, path.join(dir, 'test.tsv'));
+  const archive = path.join(dir, 'test.tar.gz');
+  await download(`${FLEURS_URL}audio/test.tar.gz`, archive);
+  const tar = spawnSync('tar', ['-xzf', archive, '-C', dir], { stdio: 'inherit' });
+  if (tar.status !== 0) throw new Error('Unpacking FLEURS failed (is `tar` installed?)');
+  fs.rmSync(archive);
+}
+
+/**
+ * Every clip of the set, sorted by file name so the order is the same everywhere: { file, ref, seconds }.
+ * TSV columns: id, file, raw transcription, normalized transcription, characters, samples, gender.
+ */
+export function loadClips(dir = FLEURS_DIR): Clip[] {
+  return fs.readFileSync(path.join(dir, 'test.tsv'), 'utf8').trim().split('\n')
+    .map((line) => line.split('\t'))
+    .map(([, file, ref, , , samples]) => ({ file, ref, seconds: Number(samples) / 16000 }))
+    .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
+}
+
+/** A fixed selection of n clips spread evenly over the sorted set: the same n gives the same clips on every computer. */
+export function selectClips<T>(clips: T[], n: number): T[] {
+  const count = Math.max(0, Math.min(n, clips.length));
+  const out: T[] = [];
+  for (let i = 0; i < count; i++) out.push(clips[Math.floor((i * clips.length) / count)]);
+  return out;
+}
+
+export const clipSamples = (clip: Clip, dir = FLEURS_DIR) => decodeWav(fs.readFileSync(path.join(dir, 'test', clip.file))).samples;
+
+export const audioSeconds = (clips: { seconds: number }[]) => clips.reduce((n, c) => n + c.seconds, 0);

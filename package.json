@@ -5,26 +5,29 @@
   "description": "Live Romanian speech-to-text from your laptop mic, fully local",
   "type": "module",
   "private": true,
-  "main": "desktop/main.mjs",
+  "main": "desktop/main.ts",
   "scripts": {
-    "setup": "node scripts/setup.js",
-    "start": "node server.js",
-    "compare": "node scripts/compare.js",
-    "test": "node test/run-all.js",
-    "test:quick": "node test/run-all.js quick",
-    "test:full": "node test/run-all.js full",
-    "test:ui": "node test/run-all.js --only ui",
-    "test:stress": "node test/run-all.js stress",
-    "test:wav": "node test/stream-wav.js",
-    "benchmark": "node scripts/benchmark.js",
-    "benchmark:suite": "node scripts/benchmark-suite.js",
-    "manual": "node scripts/manual.mjs",
+    "setup": "node scripts/setup.ts",
+    "start": "node server.ts",
+    "compare": "node scripts/compare.ts",
+    "test": "node test/run-all.ts",
+    "test:quick": "node test/run-all.ts quick",
+    "test:full": "node test/run-all.ts full",
+    "test:ui": "node test/run-all.ts --only ui",
+    "test:stress": "node test/run-all.ts stress",
+    "test:wav": "node test/stream-wav.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.test.json",
+    "build:web": "node scripts/build-web.ts",
+    "watch:web": "node --watch-path=web --watch-path=types scripts/build-web.ts",
+    "benchmark": "node scripts/benchmark.ts",
+    "benchmark:suite": "node scripts/benchmark-suite.ts",
+    "manual": "node scripts/manual.ts",
     "app": "electron .",
     "dist:mac": "electron-builder --mac",
     "dist:win": "electron-builder --win"
   },
   "engines": {
-    "node": ">=22.12"
+    "node": ">=22.18"
   },
   "dependencies": {
     "@elevenlabs/elevenlabs-js": "^2.75.0",
@@ -34,8 +37,12 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/audioworklet": "0.0.100",
+    "@types/node": "24.19.2",
+    "@types/ws": "8.18.2",
     "electron": "45.1.0",
-    "electron-builder": "26.18.0"
+    "electron-builder": "26.18.0",
+    "typescript": "7.0.2"
   },
   "author": "Live Transcriber",
   "build": {
@@ -49,10 +56,11 @@
     },
     "files": [
       "package.json",
-      "server.js",
+      "server.ts",
       "lib/**",
       "public/**",
-      "desktop/main.mjs",
+      "web/**",
+      "desktop/main.ts",
       "docs/manual/*.pdf",
       "!**/*.md",
       "!node_modules/@elevenlabs/elevenlabs-js/dist/**"

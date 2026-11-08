@@ -1,0 +1,409 @@
+// The server as the page (and other clients) use it: static files, WebSocket messages, settings, files,
+// mic layouts, broken input, startup and shutdown. Starts its own servers (Parakeet 110M by default).
+//
+//   node test/protocol.ts
+import { execFile, spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { promisify } from 'node:util';
+import WebSocket from 'ws';
+import { ROOT, SR, startServer, speakers, sleep, suite, fakeElevenLabs } from './helpers.ts';
+import { fmtTime } from '../lib/session.ts';
+import type { TestServer } from '../types/test.ts';
+
+const t = suite('protocol');
+const { A, B } = speakers();
+
+/** A page-like client: framed audio (/ws?mics) unless mono, collects every message. */
+async function connect(server: TestServer, { mono = false }: { mono?: boolean } = {}) {
+  const ws = new WebSocket(server.ws(mono ? '' : '?mics'));
+  const msgs: any[] = []; // the checks below read whatever fields they care about, also ones a message must not have
+  ws.on('message', (d) => msgs.push(JSON.parse(d.toString())));
+  await new Promise((resolve, reject) => {
+    ws.once('open', resolve);
+    ws.once('error', reject);
+  });
+  return {
+    ws,
+    msgs,
+    json: (msg: object) => ws.send(JSON.stringify(msg)),
+    /** Send `seconds` of audio, one source per mic from its start (null = silence), faster than real time. */
+    async audio(sources: (Float32Array | null)[], seconds: number) {
+      for (let i = 0, at = 0; i < seconds * 10; i++) {
+        const n = 1600;
+        if (mono) ws.send((sources[0] as Float32Array).slice(at, at + n).buffer); // mono: one real source
+        else {
+          const frame = new Float32Array(1 + sources.length * n);
+          new Uint32Array(frame.buffer, 0, 1)[0] = sources.length;
+          sources.forEach((src, mic) => src && frame.set(src.subarray(at, at + n), 1 + mic * n));
+          ws.send(frame.buffer);
+        }
+        at += n;
+        if (i % 8 === 7) await sleep(100);
+      }
+    },
+    finals: () => msgs.filter((m) => m.type === 'final' && m.text),
+    last: (type: string) => msgs.filter((m) => m.type === type).at(-1),
+    close: () => new Promise((r) => (ws.readyState === WebSocket.CLOSED ? r() : (ws.once('close', r as () => void), ws.close()))) as Promise<void>,
+  };
+}
+
+const server = await startServer();
+try {
+  // ---------- static files ----------
+  const serverSrc = fs.readFileSync(path.join(ROOT, 'server.ts'), 'utf8');
+  const routes = [...serverSrc.matchAll(/'(\/[\w.-]*)': \['([\w.-]+)', '([^']+)'\]/g)].map(([, route, file, type]) => ({ route, file, type }));
+  const results = await Promise.all(routes.map(async (r) => {
+    const res = await fetch(server.url + r.route);
+    return res.status === 200 && res.headers.get('content-type') === r.type;
+  }));
+  t.check('PROT-STATIC-01', 'every page file is served with its content type', results.every(Boolean) && routes.length >= 7, `${routes.length} routes`);
+  const unserved = fs.readdirSync(path.join(ROOT, 'public')).filter((f) => !routes.some((r) => r.file === f));
+  t.check('PROT-STATIC-02', 'every file in public/ has a route in server.ts', unserved.length === 0, unserved.join(', '));
+  const [missing, post] = await Promise.all([fetch(`${server.url}/nope.js`), fetch(`${server.url}/`, { method: 'POST' })]);
+  t.check('PROT-STATIC-03', 'unknown paths and non-GET requests get 404', missing.status === 404 && post.status === 404);
+  // What the server's memory is made of, for the stress tests (#48): only with DEBUG, which every test server has.
+  const memory = await fetch(`${server.url}/debug/memory`);
+  const mem = (memory.status === 200 ? await memory.json() : {}) as Record<string, number>;
+  t.check('PROT-MEM-01', 'with DEBUG, /debug/memory says what the server\'s memory is made of, in MB: all of it, V8\'s heap, the memory outside it',
+    ['rss', 'heapTotal', 'heapUsed', 'external', 'arrayBuffers'].every((k) => Number.isInteger(mem[k]) && mem[k] >= 0) && mem.heapUsed <= mem.heapTotal && mem.heapTotal < mem.rss,
+    `${memory.status} ${JSON.stringify(mem)}`);
+
+  // ---------- connect ----------
+  let c = await connect(server);
+  await sleep(300);
+  const types = c.msgs.map((m) => m.type);
+  const status = c.last('status');
+  const tuning = c.last('tuning');
+  t.check('PROT-WS-01', 'on connect: models, status (ready, detector, language), tuning, mics',
+    ['models', 'status', 'tuning', 'mics'].every((x) => types.includes(x)) && status.state === 'ready' && status.detector && status.language && c.last('mics').max === 2,
+    `${types.join(',')}; detector ${status.detector}; max mics ${c.last('mics')?.max}`);
+  t.check('PROT-WS-02', 'the models message lists installed/available models and the active one',
+    c.last('models').models.length > 0 && c.last('models').active === 'parakeet-ro-110m' && c.last('models').models.every((m) => 'installed' in m && 'download' in m));
+  const listed = c.last('models').models;
+  t.check('PROT-WS-06', 'every model in the message carries its tier (recommended/other) and a one-line reason (#28); the recommended ones come first',
+    listed.every((m) => ['recommended', 'other'].includes(m.tier) && typeof m.reason === 'string' && m.reason.length > 0)
+      && listed.findIndex((m) => m.tier === 'other') > listed.filter((m) => m.tier === 'recommended').length - 1 && listed.some((m) => m.tier === 'recommended'),
+    listed.map((m) => `${m.id}: ${m.tier}`).join(', '));
+  t.check('PROT-WS-03', 'tuning carries values, defaults and ranges for every slider, including Mic separation',
+    ['vadThreshold', 'silenceMs', 'minSpeechMs', 'maxSegmentSec', 'partialEverySec', 'crosstalkDb'].every((k) => k in tuning.values && k in tuning.defaults && k in tuning.ranges));
+
+  // ---------- live settings ----------
+  c.json({ type: 'tuning', values: { crosstalkDb: 12, silenceMs: 1000 } });
+  await sleep(300);
+  const saved = JSON.parse(fs.readFileSync(server.settingsFile, 'utf8'));
+  t.check('PROT-TUNE-01', 'a slider change is applied, broadcast and saved', c.last('tuning').values.crosstalkDb === 12 && saved.tuning?.silenceMs === 1000, JSON.stringify(saved.tuning));
+  c.json({ type: 'tuning', values: { crosstalkDb: 99, vadThreshold: 'x' } });
+  await sleep(300);
+  t.check('PROT-TUNE-02', 'out-of-range values are clamped, invalid ones ignored', c.last('tuning').values.crosstalkDb === 20 && c.last('tuning').values.vadThreshold === tuning.values.vadThreshold);
+  c.json({ type: 'tuning', reset: true });
+  await sleep(300);
+  t.check('PROT-TUNE-03', 'Reset to defaults restores every value and forgets the saved ones',
+    JSON.stringify(c.last('tuning').values) === JSON.stringify(tuning.defaults) && !JSON.parse(fs.readFileSync(server.settingsFile, 'utf8')).tuning);
+  c.json({ type: 'select', id: 'no-such-model' });
+  c.json({ type: 'install', id: 'parakeet-ro-110m' }); // already installed: nothing to do
+  c.json({ type: 'whatever' });
+  await sleep(300);
+  t.check('PROT-WS-04', 'unknown model ids, installing an installed model and unknown messages change nothing',
+    c.last('status').state === 'ready' && c.last('status').model === 'parakeet-ro-110m' && !c.msgs.some((m) => m.type === 'error'));
+  t.check('PROT-CLOUD-01', 'without an ElevenLabs key the cloud model is not offered', !c.last('models').models.some((m) => m.cloud || m.engine === 'elevenlabs'),
+    c.last('models').models.map((m) => m.id).join(', '));
+  await c.close();
+
+  // ---------- only the app's own page may connect ----------
+  const tryOrigin = (origin: string): Promise<string> => new Promise((resolve) => {
+    const ws = new WebSocket(server.ws('?mics'), { origin });
+    ws.once('open', () => (ws.close(), resolve('open')));
+    ws.once('error', (err) => resolve(err.message));
+  });
+  const [foreign, own] = await Promise.all([tryOrigin('https://example.com'), tryOrigin(server.url)]);
+  t.check('PROT-WS-05', 'a WebSocket from another website is refused; the page\'s own origin and clients without one connect',
+    /401/.test(foreign) && own === 'open', `example.com: ${foreign}; own page: ${own}`);
+
+  // ---------- mic layouts, Stop, files ----------
+  c = await connect(server);
+  c.json({ type: 'options', saveAudio: true });
+  await c.audio([A], 8); // one mic
+  await c.audio([A, B], 8); // a second mic joins mid-sentence
+  await c.audio([A], 8); // back to one
+  c.json({ type: 'flush' }); // Stop
+  await sleep(1500);
+  const before = c.finals().length;
+  c.json({ type: 'flush' }); // Stop again: harmless
+  await c.audio([A, B], 6); // Start with two mics, both talking
+  c.json({ type: 'flush' }); // Stop while both are mid-sentence
+  await sleep(2500);
+  const ids = c.finals().map((m) => m.id);
+  t.check('PROT-MIC-01', 'switching between one and two mics mid-recording keeps transcribing', before >= 2 && c.finals().length > before, `${before} then ${c.finals().length} sentences`);
+  t.check('PROT-MIC-02', 'sentence ids are unique and follow the order speech started', new Set(ids).size === ids.length && ids.every((id, i) => !i || id > ids[i - 1]), ids.join(','));
+  const lastStart = Math.max(...c.finals().map((m) => m.start));
+  const tailMics = new Set(c.finals().filter((m) => m.start > lastStart - 4).map((m) => m.mic));
+  t.check('PROT-MIC-03', 'Stop while both mics are talking finishes both', tailMics.has(0) && tailMics.has(1), [...tailMics].map((m) => `mic${m + 1}`).join(' '));
+  const audioFiles = c.msgs.filter((m) => m.type === 'file' && m.kind === 'audio').map((m) => path.basename(m.path));
+  const wavSec = audioFiles.map((f) => (fs.statSync(path.join(server.transcripts, f)).size - 44) / (2 * SR));
+  t.check('PROT-MIC-04', 'one WAV per mic, opened once (never overwritten) and as long as the audio sent',
+    audioFiles.length === 2 && new Set(audioFiles).size === 2 && Math.abs(wavSec[0] - 30) < 0.2 && Math.abs(wavSec[1] - 14) < 0.2,
+    audioFiles.map((f, i) => `${f}: ${wavSec[i].toFixed(1)} s`).join(', '));
+  const txt = fs.readdirSync(server.transcripts).filter((f) => f.endsWith('.txt'));
+  t.check('PROT-MIC-05', 'the transcript file has a line per sentence', txt.length === 1 && fs.readFileSync(path.join(server.transcripts, txt[0]), 'utf8').trim().split('\n').length === c.finals().length);
+  c.json({ type: 'reset' }); // Clear
+  await c.audio([A], 7);
+  c.json({ type: 'flush' });
+  await sleep(1500);
+  t.check('PROT-MIC-06', 'Clear starts new transcript and audio files', fs.readdirSync(server.transcripts).filter((f) => f.endsWith('.txt')).length === 2);
+
+  // ---------- broken input ----------
+  c.ws.send(new Uint8Array([1, 2]).buffer); // too short
+  c.ws.send(new Uint32Array([0, 0, 0]).buffer); // zero mics
+  c.ws.send(new Float32Array(1 + 1601).buffer); // samples don't split evenly
+  const five = new Float32Array(1 + 5 * 1600);
+  new Uint32Array(five.buffer, 0, 1)[0] = 5; // more mics than allowed: the first MAX_MICS are used
+  c.ws.send(five.buffer);
+  c.ws.send('not json');
+  const n = c.msgs.length;
+  c.json({ type: 'tuning', values: {} });
+  await sleep(400);
+  t.check('PROT-ERR-01', 'broken frames and bad JSON neither crash the server nor close the connection', c.ws.readyState === WebSocket.OPEN && c.msgs.length > n);
+  await c.close();
+  const mono = await connect(server, { mono: true });
+  await mono.audio([A], 8);
+  mono.json({ type: 'flush' });
+  await sleep(1500);
+  t.check('PROT-ERR-02', 'a plain mono client (no ?mics) still works', mono.finals().length >= 1 && mono.finals().every((m) => m.mic === 0));
+  await mono.close();
+
+  // ---------- startup and shutdown ----------
+  const clash = spawn(process.execPath, [path.join(ROOT, 'server.ts')], { env: { ...process.env, PORT: String(server.port), SETTINGS_FILE: path.join(server.dir, 'clash.json') } });
+  let clashOut = '';
+  clash.stderr.on('data', (d) => (clashOut += d));
+  const clashCode = await new Promise((r) => clash.on('exit', r));
+  t.check('PROT-RUN-01', 'a port in use gives a clear message and exit code 1', clashCode === 1 && clashOut.includes('already in use'));
+} finally {
+  await server.stop();
+}
+
+// Ctrl+C mid-sentence: the sentence being spoken is still transcribed and saved. (Signals: macOS and Linux;
+// on Windows the desktop app asks the server to stop by message instead.)
+if (process.platform === 'win32') {
+  t.skip('PROT-RUN-02', 'stopping the server (Ctrl+C) saves the sentence being spoken', 'no SIGINT on Windows');
+} else {
+  const s2 = await startServer();
+  try {
+    const c = await connect(s2);
+    await c.audio([A], 4); // mid-sentence, no Stop
+    await sleep(300);
+    const files = () => (fs.existsSync(s2.transcripts) ? fs.readdirSync(s2.transcripts).filter((f) => f.endsWith('.txt')) : []);
+    process.kill(s2.pid as number, 'SIGINT'); // a started server has a pid
+    await waitFor(() => files().length && fs.readFileSync(path.join(s2.transcripts, files()[0]), 'utf8').length > 10, 10000);
+    const text = files().length ? fs.readFileSync(path.join(s2.transcripts, files()[0]), 'utf8') : '';
+    t.check('PROT-RUN-02', 'stopping the server (Ctrl+C) saves the sentence being spoken', text.length > 10, JSON.stringify(text.slice(0, 60)));
+  } finally {
+    await s2.stop();
+  }
+}
+
+// Stopping while the model loads (#62): SIGTERM a few milliseconds into the load, as `docker compose down` during a first
+// start or the desktop app quitting while a model loads. Before the fix a transcribe.cpp load deadlocked exit() (the
+// server never left and was killed after 10 s), and a model process just started (whisper-server, the NeMo server) was
+// left running after the server was gone. Signals: macOS and Linux.
+if (process.platform === 'win32') {
+  t.skip('PROT-RUN-03', 'SIGTERM while the model loads in the server: it still exits, cleanly', 'no SIGTERM on Windows');
+  t.skip('PROT-RUN-04', 'SIGTERM while a model\'s process starts: the server exits and the process is gone', 'no SIGTERM on Windows');
+} else {
+  /**
+   * Starts a server on `model`, sends SIGTERM once begun() says its load is under way, and reports how it ended: seen,
+   * the server got the signal mid-load (its "Stopping while … loads" line); missed, it exited cleanly but the load had
+   * already ended (the test was too slow, not the server).
+   */
+  const stopWhileLoading = async (model: string, begun: (s: TestServer) => Promise<boolean> | boolean, { withProcess = false } = {}) => {
+    const s = await startServer({ model, until: 'listening' });
+    try {
+      const t0 = Date.now();
+      while (!(await begun(s)) && Date.now() - t0 < 60000) await sleep(5);
+      const loading = await begun(s);
+      const children = withProcess ? await childProcesses(s.pid as number) : []; // a started server has a pid
+      const t1 = Date.now();
+      process.kill(s.pid as number, 'SIGTERM');
+      const exit = await Promise.race([s.exited, sleep(10000).then(() => null)]);
+      const exitMs = Date.now() - t1;
+      const t2 = Date.now();
+      while (children.some((c) => alive(c.pid)) && Date.now() - t2 < 5000) await sleep(50);
+      const left = children.filter((c) => alive(c.pid));
+      const log = s.log();
+      const seen = /Stopping while .* loads…/.test(log);
+      const readyAfter = seen && / ready\b.*\(\d+\.\d s\)/.test(log.slice(log.search(/Stopping while/)));
+      const clean = exit?.code === 0;
+      const how = `${loading ? 'sent during the load' : 'the load had not begun'}; ${seen ? 'the server saw it mid-load' : 'no "Stopping while … loads" line'}${readyAfter ? ', then said the model was ready' : ''}; ${exit ? `exit code ${exit.code}${exit.signal ? ` by ${exit.signal}` : ''} in ${exitMs} ms` : 'no exit in 10 s'}`;
+      return { ok: loading && seen && !readyAfter && clean, missed: loading && !seen && clean, how, children, left, goneMs: Date.now() - t2 };
+    } finally {
+      await s.stop();
+    }
+  };
+  // In the server's own process (transcribe.cpp): the signal as the native load begins (its debug line). Parakeet 110M
+  // loads in ~50 ms, so a signal that lands after the load is tried again, at most 3 times.
+  let inProcess;
+  const tries: string[] = [];
+  do {
+    inProcess = await stopWhileLoading('parakeet-ro-110m', (s) => /\[transcribe\.cpp\] loading/.test(s.log()));
+    tries.push(inProcess.how);
+  } while (inProcess.missed && tries.length < 3);
+  t.check('PROT-RUN-03', 'SIGTERM while the model loads in the server: it exits by itself with code 0, the model never ready', inProcess.ok,
+    tries.length > 1 ? `${inProcess.how} (try ${tries.length}; before it: ${tries.slice(0, -1).join(' / ')})` : inProcess.how);
+  // A model served by its own process, one model per such engine as in the full tier; skipped when not installed.
+  const { MODELS, isInstalled, isAvailable } = await import('../lib/models.ts');
+  for (const id of ['whisper-large-v3-turbo', 'jackrabbit-110m-ro']) {
+    const title = `SIGTERM while ${id}'s process starts: the server exits and the process is gone`;
+    const m = MODELS.find((x) => x.id === id);
+    if (!m || !isAvailable(m) || !isInstalled(m)) {
+      t.skip('PROT-RUN-04', title, 'not installed or not runnable here');
+      continue;
+    }
+    const r = await stopWhileLoading(id, async (s) => (await childProcesses(s.pid as number)).length > 0, { withProcess: true });
+    t.check('PROT-RUN-04', title, r.ok && r.children.length >= 1 && !r.left.length,
+      `${r.children.map((c) => `${c.name} (${c.pid})`).join(', ') || 'no process'} started; ${r.how}; ${r.left.length ? `still running: ${r.left.map((c) => c.pid).join(', ')}` : `process gone within ${r.goneMs} ms`}`);
+  }
+}
+
+// The disk fills up while Save audio is on (#1): no file may grow past 300 blocks (300 KB on macOS, 150 KB on Linux),
+// so the WAV is full after 9.6 s of 40 s (4.8 s on Linux). The server must keep transcribing and saving the
+// transcript, tell the page once, and keep the WAV playable.
+if (process.platform === 'win32') {
+  t.skip('PROT-ERR-03', 'a disk that fills up while saving audio: the server keeps transcribing', 'needs ulimit (macOS, Linux)');
+} else {
+  const s5 = await startServer({ maxFileBlocks: 300 });
+  try {
+    const c = await connect(s5);
+    c.ws.on('error', () => {}); // without the fix the server dies mid-test
+    c.json({ type: 'options', saveAudio: true });
+    for (let i = 0; i < 5; i++) await c.audio([A], 8); // A's sentence every 8 s, 40 s in all
+    c.json({ type: 'flush' });
+    const settled = () => c.msgs.filter((m) => m.type === 'vad' && m.speaking).every((v) => c.msgs.some((m) => m.type === 'final' && m.id === v.id));
+    await waitFor(() => c.ws.readyState !== WebSocket.OPEN || settled(), 30000);
+    const up = c.ws.readyState === WebSocket.OPEN && (await fetch(s5.url).then((r) => r.ok, () => false));
+    const wav = c.msgs.find((m) => m.type === 'file' && m.kind === 'audio');
+    const bytes = wav ? fs.readFileSync(path.join(s5.transcripts, path.basename(wav.path))) : Buffer.alloc(44);
+    const data = bytes.length - 44;
+    const header = bytes.readUInt32LE(40);
+    const filled = header / (2 * SR); // seconds of audio the WAV kept
+    const after = c.finals().filter((m) => m.start > filled).length;
+    const errors = c.msgs.filter((m) => m.type === 'error').map((m) => m.message);
+    const txt = fs.existsSync(s5.transcripts) ? fs.readdirSync(s5.transcripts).filter((f) => f.endsWith('.txt')) : [];
+    const lines = txt.length ? fs.readFileSync(path.join(s5.transcripts, txt[0]), 'utf8').trim().split('\n').length : 0;
+    t.check('PROT-ERR-03', 'a disk that fills up while saving audio: the server keeps transcribing and saving the transcript, the page is told once, the WAV stays playable',
+      up && after >= 2 && lines === c.finals().length && errors.length === 1 && errors[0].startsWith('Could not save audio') && filled >= 4 && header === data - (data % 2),
+      `alive ${up}; WAV ${filled.toFixed(1)} s of 40 s, header ${header === data ? 'matches the file' : `${header} bytes, file ${data}`}; ${after} sentences after it filled, ${c.finals().length} in all, ${lines} in the .txt; errors: ${errors.join(' | ') || 'none'}`);
+    await c.close();
+  } finally {
+    await s5.stop();
+  }
+}
+
+// The disk fills up while the transcript is saved (#19): no file may grow past 1 block (1,024 bytes on macOS, 512 on
+// Linux) and Save audio is off, so the .txt is full after 8 of A's ~116-byte lines on macOS (4 on Linux); A speaks
+// 12 times. A line that does not fit must leave the .txt as it was, and the page is told once.
+if (process.platform === 'win32') {
+  t.skip('PROT-ERR-04', 'a disk that fills up while saving the transcript: whole lines only, one error', 'needs ulimit (macOS, Linux)');
+} else {
+  const s6 = await startServer({ maxFileBlocks: 1 });
+  try {
+    const c = await connect(s6);
+    for (let i = 0; i < 12; i++) await c.audio([A], 8);
+    c.json({ type: 'flush' });
+    const settled = () => c.msgs.filter((m) => m.type === 'vad' && m.speaking).every((v) => c.msgs.some((m) => m.type === 'final' && m.id === v.id));
+    await waitFor(() => c.ws.readyState !== WebSocket.OPEN || settled(), 30000);
+    const up = c.ws.readyState === WebSocket.OPEN && (await fetch(s6.url).then((r) => r.ok, () => false));
+    const file = c.msgs.find((m) => m.type === 'file' && m.kind === 'text');
+    const text = file ? fs.readFileSync(path.join(s6.transcripts, path.basename(file.path)), 'utf8') : '';
+    const lines = text.split(/(?<=\n)/).filter(Boolean);
+    const page = c.finals().map((m) => `[${fmtTime(m.start)}] ${m.text}\n`);
+    const whole = lines.findIndex((l, i) => l !== page[i]); // -1: every line in the file is the page's, whole
+    const errors = c.msgs.filter((m) => m.type === 'error').map((m) => m.message);
+    t.check('PROT-ERR-04', 'a disk that fills up while saving the transcript: the server keeps transcribing, the .txt keeps only whole lines, the page is told once',
+      up && whole === -1 && lines.length >= 2 && page.length - lines.length >= 2 && errors.length === 1 && errors[0].startsWith('Could not save transcript'),
+      `alive ${up}; ${page.length} sentences, ${lines.length} lines in the .txt (${Buffer.byteLength(text)} bytes)${whole === -1 ? ', all whole' : `, line ${whole + 1} is ${JSON.stringify(lines[whole].slice(-40))}`}; `
+        + `errors: ${errors.length > 2 ? `${errors.length} × ${errors[0]}` : errors.join(' | ') || 'none'}`);
+    await c.close();
+  } finally {
+    await s6.stop();
+  }
+}
+
+// The model choice is remembered: a server restarted without MODEL loads the saved one.
+const s3 = await startServer();
+let savedSettings: string | null = null;
+try {
+  const c = await connect(s3);
+  c.json({ type: 'select', id: 'orukeet' });
+  await waitFor(() => c.last('status')?.model === 'orukeet' && c.last('status').state === 'ready', 60000);
+  savedSettings = path.join(path.dirname(s3.dir), `${path.basename(s3.dir)}-saved.json`);
+  fs.copyFileSync(s3.settingsFile, savedSettings);
+  t.check('PROT-MODEL-01', 'choosing a model loads it and reports ready', c.last('status').model === 'orukeet' && c.last('status').state === 'ready', `${c.last('status').state} ${c.last('status').model}`);
+  await c.close();
+} finally {
+  await s3.stop();
+}
+const s4 = await startServer({ model: null, env: { SETTINGS_FILE: savedSettings as string } }); // set above
+try {
+  const c = await connect(s4);
+  await sleep(300);
+  t.check('PROT-MODEL-02', 'after a restart the chosen model is used again', c.last('models').active === 'orukeet', c.last('models').active);
+  await c.close();
+} finally {
+  await s4.stop();
+  fs.rmSync(savedSettings as string, { force: true });
+}
+
+// ---------- the ElevenLabs cloud model, against the stand-in (never the real service, TESTING.md §2) ----------
+const fake = await fakeElevenLabs();
+const s5 = await startServer({ model: 'elevenlabs-scribe-v2', env: { ELEVENLABS_API_KEY: 'test-key', ELEVENLABS_BASE_URL: fake.url } });
+try {
+  const c = await connect(s5);
+  await c.audio([A, null], 10);
+  c.json({ type: 'flush' });
+  await waitFor(() => c.finals().length && fake.connections.every((x) => !x.audio.length || x.committed), 10000);
+  await sleep(300);
+  const offered = c.last('models').models.find((m) => m.id === 'elevenlabs-scribe-v2');
+  const sentences = fake.connections.filter((x) => x.audio.length);
+  const partials = c.msgs.filter((m) => m.type === 'partial');
+  const lines = fs.readdirSync(s5.transcripts).filter((f) => f.endsWith('.txt')).flatMap((f) => fs.readFileSync(path.join(s5.transcripts, f), 'utf8').split('\n').filter(Boolean));
+  t.check('PROT-CLOUD-02', 'with a key: the cloud model is offered and marked cloud, every sentence is streamed to ElevenLabs once, its texts are the live and final lines and the transcript',
+    c.last('status').state === 'ready' && offered?.cloud && offered.installed && sentences.length >= 1 && sentences.every((x) => x.commits === 1 && x.key === 'test-key')
+      && c.finals().length === sentences.length && c.finals().every((f) => /^propoziția \d+$/.test(f.text) && f.model === 'elevenlabs-scribe-v2')
+      && partials.length > 0 && partials.every((p) => /^ascult \d+$/.test(p.text)) && lines.length === sentences.length,
+    `${c.last('status').state}; ${sentences.length} sentence connection(s), ${(sentences.reduce((n, x) => n + x.audio.length, 0) / SR).toFixed(1)} s of 10 s sent; finals ${c.finals().map((f) => f.text).join(' | ')}; ${partials.length} live texts; ${lines.length} transcript lines`);
+  t.check('PROT-CLOUD-03', 'the API key never reaches the page', !JSON.stringify(c.msgs).includes('test-key'));
+  await c.close();
+} finally {
+  await s5.stop();
+  await fake.close();
+}
+
+/** A server's child processes (its model's process): pid and name, from pgrep. */
+async function childProcesses(pid: number): Promise<{ pid: number; name: string }[]> {
+  const { stdout } = await promisify(execFile)('pgrep', ['-lP', String(pid)]).catch(() => ({ stdout: '' })); // exit 1: none
+  return stdout.split('\n').filter(Boolean).map((line) => {
+    const [p, ...name] = line.trim().split(/\s+/);
+    return { pid: Number(p), name: name.join(' ') };
+  });
+}
+
+/** Whether a process still exists (a zombie counts until it is reaped). */
+function alive(pid: number) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: any) {
+    return err.code === 'EPERM';
+  }
+}
+
+async function waitFor(cond: () => unknown, ms: number = 15000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    if (cond()) return true;
+    await sleep(100);
+  }
+  return false;
+}
+
+t.finish();

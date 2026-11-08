@@ -17,7 +17,7 @@ on every GitHub release, and is linked from the README.
 | `docs/manual/img/*.png` | Screenshots, generated; never edit by hand |
 | `docs/manual/Live-Transcriber-Manual-EN.pdf`, `-RO.pdf` | The output, committed |
 | `docs/manual/manual.json` | Version and date of the last build; `STATIC-05` compares it with `package.json` |
-| `scripts/manual.mjs` | `npm run manual`: screenshots, then the PDFs. `--pdf-only` skips the screenshots |
+| `scripts/manual.ts` | `npm run manual`: screenshots, then the PDFs. `--pdf-only` skips the screenshots |
 | `.claude/skills/user-manual/pdfpages.swift` | Renders PDF pages to PNG for review (the Read tool needs poppler for PDFs) |
 
 ## When
@@ -36,8 +36,8 @@ cannot be prepared without it.
 3. **What changed for users** since the text last changed:
    ```bash
    since=$(git log -1 --format=%H -- docs/manual/manual.en.html)
-   git log --oneline $since..HEAD -- public desktop/main.mjs lib/tuning.js lib/config.js lib/models.js server.js package.json .github/release-notes.md README.md
-   git diff $since..HEAD -- public desktop/main.mjs lib/tuning.js lib/config.js lib/models.js
+   git log --oneline $since..HEAD -- web public desktop/main.ts lib/tuning.ts lib/config.ts lib/models.ts server.ts package.json .github/release-notes.md README.md
+   git diff $since..HEAD -- web public desktop/main.ts lib/tuning.ts lib/config.ts lib/models.ts
    ```
    Look for anything a user can see or do: new, renamed or removed controls, labels, hints, menu items, keys,
    defaults, ranges, warnings, behaviours, supported systems, install or first-start steps, models in the desktop
@@ -48,18 +48,18 @@ cannot be prepared without it.
    - Something changed: update the text in both languages (rules below), add or change screenshots if a screen or
      control is new or looks different, then `npm run manual`.
 5. **Check every fact against the code**, not against memory:
-   - labels and tooltips: `public/index.html`; setting names and hints: `FIELDS` in `public/settings.js`;
-     projector keys and colour names: `public/stage.js`; menus: `buildMenu()` in `desktop/main.mjs`;
-   - defaults: `lib/config.js`; slider ranges: `TUNING` in `lib/tuning.js` (every recommended value must lie inside
+   - labels and tooltips: `public/index.html`; setting names and hints: `FIELDS` in `web/settings.ts`;
+     projector keys and colour names: `web/stage.ts`; menus: `buildMenu()` in `desktop/main.ts`;
+   - defaults: `lib/config.ts`; slider ranges: `TUNING` in `lib/tuning.ts` (every recommended value must lie inside
      its range); first start and systems: `.github/release-notes.md`.
    - Every `<b class="ui">` label must appear in the UI exactly as written. A quick check:
      ```bash
-     grep -o '<b class="ui">[^<]*' docs/manual/manual.en.html | sed 's/.*">//' | sort -u | while read -r l; do grep -rqF "$l" public desktop/main.mjs || echo "not in the UI: $l"; done
+     grep -o '<b class="ui">[^<]*' docs/manual/manual.en.html | sed 's/.*">//' | sort -u | while read -r l; do grep -rqF "$l" public web desktop/main.ts || echo "not in the UI: $l"; done
      ```
 6. **Build:** `npm run manual` (about 40 s; needs `models/canary-1b-v2-Q8_0.gguf`, `npm run setup` downloads it).
    It starts its own server on a free port, so a running copy of the app is not touched.
 7. **Review the output visually** (checklist below). Fix and rebuild until it passes.
-8. **Test:** `npm run test:quick` (`STATIC-05` must pass). If `scripts/manual.mjs`, `desktop/main.mjs` or anything
+8. **Test:** `npm run test:quick` (`STATIC-05` must pass). If `scripts/manual.ts`, `desktop/main.ts` or anything
    else beyond the manual changed, follow CLAUDE.md and TESTING.md §3 for the branch (`npm test`, plan updates).
 9. **Commit** both HTML files, `manual.css`, `img/`, both PDFs and `manual.json` together, e.g. "Update the user
    manual for 1.2.0". Merge, push and tag only when the user asks.
@@ -82,7 +82,7 @@ cannot be prepared without it.
   the user can see, then one concrete change with a value. When a feature or setting changes how to handle a kind
   of speaker, room or microphone, add or update its row in both languages.
 - **The numbered list in section 2 matches the purple markers** in `img/main.png`: same count, same order as the
-  `badges([...])` call in `scripts/manual.mjs`. Change both together.
+  `badges([...])` call in `scripts/manual.ts`. Change both together.
 - **Romanian** (`manual.ro.html`): the same sections, rows and facts as English, in natural Romanian, formal address
   (*apăsați*, *alegeți*), ș and ț with a comma below (never ş or ţ: `grep -c "[şţŞŢ]"` must print 0), decimal comma
   (0,7 s; 1,1 GB), quotes „…”. Every change goes into both files in the same commit.
@@ -91,7 +91,7 @@ cannot be prepared without it.
 
 ## Screenshots
 
-`scripts/manual.mjs` drives the real page in Electron against its own server, with the UI test's fake microphones
+`scripts/manual.ts` drives the real page in Electron against its own server, with the UI test's fake microphones
 (`test/ui/preload.cjs`) playing the synthetic test voice (`test/fixtures/ro.wav`), the light theme and the device
 names in `DEVICES`. The live line in `main.png` is a real live guess, so a wrong word in it is normal.
 

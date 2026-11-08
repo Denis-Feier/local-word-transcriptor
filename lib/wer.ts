@@ -1,0 +1,54 @@
+import { normalize } from './text.ts';
+
+const PLAIN: Record<string, string> = { ă: 'a', â: 'a', î: 'i', ș: 's', ț: 't' };
+
+/**
+ * Words for scoring: lowercase, punctuation removed (as the Open ASR Leaderboard does), ş/ţ unified with ș/ț.
+ * With diacritics: false, ă â î ș ț also count as a i s t, which matches published (diacritic-blind) numbers.
+ */
+export function words(text: string, { diacritics = true }: { diacritics?: boolean } = {}): string[] {
+  let t = normalize(text).toLowerCase();
+  if (!diacritics) t = t.replace(/[ăâîșț]/g, (c) => PLAIN[c]);
+  return t.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
+}
+
+/** Word-level edit distance (substitutions + insertions + deletions). */
+export function editDistance(ref: string[], hyp: string[]) {
+  let prev = Array.from({ length: hyp.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= ref.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= hyp.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ref[i - 1] === hyp[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[hyp.length];
+}
+
+/** Errors per reference word: 1 substitution in 3 words = 1/3. */
+export function wordErrorRate(ref: string, hyp: string, opts?: { diacritics?: boolean }) {
+  const r = words(ref, opts);
+  return r.length ? editDistance(r, words(hyp, opts)) / r.length : 0;
+}
+
+/** The words sharedWords() compares: diacritic-blind, three letters or more. */
+export const comparedWords = (text: string) => words(text, { diacritics: false }).filter((w) => w.length > 2);
+
+/**
+ * Words two texts have in common, in the same order: { count, ratio, share } where ratio is relative to the shorter
+ * text and share to the first one (a). Diacritic-blind; words of one or two letters (și, de, la, în…) don't count,
+ * since any two sentences share some.
+ */
+export function sharedWords(a: string, b: string) {
+  const x = comparedWords(a);
+  const y = comparedWords(b);
+  if (!x.length || !y.length) return { count: 0, ratio: 0, share: 0 };
+  let prev: number[] = new Array(y.length + 1).fill(0); // longest common subsequence
+  for (let i = 1; i <= x.length; i++) {
+    const cur = [0];
+    for (let j = 1; j <= y.length; j++) cur[j] = x[i - 1] === y[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
+    prev = cur;
+  }
+  const count = prev[y.length];
+  return { count, ratio: count / Math.min(x.length, y.length), share: count / x.length };
+}

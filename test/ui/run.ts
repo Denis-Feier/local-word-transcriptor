@@ -1,0 +1,636 @@
+// The page in Chromium (Electron, the same engine as the desktop app), driven like a person would, with fake
+// microphones that play the test speakers (preload.cjs). Starts its own servers. Screenshots go to UI_OUT
+// (default: a temp folder, printed at the end) for a person or an AI to look at.
+//
+//   npm run test:ui          (or: npx electron test/ui/run.ts; needs ELECTRON_RUN_AS_NODE unset)
+import { app, BrowserWindow, session, nativeTheme } from 'electron';
+import fs from 'node:fs';
+import path from 'node:path';
+import { ROOT, SR, FIXTURE, startServer, speakers, loadWav, saveWav, scratch, sleep, suite, fakeElevenLabs, fakeServer } from '../helpers.ts';
+import type { FakeElevenLabs, FakeServer, StartServerOptions, TestServer } from '../../types/test.ts';
+
+const OUT = process.env.UI_OUT ?? scratch('ui');
+fs.mkdirSync(OUT, { recursive: true });
+const SPEAKERS = scratch('ui-speakers');
+const { A, B } = speakers();
+saveWav(path.join(SPEAKERS, 'a.wav'), A);
+saveWav(path.join(SPEAKERS, 'b.wav'), B);
+saveWav(path.join(SPEAKERS, 'c.wav'), loadWav(FIXTURE).subarray(Math.round(13.4 * SR))); // a third voice: the last sentence
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+const t = suite('ui');
+
+app.whenReady().then(async () => {
+  session.defaultSession.setPermissionRequestHandler((wc, p, cb) => cb(true));
+  session.defaultSession.setPermissionCheckHandler(() => true);
+  const servers: TestServer[] = [];
+  const serve = async (opts?: StartServerOptions) => {
+    const s = await startServer(opts);
+    servers.push(s);
+    return s;
+  };
+  let server = await serve();
+  const scratchDirs: string[] = [];
+  const fakes: (FakeElevenLabs | FakeServer)[] = [];
+  const pageErrors: string[] = [];
+  const newWindow = (width = 1100, height = 900) => {
+    const w = new BrowserWindow({
+      width,
+      height,
+      show: false,
+      // contextIsolation off so the preload can replace the page's microphone APIs. The desktop app runs the same
+      // page isolated and sandboxed; the page itself needs neither Node nor the preload.
+      webPreferences: { preload: path.join(ROOT, 'test', 'ui', 'preload.cjs'), contextIsolation: false, sandbox: false, additionalArguments: [`--ui-speakers=${SPEAKERS}`] },
+    });
+    w.webContents.on('console-message', (e) => e.level === 'error' && pageErrors.push(e.message));
+    return w;
+  };
+  const win = newWindow();
+  const js = (code, w = win) => w.webContents.executeJavaScript(code);
+  // capturePage now and then fails with UnknownVizError (Chromium's compositor, not the page; 2 of 6 runs on
+  // 2026-11-01, each time at another screenshot). Retry; a screenshot that still fails is left out of the visual
+  // review (§8.1) instead of ending the run before the remaining checks.
+  const shot = async (name, w = win) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return fs.writeFileSync(path.join(OUT, `${name}.png`), (await w.webContents.capturePage()).toPNG());
+      } catch (err: any) {
+        if (attempt === 3) return console.log(`screenshot ${name}.png not taken: ${err.message}`);
+        await sleep(500);
+      }
+    }
+  };
+  const state = (w = win) => js(`(() => ({
+    fields: [...document.querySelectorAll('#mics .field')].map((f) => ({ name: f.querySelector('span').textContent, value: f.querySelector('select').value, text: f.querySelector('select').selectedOptions[0]?.text, options: [...f.querySelector('select').options].map((o) => o.value + (o.disabled ? ':off' : '')), dot: f.dataset.mic ?? null })),
+    levels: [...document.querySelectorAll('#levels .level')].map((l) => ({ who: l.querySelector('.who').textContent, state: l.querySelector('.speaking').textContent, width: parseFloat(l.querySelector('.meter-fill').style.width) || 0, mute: l.querySelector('.mute').textContent })),
+    lines: [...document.querySelectorAll('#transcript .line')].map((l) => ({ mic: l.dataset.mic ?? null, who: l.querySelector('.who').textContent, text: l.querySelector('.text').textContent, partial: l.classList.contains('partial'), overlap: l.classList.contains('overlap'), color: getComputedStyle(l.querySelector('.text')).color })),
+    error: document.getElementById('error').hidden ? '' : document.getElementById('error').textContent,
+    recording: document.getElementById('toggleText').textContent === 'Stop',
+    status: document.getElementById('status').dataset.state,
+    models: [...document.getElementById('model').options].map((o) => o.text),
+    copyDisabled: document.getElementById('copy').disabled,
+    separation: document.getElementById('tune-crosstalkDb')?.disabled,
+    file: document.getElementById('file').textContent,
+    maxMics: document.querySelectorAll('#mics select').length,
+  }))()`, w);
+  const waitFor = async (cond, ms = 15000, w = win) => {
+    const t0 = Date.now();
+    for (;;) {
+      const s = await state(w);
+      if (cond(s) || Date.now() - t0 > ms) return s;
+      await sleep(200);
+    }
+  };
+  const pick = (slot, value) => js(`(() => { const s = document.querySelectorAll('#mics select')[${slot}]; s.value = ${JSON.stringify(value)}; s.dispatchEvent(new Event('change')); })()`);
+  const unplug = (id) => js(`(() => { const f = window.__fake; f.present = f.present.filter((x) => x !== '${id}'); const t = f.tracks['${id}']; if (t && t.readyState === 'live') { t.stop(); t.dispatchEvent(new Event('ended')); } navigator.mediaDevices.dispatchEvent(new Event('devicechange')); })()`);
+  const plug = (id) => js(`(() => { const f = window.__fake; if (!f.present.includes('${id}')) f.present.push('${id}'); navigator.mediaDevices.dispatchEvent(new Event('devicechange')); })()`);
+  const click = (id) => js(`document.getElementById('${id}').click()`);
+  const key = (k) => js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)} }))`);
+  const open = async (s = server, w = win) => {
+    await w.loadURL(`http://127.0.0.1:${s.port}/`);
+    await js('localStorage.clear(); sessionStorage.clear()', w);
+    await w.loadURL(`http://127.0.0.1:${s.port}/`);
+    // Ready, and the mic menus built from the server's mic limit (sent right after the status).
+    return waitFor((x) => x.status === 'ready' && x.maxMics >= 1, 10000, w).then(() => sleep(300)).then(() => state(w));
+  };
+  const finals = (s) => s.lines.filter((l) => !l.partial);
+  // Counts the caption updates the main window sends to caption windows (a second channel in the same page hears them).
+  const tapCaptions = `window.__captions = 0; window.__tap = new BroadcastChannel('transcriber-captions'); window.__tap.onmessage = (e) => e.data?.type === 'snapshot' && window.__captions++; true`;
+  const captionHint = (w) => js(`(() => { const h = document.querySelector('.stage-hint'); return h.hidden ? '' : h.textContent; })()`, w);
+  const until = async (fn, ms) => {
+    for (const t0 = Date.now(); Date.now() - t0 < ms; await sleep(100)) if (await fn()) return true;
+    return false;
+  };
+  const closeWindow = (w) => new Promise((resolve) => (w.once('closed', resolve), w.close())); // close() lets the page say goodbye
+
+  try {
+    // ---------- one mic: the page as before ----------
+    let s = await open();
+    t.check('UI-LOAD-01', 'the page loads ready, with the model menu filled', s.status === 'ready' && s.models.length >= 1, `${s.models.length} models`);
+    t.check('UI-MIC-01', 'Mic 1 and Mic 2 menus; Mic 2 starts as None; one unlabeled meter',
+      s.fields.length === 2 && s.fields[0].name === 'Mic 1' && s.fields[1].value === 'none' && s.levels.length === 1 && !s.levels[0].who, s.fields.map((f) => `${f.name}=${f.text}`).join(', '));
+    t.check('UI-MIC-02', 'the mic behind "System default" (Mic 1) is greyed out in Mic 2', s.fields[1].options.includes('mic-a:off') && s.fields[1].options.includes('mic-b'), s.fields[1].options.join(' '));
+    await click('toggle');
+    s = await waitFor((x) => finals(x).length >= 1);
+    t.check('UI-1MIC-01', 'one mic: text appears without mic labels or colours', finals(s).length >= 1 && finals(s).every((l) => !l.mic && !l.who), finals(s).map((l) => l.text.slice(0, 30)).join(' | '));
+    await click('toggle');
+    await sleep(800);
+    await click('copy');
+    await sleep(200);
+    t.check('UI-1MIC-02', 'one mic: Copy gives plain lines', !/^Mic \d: /m.test(await js('window.__clipboard ?? ""')) && (await js('window.__clipboard ?? ""')).length > 10);
+    await click('clear');
+    s = await state();
+    t.check('UI-TX-01', 'Clear empties the transcript and disables Copy', s.lines.length === 0 && s.copyDisabled && !s.file);
+    // Steady live text (#26): a box like Save audio, on by default, sent to the server and remembered.
+    const steadyDefault = await js(`document.getElementById('steadyLive').checked`);
+    await js(`window.__sent = []; { const send = WebSocket.prototype.send; WebSocket.prototype.send = function (d) { if (typeof d === 'string') window.__sent.push(JSON.parse(d)); return send.call(this, d); }; } true`);
+    await click('steadyLive');
+    const told = await js(`window.__sent.filter((m) => m.type === 'options')`);
+    await win.loadURL(`http://127.0.0.1:${server.port}/`);
+    await waitFor((x) => x.status === 'ready', 5000);
+    const steadyAfter = await js(`({ checked: document.getElementById('steadyLive').checked, saved: localStorage.getItem('steadyLive') })`);
+    t.check('UI-STEADY-01', 'Steady live text: ticked by default; unticking tells the server and is remembered across a reload',
+      steadyDefault && told.some((m) => m.steadyLive === false) && !steadyAfter.checked && steadyAfter.saved === 'false',
+      `default ${steadyDefault ? 'ticked' : 'unticked'}; sent ${JSON.stringify(told)}; after a reload ${steadyAfter.checked ? 'ticked' : 'unticked'}, saved ${steadyAfter.saved}`);
+    s = await open(); // the default again (open() clears the saved choices)
+
+    // ---------- two mics ----------
+    await pick(1, 'mic-b');
+    s = await state();
+    t.check('UI-MIC-03', 'choosing Mic 2: coloured dots, two labelled meters, the separation slider is enabled',
+      s.fields[0].dot === '1' && s.fields[1].dot === '2' && s.levels.map((l) => l.who).join() === 'Mic 1,Mic 2' && s.separation === false);
+    // No caption window or projector view is open yet: count the captions the page sends anyway (UI-PROJ-04).
+    await js(tapCaptions);
+    await click('toggle');
+    s = await waitFor((x) => x.levels.every((l) => l.width > 0), 5000);
+    t.check('UI-MIC-04', 'both meters move while recording', s.levels.every((l) => l.width > 0), s.levels.map((l) => `${l.who} ${l.width.toFixed(0)}%`).join(', '));
+    s = await waitFor((x) => x.lines.some((l) => l.partial && l.mic === '1') && x.lines.some((l) => l.partial && l.mic === '2'), 9000); // steady live text: a word shows from a mic's second guess
+    t.check('UI-TX-02', 'live text from both mics at once, each in its mic colour',
+      s.lines.some((l) => l.partial && l.mic === '1') && s.lines.some((l) => l.partial && l.mic === '2') && new Set(s.lines.filter((l) => l.partial).map((l) => l.color)).size === 2);
+    await shot('two-mics-live');
+    s = await waitFor((x) => finals(x).length >= 3 && !x.lines.some((l) => l.partial), 20000);
+    t.check('UI-TX-03', 'final lines say which mic heard them and are coloured per mic',
+      finals(s).every((l) => l.who === `Mic ${l.mic}`) && new Set(finals(s).map((l) => l.mic)).size === 2, finals(s).map((l) => `${l.who}: ${l.text.slice(0, 20)}`).join(' | '));
+    t.check('UI-TX-04', 'lines spoken at the same time are marked ⇄', finals(s).filter((l) => l.overlap).length >= 2);
+    await shot('two-mics-final');
+    await click('toggle');
+    await sleep(800);
+    await click('copy');
+    await click('download');
+    await sleep(300);
+    const clip = await js('window.__clipboard ?? ""');
+    const down = await js('window.__download ?? ""');
+    t.check('UI-TX-05', 'Copy has "Mic N:" lines; Download has "[mm:ss] Mic N:" lines',
+      clip.split('\n').every((l) => /^Mic [12]: /.test(l)) && down.trim().split('\n').every((l) => /^\[\d\d:\d\d\] Mic [12]: /.test(l)), JSON.stringify(down.slice(0, 70)));
+
+    // ---------- projector and caption window ----------
+    const unwatched = await js('window.__captions');
+    const captions = newWindow(1000, 600);
+    await captions.loadURL(`http://127.0.0.1:${server.port}/?display`);
+    await sleep(600);
+    const cap = await js(`[...document.querySelectorAll('.stage-line')].map((l) => (l.dataset.mic ?? '-') + ':' + l.textContent.slice(0, 12))`, captions);
+    t.check('UI-PROJ-01', 'the caption window shows the lines in their mic colours', cap.some((c) => c.startsWith('1:')) && cap.some((c) => c.startsWith('2:')), cap.join(' | '));
+    const watched = await js('window.__captions');
+    t.check('UI-PROJ-04', 'no captions are sent while no caption window or projector view is open; a caption window that opens gets them at once',
+      unwatched === 0 && watched > 0, `${unwatched} caption updates during the recording, ${watched} once a caption window opened`);
+    await shot('caption-window', captions);
+    captions.destroy();
+    await click('projector');
+    await sleep(500);
+    const stage = () => js(`({ hidden: document.getElementById('stage').hidden, theme: document.getElementById('stage').dataset.theme, size: getComputedStyle(document.getElementById('stage')).getPropertyValue('--stage-size').trim(), lines: document.querySelector('[data-action="lines"]').textContent, mics: [...document.querySelectorAll('.stage-line')].map((l) => l.dataset.mic ?? '-') })`);
+    const p0 = await stage();
+    await key('t');
+    await key('+');
+    await key('l');
+    const p1 = await stage();
+    t.check('UI-PROJ-02', 'projector: coloured lines; T changes colours, + text size, L number of sentences',
+      !p0.hidden && p0.mics.includes('1') && p0.mics.includes('2') && p1.theme !== p0.theme && p1.size !== p0.size && p1.lines !== p0.lines, `${p0.theme}→${p1.theme}, ${p0.size}→${p1.size}, ${p0.lines}→${p1.lines}`);
+    await shot('projector');
+    await key('Escape');
+    await sleep(300);
+    t.check('UI-PROJ-03', 'Esc leaves the projector view', (await stage()).hidden);
+    await js(`localStorage.removeItem('stage')`);
+
+    // ---------- caption windows across a reload of the main window, and closing them ----------
+    const displays = [newWindow(1000, 600), newWindow(1000, 600)];
+    for (const d of displays) await d.loadURL(`http://127.0.0.1:${server.port}/?display`);
+    await win.loadURL(`http://127.0.0.1:${server.port}/`); // the old page says goodbye; the new one asks who is listening
+    await waitFor((x) => x.status === 'ready', 10000);
+    const fed = await until(async () => (await captionHint(displays[0])) === 'Microphone is off' && (await captionHint(displays[1])) === 'Microphone is off', 5000);
+    const afterReload = await Promise.all(displays.map(captionHint));
+    await click('toggle');
+    const listening = await until(async () => (await captionHint(displays[0])) === 'Listening…', 5000);
+    t.check('UI-PROJ-05', 'caption windows open while the main window is reloaded are fed again by the new page', fed && listening,
+      `after the reload: ${JSON.stringify(afterReload)}; after Start: ${JSON.stringify(await captionHint(displays[0]))}`);
+    await closeWindow(displays[0]);
+    await js(tapCaptions);
+    await until(async () => (await js('window.__captions')) > 0, 5000); // live text and speech changes go on meanwhile
+    await sleep(1000);
+    const stillFed = await js('window.__captions');
+    await closeWindow(displays[1]);
+    await sleep(300);
+    await js('window.__captions = 0');
+    await sleep(2500);
+    const afterAll = await js('window.__captions');
+    await click('toggle');
+    t.check('UI-PROJ-06', 'closing one caption window keeps the other fed; once both are closed the page stops sending captions', stillFed > 0 && afterAll === 0,
+      `${stillFed} caption updates with one window left, then ${afterAll} in 2.5 s of recording with none`);
+
+    // ---------- settings drawer ----------
+    await click('openSettings');
+    await sleep(300);
+    await js(`(() => { const i = document.getElementById('tune-silenceMs'); i.value = 1500; i.dispatchEvent(new Event('change')); })()`);
+    await sleep(400);
+    const changed = await js(`({ value: document.getElementById('tune-silenceMs').value, marked: document.getElementById('tune-silenceMs').closest('.setting').classList.contains('changed'), meters: document.querySelectorAll('#settingsLevels .level').length })`);
+    await shot('settings');
+    await click('tuningReset');
+    await sleep(400);
+    const reset = await js(`({ value: document.getElementById('tune-silenceMs').value, marked: document.getElementById('tune-silenceMs').closest('.setting').classList.contains('changed') })`);
+    t.check('UI-SET-01', 'a slider change is applied and marked; Reset restores it; a meter per mic in Settings',
+      changed.value === '1500' && changed.marked && reset.value === '700' && !reset.marked && changed.meters === 2, JSON.stringify({ changed, reset }));
+    await click('settingsClose');
+
+    // ---------- mics coming and going ----------
+    s = await open();
+    await pick(1, 'mic-b');
+    await unplug('mic-b');
+    await sleep(300);
+    s = await state();
+    t.check('UI-DEV-01', 'a chosen mic that is off shows "(not connected)"', s.fields[1].text === 'AirPods (not connected)', s.fields[1].text);
+    await click('toggle');
+    s = await waitFor((x) => x.recording);
+    t.check('UI-DEV-02', 'Start works with Mic 2 off: Mic 2 "not connected" plus a warning',
+      s.recording && s.levels[1].state === 'not connected' && s.error.includes('Mic 2 (AirPods) is not connected'), s.error);
+    await plug('mic-b');
+    s = await waitFor((x) => x.levels[1].state !== 'not connected' && !x.error);
+    t.check('UI-DEV-03', 'switching it on: it joins the recording and the warning goes', s.levels[1].state !== 'not connected' && !s.error);
+    s = await waitFor((x) => finals(x).some((l) => l.mic === '2'), 20000);
+    t.check('UI-DEV-04', 'the late mic is transcribed under Mic 2', finals(s).some((l) => l.mic === '2'));
+    await unplug('mic-b');
+    s = await waitFor((x) => x.levels[1].state === 'not connected');
+    t.check('UI-DEV-05', 'unplugged while recording: "not connected", a warning, Mic 1 keeps recording', s.recording && s.levels[1].state === 'not connected' && s.error.includes('not connected'));
+    await shot('mic-disconnected');
+    await click('toggle');
+    await plug('mic-b');
+
+    s = await open();
+    await pick(0, 'mic-c');
+    await unplug('mic-c');
+    await click('toggle');
+    s = await waitFor((x) => x.error);
+    t.check('UI-DEV-06', 'the only mic missing: a clear message and no recording', !s.recording && s.error.includes('not connected'), s.error);
+    await plug('mic-c');
+
+    s = await open();
+    await pick(0, 'mic-a');
+    await pick(1, 'mic-b');
+    await click('toggle');
+    await waitFor((x) => x.recording);
+    await sleep(1500);
+    await pick(1, 'mic-c');
+    await sleep(1200);
+    s = await state();
+    t.check('UI-DEV-07', 'changing Mic 2 while recording keeps recording', s.recording && !s.error && s.levels.length === 2);
+    await pick(1, 'none');
+    await sleep(1200);
+    s = await state();
+    t.check('UI-DEV-08', 'Mic 2 set to None while recording: one unlabeled meter, new lines unlabeled', s.recording && s.levels.length === 1 && !s.levels[0].who);
+    await click('toggle');
+
+    s = await open();
+    await js(`window.__fake.rates['mic-b'] = 8000`);
+    await pick(1, 'mic-b');
+    await click('toggle');
+    s = await waitFor((x) => x.error);
+    t.check('UI-DEV-09', 'a mic recording at 8 kHz gets a "less accurate" warning', s.error.includes('8 kHz'), s.error);
+    await click('toggle');
+
+    // A second Bluetooth headset on a Mac: open, but macOS sends only digital silence from its mic.
+    s = await open();
+    await js(`(() => { window.__fake.devices.find((d) => d.deviceId === 'mic-a').label = 'Jabra Evolve 65 TE (Bluetooth)'; window.__fake.silent = ['mic-b']; navigator.mediaDevices.dispatchEvent(new Event('devicechange')); })()`);
+    await sleep(300);
+    await pick(0, 'mic-a');
+    await pick(1, 'mic-b');
+    await click('toggle');
+    s = await waitFor((x) => x.error.includes('sends no sound'), 12000);
+    t.check('UI-DEV-12', 'a mic that sends only digital silence: "no sound", a warning naming it, the one-Bluetooth-mic hint, Mic 1 keeps recording',
+      s.recording && s.levels[1].state === 'no sound' && s.levels[0].state !== 'no sound' && s.error.includes('Mic 2 (AirPods) sends no sound') && s.error.includes('one Bluetooth headset'), s.error);
+    await js(`window.__fake.silent = []`);
+    await unplug('mic-b');
+    await waitFor((x) => x.levels[1].state === 'not connected');
+    await plug('mic-b');
+    s = await waitFor((x) => x.levels[1].state !== 'not connected' && x.levels[1].state !== 'no sound' && !x.error, 8000);
+    t.check('UI-DEV-13', 'the same mic back with sound: the warning goes', s.levels[1].state !== 'no sound' && !s.error, s.error);
+    await click('toggle');
+
+    // ---------- remembered choices ----------
+    s = await open();
+    await pick(0, 'mic-a');
+    await pick(1, 'mic-b');
+    await win.loadURL(`http://127.0.0.1:${server.port}/`);
+    s = await waitFor((x) => x.fields[1]?.value === 'mic-b', 5000);
+    t.check('UI-DEV-10', 'mic choices are remembered after a reload', s.fields[0].value === 'mic-a' && s.fields[1].value === 'mic-b');
+    await js(`(() => { const d = window.__fake.devices.find((x) => x.deviceId === 'mic-b'); d.deviceId = 'mic-b2'; window.__fake.present = window.__fake.present.map((x) => (x === 'mic-b' ? 'mic-b2' : x)); window.__fake.persist(); })()`);
+    await win.loadURL(`http://127.0.0.1:${server.port}/`);
+    s = await waitFor((x) => x.fields[1]?.value === 'mic-b2', 5000);
+    t.check('UI-DEV-11', 'a re-paired mic (new id, same name) is found again', s.fields[1].value === 'mic-b2' && s.fields[1].text === 'AirPods');
+    await js('sessionStorage.clear()');
+
+    // ---------- speaker in the room ----------
+    // Each (re)open of the speaker starts the fake mics' clips again (A 6.8 s, B 8.7 s), so levels are read soon after.
+    const speakerState = () => js(`(() => {
+      const s = document.getElementById('speaker');
+      return { value: s.value, text: s.selectedOptions[0]?.text, options: [...s.options].map((o) => o.value), volumeShown: !document.getElementById('speakerVolumeField').hidden,
+        volume: document.getElementById('speakerVolume').value, sink: window.__sink && window.__sink.ctx.state !== 'closed' ? window.__sink.id : null,
+        mics: window.__mics.filter((m) => m.autoGainControl === false).map((m) => m.id) };
+    })()`);
+    const pickSpeaker = (value) => js(`(() => { const s = document.getElementById('speaker'); s.value = ${JSON.stringify(value)}; s.dispatchEvent(new Event('change')); })()`);
+    const setVolume = (value) => js(`(() => { const v = document.getElementById('speakerVolume'); v.value = ${value}; v.dispatchEvent(new Event('input')); v.dispatchEvent(new Event('change')); })()`);
+    const loudest = async (ms = 2500) => { // dBFS; -Infinity when nothing plays on the picked output
+      let max = -Infinity;
+      const t0 = Date.now();
+      while (Date.now() - t0 < ms) {
+        max = Math.max(max, (await js('window.__speakerLevel()')) ?? -Infinity);
+        await sleep(50);
+      }
+      return max;
+    };
+    s = await open();
+    let sp = await speakerState();
+    t.check('UI-SPK-01', 'Speaker menu: None, System default and each output; it starts at None, without a volume slider, playing nothing',
+      sp.value === 'none' && sp.options.join() === 'none,,out-laptop,out-bt' && !sp.volumeShown && !sp.sink, sp.options.join(' '));
+    await pickSpeaker('out-bt');
+    let level = await loudest();
+    sp = await speakerState();
+    s = await state();
+    t.check('UI-SPK-02', 'choosing a speaker plays the mic on it at once, before Start, asking for no auto gain; the volume slider appears',
+      sp.sink === 'out-bt' && level > -50 && !s.recording && sp.volumeShown && sp.mics.join() === 'mic-a', `${level.toFixed(1)} dBFS on ${sp.sink}; speaker mics ${sp.mics.join(' ')}`);
+    s = await waitFor((x) => x.levels[0]?.width > 0, 3000);
+    t.check('UI-SPK-10', 'the meter moves while only the speaker plays, for a sound check before Start', !s.recording && s.levels[0].width > 0, `${s.levels[0].width.toFixed(0)}%`);
+    await shot('speaker');
+    await pick(1, 'mic-b');
+    await sleep(800);
+    sp = await speakerState();
+    t.check('UI-SPK-03', 'choosing Mic 2 adds it to the speaker', sp.sink === 'out-bt' && sp.mics.slice(-2).join() === 'mic-a,mic-b', sp.mics.join(' '));
+    await click('toggle');
+    await waitFor((x) => x.recording);
+    await sleep(1000);
+    const during = await speakerState();
+    await click('toggle');
+    await sleep(800);
+    level = await loudest();
+    sp = await speakerState();
+    t.check('UI-SPK-04', 'Start and Stop leave the speaker playing', during.sink === 'out-bt' && sp.sink === 'out-bt' && level > -50, `${level.toFixed(1)} dBFS after Stop`);
+    await pickSpeaker('out-laptop');
+    await sleep(500);
+    const loud = await loudest(1000);
+    await setVolume(0);
+    await sleep(300);
+    const quiet = await loudest(1000);
+    sp = await speakerState();
+    t.check('UI-SPK-05', 'another output takes over the sound; volume 0 silences it', sp.sink === 'out-laptop' && loud > -50 && quiet < -90, `${loud.toFixed(1)} → ${quiet.toFixed(1)} dBFS`);
+    await setVolume(40);
+    await win.loadURL(`http://127.0.0.1:${server.port}/`);
+    await waitFor((x) => x.status === 'ready', 5000);
+    sp = await speakerState();
+    t.check('UI-SPK-06', 'after a reload the speaker is back at None and the volume is remembered', sp.value === 'none' && !sp.sink && sp.volume === '40', JSON.stringify({ value: sp.value, volume: sp.volume }));
+    await pickSpeaker('out-bt');
+    await sleep(500);
+    await unplug('out-bt');
+    s = await waitFor((x) => x.error.includes('Party Speaker'), 3000);
+    await sleep(200);
+    sp = await speakerState();
+    t.check('UI-SPK-07', 'the speaker switched off: it stops playing (no fallback to the laptop), shows "(not connected)" and a warning',
+      !sp.sink && sp.text === 'Party Speaker (not connected)' && s.error.includes('The speaker (Party Speaker) is not connected'), `${sp.text}; ${s.error}`);
+    await shot('speaker-disconnected');
+    await js(`window.__fake.devices.find((d) => d.deviceId === 'out-bt').deviceId = 'out-bt2'`); // re-paired: a new id
+    await plug('out-bt2');
+    s = await waitFor((x) => !x.error, 3000);
+    level = await loudest();
+    sp = await speakerState();
+    t.check('UI-SPK-08', 'the speaker back, even under a new id: it plays again and the warning goes', sp.sink === 'out-bt2' && sp.value === 'out-bt2' && level > -50 && !s.error,
+      `${level.toFixed(1)} dBFS on ${sp.sink}; ${s.error}`);
+    s = await state();
+    const moving = s.levels.map((l) => l.width);
+    await pickSpeaker('none');
+    await sleep(300);
+    sp = await speakerState();
+    s = await state();
+    t.check('UI-SPK-09', 'None stops the speaker, hides the volume and sets the meters back to zero',
+      !sp.sink && !sp.volumeShown && sp.value === 'none' && moving.some((w) => w > 0) && s.levels.every((l) => l.width === 0), `meters ${moving.map((w) => w.toFixed(0)).join('/')} → ${s.levels.map((l) => l.width).join('/')} %`);
+
+    // ---------- mute ----------
+    // The audio the page sends, measured: each chunk's loudest sample per mic, so a muted mic must give exact zeros
+    // (a meter reads 0 % in every pause too). Installed once per page load.
+    const tapSent = () => js(`(() => {
+      window.__sent = [];
+      const send = WebSocket.prototype.send;
+      WebSocket.prototype.send = function (data) {
+        if (data instanceof ArrayBuffer) {
+          const samples = new Float32Array(data, 4);
+          const length = samples.length / new Uint32Array(data, 0, 1)[0];
+          const peaks = [];
+          for (let i = 0; i < samples.length; i++) peaks[Math.floor(i / length)] = Math.max(peaks[Math.floor(i / length)] ?? 0, Math.abs(samples[i]));
+          window.__sent.push({ at: performance.now(), peaks });
+        }
+        return send.call(this, data);
+      };
+    })()`);
+    const sentBetween = (from, to = 1e12) => js(`window.__sent.filter((c) => c.at >= ${from} && c.at < ${to}).map((c) => c.peaks)`);
+    const peak = (sent, mic) => Math.max(0, ...sent.map((p) => p[mic]));
+    const muteMic = (mic) => js(`(() => { document.querySelectorAll('#levels .level')[${mic}].querySelector('.mute').click(); return performance.now(); })()`);
+    s = await open();
+    await pick(1, 'mic-b');
+    await tapSent();
+    await muteMic(1);
+    s = await state();
+    const inSettings = await js(`[...document.querySelectorAll('#settingsLevels .level')].map((l) => l.querySelector('.mute').textContent + '/' + l.querySelector('.speaking').textContent)`);
+    t.check('UI-MUTE-01', 'a Mute button on each mic\'s meter; Mute on Mic 2 before Start: "muted" and "Unmute", in Settings too',
+      s.levels.map((l) => l.mute).join() === 'Mute,Unmute' && s.levels[1].state === 'muted' && inSettings.join() === 'Mute/listening,Unmute/muted',
+      `${s.levels.map((l) => `${l.who} ${l.mute}/${l.state}`).join(', ')}; Settings ${inSettings.join(', ')}`);
+    await click('toggle');
+    let started = await js('performance.now()');
+    s = await waitFor((x) => finals(x).some((l) => l.mic === '1') && !x.lines.some((l) => l.partial), 20000);
+    let sent = await sentBetween(started);
+    await shot('mic-muted');
+    t.check('UI-MUTE-02', 'Mic 2 muted from Start: it sends exact zeros, Mic 1 is transcribed, nothing under Mic 2, no "no sound" warning after 5 s',
+      sent.length > 50 && peak(sent, 1) === 0 && peak(sent, 0) > 0.01 && finals(s).length >= 1 && s.lines.every((l) => l.mic === '1') && s.levels[1].state === 'muted' && !s.error,
+      `${sent.length} chunks, peak Mic 1 ${peak(sent, 0).toFixed(3)}, Mic 2 ${peak(sent, 1)}; lines ${s.lines.map((l) => l.who).join(' ')}; error "${s.error}"`);
+    await click('toggle');
+    await sleep(800);
+    await click('toggle'); // the fake mics' clips start again: B talks for 8.7 s
+    await waitFor((x) => x.recording);
+    await sleep(1500);
+    const stillMuted = (await state()).levels[1].state === 'muted';
+    const opens = await js('window.__mics.length');
+    const unmutedAt = await muteMic(1);
+    await sleep(2500);
+    const mutedAt = await muteMic(1);
+    const reopened = (await js('window.__mics.length')) !== opens;
+    await sleep(1500);
+    const unmuted = await sentBetween(unmutedAt + 300, mutedAt);
+    const remuted = await sentBetween(mutedAt + 300);
+    s = await waitFor((x) => finals(x).some((l) => l.mic === '2') && !x.lines.some((l) => l.partial), 20000);
+    t.check('UI-MUTE-03', 'Mute stays through Stop and Start; Unmute while recording: Mic 2\'s sound is back at once, without reopening the mic',
+      stillMuted && !reopened && unmuted.length >= 15 && peak(unmuted, 1) > 0.01, `muted after Start: ${stillMuted}; reopened: ${reopened}; ${unmuted.length} chunks unmuted, peak Mic 2 ${peak(unmuted, 1).toFixed(3)}`);
+    t.check('UI-MUTE-04', 'Mute while recording: exact zeros from Mic 2 from then on; what it heard before is still transcribed under Mic 2; Mic 1 records on',
+      remuted.length >= 10 && peak(remuted, 1) === 0 && peak(remuted, 0) > 0.01 && s.levels[1].state === 'muted' && finals(s).some((l) => l.mic === '2') && s.recording,
+      `${remuted.length} chunks, peak Mic 1 ${peak(remuted, 0).toFixed(3)}, Mic 2 ${peak(remuted, 1)}; Mic 2 lines: ${finals(s).filter((l) => l.mic === '2').map((l) => l.text.slice(0, 30)).join(' | ')}`);
+    await click('toggle');
+    // The speaker: a muted mic is not played. Mic 1 alone; its clip (6.8 s) starts when the speaker opens.
+    s = await open();
+    await muteMic(0);
+    await pickSpeaker('out-bt');
+    await sleep(500);
+    const whileMuted = await loudest(1000);
+    await muteMic(0);
+    const afterUnmute = await loudest(1000);
+    await muteMic(0);
+    await sleep(300);
+    const mutedAgain = await loudest(1000);
+    t.check('UI-MUTE-05', 'a muted mic is not played on the speaker, opened muted or muted while playing; unmuted, it plays',
+      whileMuted < -90 && afterUnmute > -50 && mutedAgain < -90, `${whileMuted.toFixed(1)} → ${afterUnmute.toFixed(1)} → ${mutedAgain.toFixed(1)} dBFS`);
+    await pickSpeaker('none');
+    // Not remembered: a mic picked in its menu starts unmuted, and after a reload every mic is on.
+    await pick(1, 'mic-b');
+    await muteMic(1);
+    await pick(1, 'mic-c');
+    const newMic = (await state()).levels[1].mute;
+    await muteMic(1);
+    await win.loadURL(`http://127.0.0.1:${server.port}/`);
+    s = await waitFor((x) => x.fields[1]?.value === 'mic-c', 5000);
+    t.check('UI-MUTE-06', 'a mic picked in its menu starts unmuted; after a reload the mics are remembered and none is muted',
+      newMic === 'Mute' && s.fields[1].value === 'mic-c' && s.levels.length === 2 && s.levels.every((l) => l.mute === 'Mute' && l.state !== 'muted'),
+      `new Mic 2: ${newMic}; after reload ${s.levels.map((l) => `${l.who} ${l.mute}/${l.state}`).join(', ')}`);
+
+    // ---------- server restart mid-recording ----------
+    s = await open();
+    await pick(1, 'mic-b');
+    await click('toggle');
+    await sleep(4000);
+    const port = server.port;
+    await server.stop();
+    await sleep(2500);
+    server = await serve({ env: { PORT: String(port) } });
+    s = await waitFor((x) => x.status === 'ready' && finals(x).length >= 2, 30000);
+    t.check('UI-NET-01', 'server restarted mid-recording: the page reconnects and transcribes what it recorded meanwhile, on the right mics',
+      s.recording && finals(s).length >= 2 && finals(s).every((l) => l.mic), finals(s).map((l) => `${l.who}: ${l.text.slice(0, 20)}`).join(' | '));
+    await click('toggle');
+
+    // ---------- look: light mode, phone width ----------
+    nativeTheme.themeSource = 'light';
+    await sleep(400);
+    await shot('light');
+    nativeTheme.themeSource = 'system';
+    const phone = newWindow(390, 844);
+    await open(server, phone);
+    await js(`(() => { const s = document.querySelectorAll('#mics select')[1]; s.value = 'mic-b'; s.dispatchEvent(new Event('change')); })()`, phone);
+    const width = await js('[document.documentElement.scrollWidth, window.innerWidth]', phone);
+    t.check('UI-LOOK-01', 'phone width: nothing scrolls sideways', width[0] <= width[1], `${width[0]} px page in ${width[1]} px`);
+    await shot('phone', phone);
+    phone.destroy();
+
+    // ---------- other server setups ----------
+    const one = await serve({ env: { MAX_MICS: '1' } });
+    s = await open(one);
+    t.check('UI-CFG-01', 'MAX_MICS=1: a single "Microphone" menu, as before two mics existed', s.fields.length === 1 && s.fields[0].name === 'Microphone');
+    const three = await serve({ env: { MAX_MICS: '3' } });
+    s = await open(three);
+    await pick(1, 'mic-b');
+    await pick(2, 'mic-c');
+    await click('toggle');
+    s = await waitFor((x) => finals(x).some((l) => l.mic === '3'), 20000);
+    t.check('UI-CFG-02', 'MAX_MICS=3: a third menu, three mics record, Mic 3 has its own lines', s.levels.length === 3 && finals(s).some((l) => l.mic === '3'));
+    await click('toggle');
+    const energy = await serve({ env: { VAD: 'energy' } });
+    s = await open(energy);
+    t.check('UI-CFG-03', 'with the loudness detector the Silero threshold slider is greyed out', await js(`document.getElementById('tune-vadThreshold').disabled`));
+    // Save audio on a disk that fills up (#19): no file may grow past 20 blocks (20 KB on macOS, 10 KB on Linux), so the
+    // WAV is full within a second of Start.
+    if (process.platform === 'win32') t.skip('UI-DISK-01', 'Save audio on a disk that fills up: the box unticks', 'needs ulimit (macOS, Linux)');
+    else {
+      const small = await serve({ maxFileBlocks: 20 });
+      s = await open(small);
+      await click('saveAudio');
+      const ticked = await js(`document.getElementById('saveAudio').checked`);
+      await click('toggle');
+      s = await waitFor((x) => x.error.startsWith('Could not save audio'), 15000);
+      const box = await js(`({ checked: document.getElementById('saveAudio').checked, saved: localStorage.getItem('saveAudio') })`);
+      await click('toggle');
+      await win.loadURL(`http://127.0.0.1:${small.port}/`);
+      await waitFor((x) => x.status === 'ready', 5000);
+      const reloaded = await js(`document.getElementById('saveAudio').checked`);
+      t.check('UI-DISK-01', 'Save audio on a disk that fills up: "Could not save audio" and the box unticks; the saved choice stays, so a reload ticks it again',
+        ticked && s.error.startsWith('Could not save audio') && !box.checked && box.saved === 'true' && reloaded,
+        `error "${s.error}"; the box ${box.checked ? 'still ticked' : 'unticked'}, saved choice ${box.saved}; after a reload ${reloaded ? 'ticked' : 'unticked'}`);
+    }
+    // A models folder with only Parakeet 110M: the other models show their download size and ask first.
+    const few = scratch('few-models');
+    scratchDirs.push(few);
+    for (const f of ['silero_vad.onnx', 'Sped_ParakeetRomanian_110M_TDT-CTC-Q8_0.gguf']) fs.symlinkSync(path.join(ROOT, 'models', f), path.join(few, f));
+    const fewServer = await serve({ env: { MODELS_DIR: few } });
+    s = await open(fewServer);
+    await js(`window.__confirmed = []; window.confirm = (q) => (window.__confirmed.push(q), false); true`);
+    await js(`(() => { const m = document.getElementById('model'); m.value = 'orukeet'; m.dispatchEvent(new Event('change')); })()`);
+    await sleep(500);
+    const asked = await js('window.__confirmed');
+    s = await state();
+    t.check('UI-MODEL-01', 'a model not downloaded shows its size and asks before downloading; No changes nothing',
+      s.models.some((m) => /\(download .+\)/.test(m)) && asked.length === 1 && /Download Orukeet/.test(asked[0]) && s.status === 'ready', asked[0]);
+    // The menu's two groups (#28): Recommended first, with Canary, then Other models; every entry with its reason.
+    const groups = await js(`[...document.querySelectorAll('#model optgroup')].map((g) => ({ label: g.label, options: [...g.querySelectorAll('option')].map((o) => o.text) }))`); // an <optgroup> has no .options
+    t.check('UI-MODEL-03', 'the Model menu has a Recommended group first (Canary in it) and an Other models group, every entry with a one-line reason after a dash',
+      groups.length === 2 && groups[0].label === 'Recommended' && groups[1].label === 'Other models' && groups[0].options.some((o) => /^NVIDIA Canary 1B v2 — /.test(o))
+        && groups.every((g) => g.options.length > 0 && g.options.every((o) => / — .+/.test(o))),
+      groups.map((g) => `${g.label}: ${g.options.length}`).join('; '));
+    // The ElevenLabs cloud model, against the stand-in (never the real service): the page says the audio leaves.
+    const fake = await fakeElevenLabs();
+    fakes.push(fake);
+    const cloudServer = await serve({ model: 'elevenlabs-scribe-v2', env: { ELEVENLABS_API_KEY: 'test-key', ELEVENLABS_BASE_URL: fake.url } });
+    s = await open(cloudServer);
+    const privacy = () => js(`(() => { const p = document.getElementById('privacy'); return { text: p.textContent, color: getComputedStyle(p).color, cloud: p.classList.contains('cloud') }; })()`);
+    const onCloud = await privacy();
+    await click('toggle');
+    s = await waitFor((x) => x.lines.some((l) => l.partial && /^ascult \d+$/.test(l.text)), 15000);
+    const live = s.lines.filter((l) => l.partial).map((l) => l.text);
+    s = await waitFor((x) => finals(x).length >= 1, 20000);
+    await shot('cloud');
+    await click('toggle');
+    const cloudFinals = finals(s).map((l) => l.text);
+    await js(`(() => { const m = document.getElementById('model'); m.value = 'parakeet-ro-110m'; m.dispatchEvent(new Event('change')); })()`);
+    for (let n = 0; n < 75 && (await privacy()).cloud; n++) await sleep(200); // the server confirms the switch
+    s = await waitFor((x) => x.status === 'ready', 15000);
+    const onLocal = await privacy();
+    t.check('UI-MODEL-02', 'the ElevenLabs model (with a key): in the menu; the footer says the speech goes to the internet, in the warning colour; live and final lines are its texts; a local model brings the local note back',
+      s.models.some((m) => /ElevenLabs/.test(m)) && onCloud.cloud && /internet/.test(onCloud.text) && onCloud.color !== onLocal.color
+        && live.length > 0 && cloudFinals.length > 0 && cloudFinals.every((x) => /^propoziția \d+$/.test(x)) && !onLocal.cloud && /No audio leaves/.test(onLocal.text),
+      `footer: "${onCloud.text}"; live ${live.join(' | ')}; finals ${cloudFinals.join(' | ')}; after switching: "${onLocal.text}"`);
+
+    // ---------- speaking order, from a stand-in server (#50) ----------
+    // The rest of a sentence cut for being too long (#7) starts before the sentence the other mic started meanwhile,
+    // but gets its id after it, and its live line comes later. The page, Copy and Download put it first, as the .txt
+    // does (the same rule, web/order.ts). Before the fix they went by id: Mic 2's line came first.
+    const stand = await fakeServer();
+    fakes.push(stand);
+    await win.loadURL(stand.url);
+    await js('localStorage.clear(); sessionStorage.clear()');
+    await win.loadURL(stand.url);
+    await waitFor((x) => x.status === 'ready' && x.maxMics >= 2, 10000);
+    await pick(1, 'mic-b'); // two mics: lines say which mic heard them
+    const said = [
+      { id: 5, mic: 0, start: 1805.216, end: 1810.624, text: 'Am terminat capitolul doi.' },
+      { id: 6, mic: 1, start: 1813.024, end: 1814.112, text: 'Cifrele bine.' },
+      { id: 7, mic: 0, start: 1811.008, end: 1816.384, text: 'Vreau să subliniez că toate merg.' },
+    ];
+    for (const l of said) {
+      stand.send({ type: 'vad', mic: l.mic, speaking: true, id: l.id });
+      stand.send({ type: 'partial', mic: l.mic, id: l.id, start: l.start, text: l.text.split(' ')[0] });
+    }
+    for (const l of said) stand.send({ type: 'final', ...l, model: 'fake', ms: 30 });
+    s = await waitFor((x) => finals(x).length === 3, 5000);
+    await click('copy');
+    await click('download');
+    await sleep(300);
+    const spoken = ['[30:05] Mic 1: Am terminat capitolul doi.', '[30:11] Mic 1: Vreau să subliniez că toate merg.', '[30:13] Mic 2: Cifrele bine.'];
+    const onPage = finals(s).map((l) => `${l.who}: ${l.text}`);
+    const copied = (await js('window.__clipboard ?? ""')).split('\n');
+    const downloaded = (await js('window.__download ?? ""')).trim().split('\n');
+    t.check('UI-TX-06', 'the rest of a cut sentence, which started first but got its id and live line later: first on the page, in Copy and in Download (speaking order, as the .txt)',
+      downloaded.join('\n') === spoken.join('\n') && copied.join('\n') === spoken.map((l) => l.slice(8)).join('\n') && onPage.join('\n') === copied.join('\n'),
+      `Download ${JSON.stringify(downloaded)}; on the page ${onPage.map((l) => l.slice(0, 12)).join(' | ')}; Copy ${copied.map((l) => l.slice(0, 12)).join(' | ')}`);
+
+    t.check('UI-LOAD-02', 'no errors in the page console', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
+  } catch (err: any) {
+    t.check('UI-RUN', 'the UI run finished', false, err.stack);
+  } finally {
+    // Each step named, so a hang here (TESTING.md §12, twice in 2026-11) says where it is.
+    console.log('[teardown] stopping the servers');
+    for (const s of servers) await s.stop().catch(() => {});
+    console.log('[teardown] closing the stand-ins');
+    for (const fake of fakes) await fake.close();
+    console.log('[teardown] removing the scratch folders');
+    for (const dir of [SPEAKERS, ...scratchDirs]) fs.rmSync(dir, { recursive: true, force: true });
+    console.log(`\nscreenshots: ${OUT}`);
+    t.finish();
+    app.exit((process.exitCode ?? 0) as number); // a number here, or unset
+  }
+});

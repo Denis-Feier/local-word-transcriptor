@@ -40,7 +40,7 @@ Then update the user manual, which the installers and the release include: in Cl
 what changed for users since the last manual, rewrites what is needed, retakes the screenshots and rebuilds the
 PDFs (by hand: edit `docs/manual/manual.*.html`, then `npm run manual`). `npm test` fails (`STATIC-05`) while the
 manual is built for an older version.
-Each build first runs `test/smoke.js`, which transcribes a Romanian test clip with the speech engine on that
+Each build first runs `test/smoke.ts`, which transcribes a Romanian test clip with the speech engine on that
 system. To try the app from source: `npm run app`.
 
 ## Quick start (developer setup)
@@ -57,7 +57,8 @@ docker compose down              # stop
 Docker on a Mac cannot use the Apple GPU, so every model runs on the CPU (see *Docker or native?* below).
 Download models from the page's **Model** menu, or all at once with `docker compose run --rm transcriber npm run setup -- --all`.
 
-**Native: fastest, uses the GPU.**
+**Native: fastest, uses the GPU.** Needs Node 22.18 or newer (`brew install node`). The code is TypeScript that Node
+runs as it is (type stripping is built in from 22.18 on), so there is no build step.
 
 ```bash
 brew install whisper-cpp uv      # whisper.cpp for the Whisper models, uv for the NeMo models' Python
@@ -210,7 +211,7 @@ the same 100 FLEURS Romanian clips, through the app itself; the ranking rules ar
 
 ¹ Measured on this M5 on 2026-11-02 with `npm run benchmark:suite` (one hour, open audio): WER = word error rate on 100 FLEURS Romanian clips (read, close-mic speech; lower is better; the 883-clip numbers in `benchmarks/results/fleurs-ro.md` agree within a point). Speed = seconds of audio per second of compute on the GPU. Live text rewrites = words shown as live text and then taken back, per word of the final line, with Steady live text on (0 = never; raw guesses rewrite 5–10× more). Noise = WER (diacritics ignored) with white noise at 10 dB SNR. Silence = of 4 inputs with no speech, how many got invented text. A room with several speakers will score worse for every model.
 ² FLEURS Romanian as published: Canary, Whisper large-v3 and Parakeet v3 from NVIDIA's paper (arXiv 2509.14128, Table 11); the others from their authors or the Handy benchmarks.
-³ Hugging Face Whisper fine-tunes with no ready-made whisper.cpp version. The app downloads the original weights, converts them to whisper.cpp's format with `lib/convert-whisper.js` (a JavaScript port of whisper.cpp's converter, no Python needed), quantizes them to q8_0 with `whisper-quantize`, and keeps only the result. BuzzASR downloads 3.1 GB, readerbench 967 MB. The readerbench model runs without the previous-text context, which made it invent words.
+³ Hugging Face Whisper fine-tunes with no ready-made whisper.cpp version. The app downloads the original weights, converts them to whisper.cpp's format with `lib/convert-whisper.ts` (a JavaScript port of whisper.cpp's converter, no Python needed), quantizes them to q8_0 with `whisper-quantize`, and keeps only the result. BuzzASR downloads 3.1 GB, readerbench 967 MB. The readerbench model runs without the previous-text context, which made it invent words.
 ⁴ Outputs lowercase text without punctuation (that is how it was trained), but its words are very accurate and it is by far the fastest.
 ⁵ Apple's own recognizer (the macOS 26 `DictationTranscriber`), fully on the Mac; macOS downloads and keeps the Romanian model itself. Not the default and not recommended for Romanian: on FLEURS Romanian (883 sentences, `npm run benchmark`) it scored 17.6 % WER against 6.6 % for Canary, because it leaves words out and adds no punctuation (Apple's newer `SpeechTranscriber` has no Romanian). The menu offers it on macOS 26 or later, from source with the Xcode command-line tools: choosing it, or `npm run setup -- apple-dictation`, compiles a small Swift helper (`native/apple-speech/`, ~11 s). The desktop app does not ship the helper.
 ⁶ `upb-nlp/ro-fast-conformer`, a NeMo FastConformer fine-tuned on Romanian (MDPI Applied Sciences 16(4):1928). The authors report 3.0 % WER on their own test sets, but no FLEURS score; on FLEURS Romanian (883 sentences, `npm run benchmark`) it scored 11.6 % here, about the same as Parakeet Romanian 110M, against 6.6 % for Canary. Some of that is numbers written as words ("o sută" for "100"): without the sentences that have digits, 8.0 % against Canary's 6.2 %. Like Parakeet Romanian 110M it writes lowercase without punctuation. Its RNNT decoder is used; its CTC head scored 13.7 %. Needs Python (installed with it, like Jackrabbit), so the desktop app does not offer it.
@@ -344,7 +345,7 @@ The report (speed, WER, and every model's full transcript) is written to `transc
 ## How it works
 
 ```
-Browser                       Node (server.js)                            Speech model
+Browser                       Node (server.ts)                            Speech model
 mics → AudioWorklet ─WS─▶  Silero VAD + Segmenter per mic        ──▶   whisper-server (whisper.cpp, GPU)
       16 kHz Float32        (crosstalk gate between mics)              transcribe.cpp (GPU, in-process)
                             ├─ while speaking: live guess
@@ -368,32 +369,35 @@ where macOS decides. In Docker there is no GPU, so everything runs on the CPU th
 
 | File | Role |
 |---|---|
-| `public/pcm-worklet.js` | Takes one input per mic, downsamples to 16 kHz mono, sends 100 ms chunks with every mic's audio side by side |
-| `public/mics.js` | Lists the audio inputs and records one or more of them together; reconnects a mic that comes back |
-| `public/speaker.js` | Plays the mics on the speaker chosen for the room: full quality, low delay, separate from the transcription |
-| `public/app.js` | UI: models, mic and speaker choice, live and final lines (coloured per mic), wake lock, reconnect buffering |
-| `public/backlog.js` | The audio kept while the server is unreachable: the newest 5 minutes, and what a longer outage lost |
-| `public/stage.js` | Projector view: large centred captions, display preferences, full screen; also the caption window (`/?display`) |
-| `public/settings.js` | Settings panel: live speech-detection sliders (`lib/tuning.js` on the server) and projector display options |
-| `server.js` | Static files, WebSocket (only from its own page), model downloads and switching |
-| `lib/vad.js` | Speech detectors: Silero (neural, default) and a loudness fallback |
-| `lib/segmenter.js` | Turns detector frames into utterances: pre-roll, pause timeout, splits monologues longer than 20 s at the quietest point |
-| `lib/session.js` | One browser tab: a segmenter per mic, schedules live guesses and finals (or streams each sentence to a streaming model), drops a sentence another mic heard more clearly, writes transcript/audio files |
-| `lib/crosstalk.js` | With several mics: decides which mic each moment of speech belongs to, by clarity above each mic's own noise |
-| `lib/transcriber.js` | Owns the active model, serialises requests, switches models, restarts a crashed model (after 4 quick crashes, retries it every 30 s) |
-| `lib/engines/*.js` | One adapter per runtime: whisper.cpp, transcribe.cpp, Python/NeMo, Apple speech, ElevenLabs (`elevenlabs.js`: a realtime connection per sentence). `sidecar.js` is the shared logic for models served by a separate process |
+| `web/pcm-worklet.ts` | Takes one input per mic, downsamples to 16 kHz mono, sends 100 ms chunks with every mic's audio side by side |
+| `web/mics.ts` | Lists the audio inputs and records one or more of them together; reconnects a mic that comes back |
+| `web/speaker.ts` | Plays the mics on the speaker chosen for the room: full quality, low delay, separate from the transcription |
+| `web/app.ts` | UI: models, mic and speaker choice, live and final lines (coloured per mic), wake lock, reconnect buffering |
+| `web/backlog.ts` | The audio kept while the server is unreachable: the newest 5 minutes, and what a longer outage lost |
+| `web/order.ts` | The order of the lines, the order they were spoken in: one rule for the page, Copy, Download and the saved `.txt` |
+| `web/stage.ts` | Projector view: large centred captions, display preferences, full screen; also the caption window (`/?display`) |
+| `web/settings.ts` | Settings panel: live speech-detection sliders (`lib/tuning.ts` on the server) and projector display options |
+| `public/` | The page as the browser loads it: `index.html`, `style.css` and the JavaScript `tsc` emits from `web/*.ts` (`npm run build:web`; committed, so no build step is needed to run the app) |
+| `server.ts` | Static files, WebSocket (only from its own page), model downloads and switching |
+| `lib/vad.ts` | Speech detectors: Silero (neural, default) and a loudness fallback |
+| `lib/segmenter.ts` | Turns detector frames into utterances: pre-roll, pause timeout, splits monologues longer than 20 s at the quietest point |
+| `lib/session.ts` | One browser tab: a segmenter per mic, schedules live guesses and finals (or streams each sentence to a streaming model), drops a sentence another mic heard more clearly, writes transcript/audio files |
+| `lib/crosstalk.ts` | With several mics: decides which mic each moment of speech belongs to, by clarity above each mic's own noise |
+| `lib/transcriber.ts` | Owns the active model, serialises requests, switches models, restarts a crashed model (after 4 quick crashes, retries it every 30 s) |
+| `lib/engines/*.ts` | One adapter per runtime: whisper.cpp, transcribe.cpp, Python/NeMo, Apple speech, ElevenLabs (`elevenlabs.ts`: a realtime connection per sentence). `sidecar.ts` is the shared logic for models served by a separate process |
 | `python/nemo_server.py` | Small local HTTP server that runs NeMo models (Jackrabbit, the UPB FastConformer) for the Node app; its environment lives in `python/.venv` |
-| `lib/models.js` | Model catalogue, download, unpack, and conversion of Whisper fine-tunes (`lib/convert-whisper.js`) |
-| `lib/text.js` | Fixes ş/ţ → ș/ț, removes `[Muzică]` tags, drops Whisper's known silence hallucinations ("Mulțumim pentru vizionare!") |
-| `scripts/compare.js` | Runs several models over one of your recordings and reports speed and WER |
-| `scripts/benchmark.js` | Scores models on the whole FLEURS Romanian test set (`npm run benchmark`) |
-| `scripts/benchmark-suite.js`, `lib/benchmark/` | The shareable one-hour benchmark (`npm run benchmark:suite`): accuracy, speed, live-text steadiness, noise, long sentences, silence, exported with the computer's description |
+| `lib/models.ts` | Model catalogue, download, unpack, and conversion of Whisper fine-tunes (`lib/convert-whisper.ts`) |
+| `lib/text.ts` | Fixes ş/ţ → ș/ț, removes `[Muzică]` tags, drops Whisper's known silence hallucinations ("Mulțumim pentru vizionare!") |
+| `scripts/compare.ts` | Runs several models over one of your recordings and reports speed and WER |
+| `scripts/benchmark.ts` | Scores models on the whole FLEURS Romanian test set (`npm run benchmark`) |
+| `scripts/benchmark-suite.ts`, `lib/benchmark/` | The shareable one-hour benchmark (`npm run benchmark:suite`): accuracy, speed, live-text steadiness, noise, long sentences, silence, exported with the computer's description |
 | `Dockerfile`, `docker-compose.yml` | The Docker image and how it is started |
-| `desktop/main.mjs` | The desktop app (Electron): starts the server in the background, opens its page, sends the caption window to the projector, data folders per user |
+| `desktop/main.ts` | The desktop app (Electron): starts the server in the background, opens its page, sends the caption window to the projector, data folders per user |
 | `docs/manual/` | The user manual: `manual.en.html` / `manual.ro.html` (the text), `manual.css`, `img/` (screenshots) and the PDFs built from them |
-| `scripts/manual.mjs` | Builds the manual (`npm run manual`): screenshots of the page with the UI test's fake microphones, then a PDF per language; `--pdf-only` skips the screenshots |
-| `test/smoke.js` | End-to-end check on any OS: server, automatic model download, transcription of `test/fixtures/ro.wav` (one mic and two) |
-| `test/run-all.js` | Runs the whole test plan (`TESTING.md`): logic, server, two-mic conversations, the page in Electron; `npm test` |
+| `scripts/manual.ts` | Builds the manual (`npm run manual`): screenshots of the page with the UI test's fake microphones, then a PDF per language; `--pdf-only` skips the screenshots |
+| `types/` | The contracts shared between modules, imported as types only: the WebSocket protocol (`protocol.ts`), the model catalogue (`model.ts`), the configuration (`config.ts`), the engine interface (`engine.ts`), the audio shapes (`audio.ts`), the page's (`page.ts`) and the tests' (`test.ts`) |
+| `test/smoke.ts` | End-to-end check on any OS: server, automatic model download, transcription of `test/fixtures/ro.wav` (one mic and two) |
+| `test/run-all.ts` | Runs the whole test plan (`TESTING.md`): logic, server, two-mic conversations, the page in Electron; `npm test` |
 | `.github/workflows/desktop.yml` | Builds and tests the Mac and Windows installers on GitHub; publishes them on version tags |
 
 Live guesses refresh every 0.5 s, or less often for slow models (twice the model's average inference time), so they never delay the final text.
@@ -428,7 +432,9 @@ Any of these can also go in `.env.local` (git ignores it; see `.env.example`), o
 
 `npm test` runs the test plan in [TESTING.md](TESTING.md) (~5 min; `npm run test:quick` ~1 min, `npm run test:full`
 ~15 min with every speech engine). Each run writes a signed report to `test-results/` (the exact moment it started as its id, the computer's hardware and software, one row per test). The plan, the per-merge routine and
-the checklist for testing with real microphones are in TESTING.md.
+the checklist for testing with real microphones are in TESTING.md. `npm run typecheck` runs the TypeScript checker
+alone; every tier runs it as `STATIC-06`. The page's sources are `web/*.ts`: after editing them, `npm run build:web` emits them into `public/`
+(`npm run watch:web` does it on every save), and `STATIC-07` fails while `public/` is stale. How the code became TypeScript, and the decisions behind the setup: [docs/typescript-migration.md](docs/typescript-migration.md).
 
 ## Testing without a microphone
 
