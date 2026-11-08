@@ -13,7 +13,7 @@ export class AppleSpeechEngine extends SidecarEngine {
   module: string;
   preset: string;
 
-  constructor({ bin, language, module, preset = 'long', onCrash }: { bin: string; language: string; module: string; preset?: string; onCrash?: OnCrash }) {
+  constructor({ bin, language, module, preset = 'long', onCrash }: { bin: string; language: string; module: string; preset?: string | undefined; onCrash?: OnCrash }) {
     super({ onCrash });
     this.bin = bin;
     this.language = language;

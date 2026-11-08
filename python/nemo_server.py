@@ -1,4 +1,4 @@
-"""Serves an NVIDIA NeMo speech model over local HTTP for the Node app (see lib/engines/python-nemo.js).
+"""Serves an NVIDIA NeMo speech model over local HTTP for the Node app (see lib/engines/python-nemo.ts).
 
 GET  /health      -> 200 once the model is loaded: {"status": "ok", "device": "GPU (MPS)" | "CPU", "fallback": ...}
 POST /inference   body: float32 little-endian PCM, 16 kHz mono  -> {"text": "...", "device": ..., "fallback": ...}
@@ -6,6 +6,9 @@ POST /inference   body: float32 little-endian PCM, 16 kHz mono  -> {"text": "...
 --device auto (the default) puts the acoustic model on the GPU when PyTorch has one (MPS on Apple silicon, CUDA
 elsewhere) and on the CPU otherwise. If the GPU fails to load or warm up the model, or fails on a request later, the
 model moves to the CPU and stays there. A language-model beam search (Jackrabbit's 4-gram) always runs on the CPU.
+
+--lang tells a multilingual model that takes a language prompt (Nemotron unified 0.6B) which language it hears; NeMo
+passes it to transcribe() as target_lang. Models without one (Jackrabbit, the UPB FastConformer) are not given it.
 """
 import os
 
@@ -60,8 +63,10 @@ def load_model(args, device):
         }), decoder_type="ctc", verbose=False)
     elif args.decoder == "ctc":
         model.change_decoding_strategy(decoder_type="ctc", verbose=False)
-    else:
-        model.change_decoding_strategy(decoder_type="rnnt", verbose=False)  # RNNT/TDT greedy
+    elif hasattr(model, "ctc_decoder"):
+        model.change_decoding_strategy(decoder_type="rnnt", verbose=False)  # hybrid RNNT/CTC: its RNNT/TDT head, greedy
+    # A pure RNNT/TDT model (Nemotron unified) decodes with its own head as it is: its change_decoding_strategy takes a
+    # whole decoding config and no decoder_type.
     return model
 
 
@@ -92,13 +97,14 @@ def transcribe_lm_split(model, samples, device):
     return first_text(out)
 
 
-def transcribe(model, samples, device="cpu", decoder="tdt"):
+def transcribe(model, samples, device="cpu", decoder="tdt", lang=None):
     import torch
 
     with torch.inference_mode():
         if decoder == "ctc-lm" and device != "cpu":
             return transcribe_lm_split(model, samples, device)
-        return first_text(model.transcribe([samples], batch_size=1, verbose=False))
+        language = {"target_lang": lang} if lang else {}  # only models with a language prompt take it
+        return first_text(model.transcribe([samples], batch_size=1, verbose=False, **language))
 
 
 class Runner:
@@ -111,12 +117,12 @@ class Runner:
         warmup = np.zeros(16000, dtype=np.float32)
         try:
             self.model = load_model(args, self.device)
-            transcribe(self.model, warmup, self.device, args.decoder)
+            transcribe(self.model, warmup, self.device, args.decoder, args.lang)
         except Exception as err:
             if self.device == "cpu":
                 raise
             self.to_cpu(err, reload=True)
-            transcribe(self.model, warmup, self.device, args.decoder)
+            transcribe(self.model, warmup, self.device, args.decoder, args.lang)
 
     def to_cpu(self, err, reload=False):
         self.fallback = f"{DEVICE_NAMES.get(self.device, self.device)} failed: {type(err).__name__}: {err}"
@@ -126,12 +132,12 @@ class Runner:
 
     def transcribe(self, samples):
         try:
-            return transcribe(self.model, samples, self.device, self.args.decoder)
+            return transcribe(self.model, samples, self.device, self.args.decoder, self.args.lang)
         except Exception as err:
             if self.device == "cpu":
                 raise
             self.to_cpu(err)
-            return transcribe(self.model, samples, self.device, self.args.decoder)
+            return transcribe(self.model, samples, self.device, self.args.decoder, self.args.lang)
 
     def describe(self):
         return DEVICE_NAMES.get(self.device, self.device)
@@ -147,6 +153,7 @@ def main():
     p.add_argument("--beam", type=int, default=32)
     p.add_argument("--threads", type=int, default=4)
     p.add_argument("--device", choices=["auto", "mps", "cuda", "cpu"], default="auto")
+    p.add_argument("--lang", help="the language for a model with a language prompt, e.g. ro (NeMo's target_lang)")
     args = p.parse_args()
     if args.decoder == "ctc-lm" and not args.lm:
         sys.exit("--decoder ctc-lm needs --lm")

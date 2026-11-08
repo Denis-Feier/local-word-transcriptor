@@ -598,7 +598,8 @@ export class Session {
       if (seg.echo && process.env.DEBUG) console.log(`[final #${seg.id} mic ${seg.mic + 1}] dropped, another mic heard it more clearly`);
       const text = seg.echo ? '' : seg.text;
       const { id, mic, start, end, model, ms } = seg;
-      this.send({ type: 'final', mic, id, start, end, text, model, ms });
+      // model and ms come with the model's answer; a sentence whose request failed has neither, and leaves them out.
+      this.send({ type: 'final', mic, id, start, end, text, ...(model !== undefined && ms !== undefined && { model, ms }) });
       if (!text) continue;
       this.transcript = `${this.transcript} ${text}`.trim();
       this.held.push({ id, start, line: `[${fmtTime(start)}] ${this.mics.length > 1 ? `Mic ${mic + 1}: ` : ''}${text}\n` });

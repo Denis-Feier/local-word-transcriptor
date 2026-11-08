@@ -59,8 +59,8 @@ export interface Engine {
   readonly supportsPrompt?: boolean;
   /** Where the model runs once loaded: 'GPU (Metal)', 'CPU', …; null or unset before load(). */
   device?: string | null;
-  /** Why the GPU was not used, when it was not. */
-  fallback?: string | null;
+  /** Why the GPU was not used, when it was not; null or undefined when it was (the engines differ). */
+  fallback?: string | null | undefined;
   load(): Promise<void>;
   unload(): Promise<void>;
   /** Synchronous last-resort cleanup for process exit. */
