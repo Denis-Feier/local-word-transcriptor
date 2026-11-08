@@ -3,8 +3,11 @@
   // the page: tsconfig.web.json). Checked only (noEmit): Node runs .ts files itself, so there is no build
   // (docs/typescript-migration.md, D1); erasableSyntaxOnly and .ts import specifiers keep every file loadable by Node as
   // it is. Nothing JavaScript is left in these projects (test/ui/preload.cjs, Electron's preload, stays JavaScript, D6).
+  // exactOptionalPropertyTypes (#61): an optional property that may hold undefined says so (`| undefined`); one built
+  // from a value that may be missing is left out instead.
   "compilerOptions": {
     "strict": true,
+    "exactOptionalPropertyTypes": true,
     "noEmit": true,
     "module": "nodenext",
     "target": "es2024",

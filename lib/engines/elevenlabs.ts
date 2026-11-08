@@ -123,7 +123,8 @@ class Sentence {
         this.#audio = [];
         this.#waiting = 0;
         for (let at = 0; at < audio.length; at += MAX_CHUNK) {
-          connection.send({ audioBase64: toBase64(audio.subarray(at, at + MAX_CHUNK)), previousText: (!this.#sent && this.prompt) || undefined });
+          const previousText = !this.#sent && this.prompt; // accepted only with the connection's first audio
+          connection.send({ audioBase64: toBase64(audio.subarray(at, at + MAX_CHUNK)), ...(previousText && { previousText }) });
           this.#sent = true;
         }
       }
@@ -165,7 +166,7 @@ export class ElevenLabsEngine {
   open: Set<Sentence>;
   declare query: Query; // load() sets it
 
-  constructor({ apiKey, baseUrl, modelId, language }: { apiKey: string; baseUrl?: string; modelId: string; language: string }) {
+  constructor({ apiKey, baseUrl, modelId, language }: { apiKey: string; baseUrl?: string | undefined; modelId: string; language: string }) {
     this.apiKey = apiKey;
     this.baseUrl = baseUrl;
     this.modelId = modelId;
@@ -178,7 +179,7 @@ export class ElevenLabsEngine {
   async load() {
     if (!this.apiKey) throw new Error('No ElevenLabs API key: put it in .env.local as ELEVENLABS_API_KEY=… (see .env.example).');
     sdk ??= await import('@elevenlabs/elevenlabs-js');
-    this.client = new sdk.ElevenLabsClient({ apiKey: this.apiKey, baseUrl: this.baseUrl });
+    this.client = new sdk.ElevenLabsClient({ apiKey: this.apiKey, ...(this.baseUrl !== undefined && { baseUrl: this.baseUrl }) }); // none: the SDK's own
     this.query = {
       modelId: this.modelId,
       languageCode: this.language,
@@ -202,7 +203,7 @@ export class ElevenLabsEngine {
     return sentence;
   }
 
-  transcribe(samples: Float32Array, { prompt }: TranscribeOptions = {}): Promise<TranscribeResult> {
+  transcribe(samples: Float32Array, { prompt = '' }: TranscribeOptions = {}): Promise<TranscribeResult> {
     const sentence = this.stream({ prompt });
     sentence.push(samples);
     return sentence.commit();
