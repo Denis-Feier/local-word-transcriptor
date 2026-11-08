@@ -42,7 +42,7 @@ export async function listInputs(): Promise<Inputs> {
 function openStream(deviceId: string, processing: MicProcessing) {
   return navigator.mediaDevices.getUserMedia({
     audio: {
-      deviceId: deviceId ? { exact: deviceId } : undefined,
+      ...(deviceId && { deviceId: { exact: deviceId } }),
       channelCount: 1,
       echoCancellation: false, // it would also cancel the talker's own voice coming back from the room's speaker
       ...processing,

@@ -51,7 +51,7 @@ export class SidecarEngine {
   declare device: string | null;
   declare fallback: string | undefined;
 
-  constructor({ port = 0, onCrash }: { port?: number; onCrash?: OnCrash } = {}) {
+  constructor({ port = 0, onCrash }: { port?: number; onCrash?: OnCrash | undefined } = {}) {
     this.port = port;
     this.onCrash = onCrash;
     this.child = null;
