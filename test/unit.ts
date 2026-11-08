@@ -91,11 +91,10 @@ const badNemo = nemoModels.filter(({ nemo, files }) => !nemoDecoders.includes(ne
 t.check('UNIT-MODEL-01', 'every NeMo model uses a decoder nemo_server.py accepts, a language only where the server takes --lang, and downloads the files it loads', nemoModels.length > 0 && !badNemo.length,
   `decoders ${nemoDecoders.join('/')}, --lang ${nemoLang ? 'yes' : 'no'}; ${nemoModels.map((m) => `${m.id}: ${m.nemo.decoder}${m.nemo.lang ? ` ${m.nemo.lang}` : ''}`).join(', ')}${badNemo.length ? `; wrong: ${badNemo.map((m) => m.id).join(', ')}` : ''}`);
 
-// The three models of #60, as the issue asks for them: Nemotron unified told it hears Romanian, Parakeet Redux in the
-// fp32 sherpa-onnx export (the int8 one is much less accurate), Fun-ASR-MLT-Nano as a Q8_0 GGUF; none recommended
-// before the benchmark.
+// The two models #60 kept (benchmarks/runs/2026-11-08_17-28_mac-m5), as the issue asks for them: Nemotron unified told
+// it hears Romanian, Parakeet Redux in the fp32 sherpa-onnx export (the int8 one is much less accurate); both in Other.
 {
-  const [nemotron, redux, funasr] = ['nemotron-unified-0.6b', 'parakeet-redux', 'fun-asr-mlt-nano'].map(findModel);
+  const [nemotron, redux] = ['nemotron-unified-0.6b', 'parakeet-redux'].map(findModel);
   const cmd = (m: Model | undefined) => (m?.engine === 'python-nemo'
     ? new PythonNemoEngine({ id: m.id, modelDir: 'd', nemo: m.nemo, threads: 4 }).command(1).args : []);
   const langArg = (args: string[]) => (args.includes('--lang') ? args[args.indexOf('--lang') + 1] : null);
@@ -104,11 +103,10 @@ t.check('UNIT-MODEL-01', 'every NeMo model uses a decoder nemo_server.py accepts
     && [redux.sherpa.encoder, redux.sherpa.decoder, redux.sherpa.joiner, redux.sherpa.tokens, 'encoder.weights'].every((f) => reduxFiles.includes(f))
     && !reduxFiles.some((f) => /int8/.test(f)) && redux.files.every((f) => f.url.endsWith(`/${f.file}`));
   const ids = MODELS.map((m) => m.id);
-  t.check('UNIT-MODEL-03', 'the #60 models: Nemotron unified on NeMo (RNNT) started with --lang ro (Jackrabbit without it), Parakeet Redux on sherpa-onnx with every fp32 file it loads (no int8), Fun-ASR-MLT-Nano a Q8_0 GGUF on transcribe.cpp; all three in Other; ids unique',
+  t.check('UNIT-MODEL-03', 'the #60 models: Nemotron unified on NeMo (RNNT) started with --lang ro (Jackrabbit without it), Parakeet Redux on sherpa-onnx with every fp32 file it loads (no int8); both in Other; ids unique',
     nemotron?.engine === 'python-nemo' && nemotron.nemo.decoder === 'rnnt' && langArg(cmd(nemotron)) === 'ro' && langArg(cmd(findModel('jackrabbit-110m-ro'))) === null
-      && reduxOk && funasr?.engine === 'transcribe.cpp' && /-Q8_0\.gguf$/.test(funasr.file) && funasr.url.endsWith(`/${funasr.file}`)
-      && [nemotron, redux, funasr].every((m) => m?.tier === 'other') && new Set(ids).size === ids.length,
-    `Nemotron ${nemotron?.engine} --lang ${langArg(cmd(nemotron))}; Redux ${redux?.engine}: ${reduxFiles.join(', ')}; Fun-ASR ${funasr?.engine} ${funasr?.file}; tiers ${[nemotron, redux, funasr].map((m) => m?.tier).join('/')}`);
+      && reduxOk && [nemotron, redux].every((m) => m?.tier === 'other') && new Set(ids).size === ids.length,
+    `Nemotron ${nemotron?.engine} --lang ${langArg(cmd(nemotron))}; Redux ${redux?.engine}: ${reduxFiles.join(', ')}; tiers ${[nemotron, redux].map((m) => m?.tier).join('/')}`);
 }
 
 // ---------- the page's backlog while the server is unreachable (#11) ----------

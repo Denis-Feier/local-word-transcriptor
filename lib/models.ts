@@ -28,8 +28,9 @@ const MEL_FILTERS_URL = 'https://raw.githubusercontent.com/openai/whisper/main/w
 /**
  * Speech-to-text models the app can switch between, in ranking order. WER = word error rate on the FLEURS Romanian
  * benchmark (read speech; lower is better), from the sources noted in `notes`.
- * `tier` and `reason` (#28) come from the one-hour benchmark on an M5 (benchmarks/runs/2026-11-02_20-09_mac-m5:
- * the same 100 FLEURS clips for every model; WER with diacritics, speed, live-text steadiness, noise, silence):
+ * `tier` and `reason` (#28) come from the one-hour benchmark on an M5 (benchmarks/runs/2026-11-02_20-09_mac-m5, and
+ * 2026-11-08_17-28_mac-m5 for the two models of #60: the same 100 FLEURS clips for every model; WER with diacritics,
+ * speed, live-text steadiness, noise, silence):
  *   'recommended'  within reach of the best local model, steady live text, fast enough to refresh it every 0.5 s,
  *                  a license that allows the use; the menu lists them first
  *   'other'        the rest, each with its reason in one line (less accurate, slow, no punctuation, a license, Python)
@@ -110,6 +111,21 @@ export const MODELS: Model[] = [
     url: `${HF}oruk/orukeet/resolve/main/orukeet-transcribe-cpp-Q8_0.gguf`,
   },
   {
+    id: 'nemotron-unified-0.6b',
+    label: 'NVIDIA Nemotron unified 0.6B',
+    tier: 'other',
+    reason: '10.2 % WER like Parakeet Ultra, steadier live text; needs Python',
+    engine: 'python-nemo',
+    size: '2.5 GB',
+    notes: 'NVIDIA offline + streaming RNNT model (Oct 2026), 25 languages, told it hears Romanian. Romanian WER 9.4 % offline (NVIDIA, FLEURS, MCV and MLS averaged). OpenMDW-1.1. Python/NeMo on the GPU (MPS); loads in ~11 s.',
+    dir: 'nemotron-unified-0.6b',
+    files: [
+      { file: 'nemotron-labs-unified-asr-0.6b.nemo', mb: 2508, url: `${HF}nvidia/nemotron-labs-unified-asr-0.6b/resolve/main/nemotron-labs-unified-asr-0.6b.nemo` },
+    ],
+    nemo: { model: 'nemotron-labs-unified-asr-0.6b.nemo', decoder: 'rnnt', lang: 'ro' }, // target_lang="ro"; "auto" detects
+    python: true,
+  },
+  {
     id: 'ro-fast-conformer',
     label: 'FastConformer Romanian 114M (UPB NLP)',
     tier: 'other',
@@ -123,6 +139,25 @@ export const MODELS: Model[] = [
     ],
     nemo: { model: 'ro-fast-conformer.nemo', decoder: 'rnnt' }, // RNNT 11.6 %, its CTC head 13.7 % on FLEURS
     python: true,
+  },
+  {
+    id: 'parakeet-redux',
+    label: 'Parakeet Redux (Moondream)',
+    tier: 'other',
+    reason: '11.4 % WER; CPU only, 2.7 GB of memory; Parakeet Ultra is better',
+    engine: 'sherpa-onnx',
+    size: '2.5 GB',
+    notes: "Moondream's 1.58-bit Parakeet TDT v3 (Sept 2026), in sherpa-onnx's fp32 export (its int8 export is much less accurate). FLEURS Romanian WER 10.3 % (authors). CC-BY-4.0. CPU only, ~2.7 GB of memory.",
+    dir: 'parakeet-redux',
+    // fp32: the weights are stored dequantized, so the 1.58-bit model is as big on disk as Parakeet v3 in fp32.
+    files: [
+      { file: 'encoder.onnx', mb: 42, url: `${HF}csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-redux/resolve/main/encoder.onnx` },
+      { file: 'encoder.weights', mb: 2435, url: `${HF}csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-redux/resolve/main/encoder.weights` }, // encoder.onnx's external data
+      { file: 'decoder.onnx', mb: 47, url: `${HF}csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-redux/resolve/main/decoder.onnx` },
+      { file: 'joiner.onnx', mb: 25, url: `${HF}csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-redux/resolve/main/joiner.onnx` },
+      { file: 'tokens.txt', mb: 0.1, url: `${HF}csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-redux/resolve/main/tokens.txt` },
+    ],
+    sherpa: { encoder: 'encoder.onnx', decoder: 'decoder.onnx', joiner: 'joiner.onnx', tokens: 'tokens.txt', modelType: 'nemo_transducer' },
   },
   {
     id: 'whisper-large-v3-ro-buzzasr',
@@ -194,53 +229,6 @@ export const MODELS: Model[] = [
     file: 'ggml-small-ro-readerbench-q8_0.bin',
     convert: { repo: 'readerbench/whisper-ro', revision: 'refs/pr/2', quantize: 'q8_0' }, // PR 2 = safetensors
     noPrompt: true, // previous-text context makes this small model invent words ("in afecțiunea")
-  },
-  // #60: added from the November 2026 scan and not measured here yet, so they wait at the end of the local models
-  // until `npm run benchmark:suite` places them by the #28 rules.
-  {
-    id: 'nemotron-unified-0.6b',
-    label: 'NVIDIA Nemotron unified 0.6B',
-    tier: 'other',
-    reason: 'not measured here yet; 9.4 % WER (NVIDIA); needs Python',
-    engine: 'python-nemo',
-    size: '2.5 GB',
-    notes: 'NVIDIA offline + streaming RNNT model (Oct 2026), 25 languages, told it hears Romanian. Romanian WER 9.4 % offline (NVIDIA, FLEURS, MCV and MLS averaged). OpenMDW-1.1. Python/NeMo on the GPU (MPS).',
-    dir: 'nemotron-unified-0.6b',
-    files: [
-      { file: 'nemotron-labs-unified-asr-0.6b.nemo', mb: 2508, url: `${HF}nvidia/nemotron-labs-unified-asr-0.6b/resolve/main/nemotron-labs-unified-asr-0.6b.nemo` },
-    ],
-    nemo: { model: 'nemotron-labs-unified-asr-0.6b.nemo', decoder: 'rnnt', lang: 'ro' }, // target_lang="ro"; "auto" detects
-    python: true,
-  },
-  {
-    id: 'parakeet-redux',
-    label: 'Parakeet Redux (Moondream)',
-    tier: 'other',
-    reason: 'not measured here yet; runs on the CPU (sherpa-onnx); CC-BY',
-    engine: 'sherpa-onnx',
-    size: '2.5 GB',
-    notes: "Moondream's 1.58-bit Parakeet TDT v3 (Sept 2026), in sherpa-onnx's fp32 export (its int8 export is much less accurate). FLEURS Romanian WER 10.3 % (authors). CC-BY-4.0. CPU only.",
-    dir: 'parakeet-redux',
-    // fp32: the weights are stored dequantized, so the 1.58-bit model is as big on disk as Parakeet v3 in fp32.
-    files: [
-      { file: 'encoder.onnx', mb: 42, url: `${HF}csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-redux/resolve/main/encoder.onnx` },
-      { file: 'encoder.weights', mb: 2435, url: `${HF}csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-redux/resolve/main/encoder.weights` }, // encoder.onnx's external data
-      { file: 'decoder.onnx', mb: 47, url: `${HF}csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-redux/resolve/main/decoder.onnx` },
-      { file: 'joiner.onnx', mb: 25, url: `${HF}csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-redux/resolve/main/joiner.onnx` },
-      { file: 'tokens.txt', mb: 0.1, url: `${HF}csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-redux/resolve/main/tokens.txt` },
-    ],
-    sherpa: { encoder: 'encoder.onnx', decoder: 'decoder.onnx', joiner: 'joiner.onnx', tokens: 'tokens.txt', modelType: 'nemo_transducer' },
-  },
-  {
-    id: 'fun-asr-mlt-nano',
-    label: 'Fun-ASR-MLT-Nano 0.8B (Alibaba)',
-    tier: 'other',
-    reason: 'not measured here yet; LLM decoder; license unclear',
-    engine: 'transcribe.cpp',
-    size: '891 MB',
-    notes: 'SenseVoice encoder + Qwen3-0.6B decoder, 31 languages (Dec 2025). No Romanian WER published. FunASR Model License v1.1 (the base card says Apache-2.0). GPU.',
-    file: 'Fun-ASR-MLT-Nano-2512-Q8_0.gguf',
-    url: `${HF}handy-computer/Fun-ASR-MLT-Nano-2512-gguf/resolve/main/Fun-ASR-MLT-Nano-2512-Q8_0.gguf`,
   },
   {
     id: 'elevenlabs-scribe-v2',
