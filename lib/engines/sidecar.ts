@@ -39,6 +39,8 @@ export class SidecarEngine {
   cpuFallback = false;
   /** The device when the process says nothing about it. */
   defaultDevice: string | undefined = undefined;
+  /** kill() was called (the server is exiting, #62): no process is started, or started again, after it. */
+  killed = false;
   port: number;
   onCrash: OnCrash | undefined;
   child: ChildProcess | null;
@@ -77,7 +79,7 @@ export class SidecarEngine {
     try {
       await this.#start({ cpu: false });
     } catch (err: any) {
-      if (!this.cpuFallback || err.missing) throw err;
+      if (this.killed || !this.cpuFallback || err.missing) throw err;
       this.fallback = err.message;
       if (process.env.DEBUG) console.log(`[sidecar] GPU start failed, retrying on the CPU: ${err.message}`);
       await this.unload();
@@ -89,6 +91,7 @@ export class SidecarEngine {
     if (!this.port) this.port = await freePort();
     this.url = `http://${HOST}:${this.port}`;
     const { bin, args, name, missing, env } = this.command(this.port, { cpu });
+    if (this.killed) throw new Error(`${name} was not started: the server is stopping`);
     let failure: string | null = null;
     let isMissing = false;
     this.ready = false;
@@ -171,8 +174,9 @@ export class SidecarEngine {
     await Promise.race([exited, sleep(3000)]);
   }
 
-  /** Synchronous last-resort cleanup for process exit. */
+  /** Synchronous last-resort cleanup for process exit; a process still starting is killed too, which fails its load. */
   kill() {
+    this.killed = true;
     this.child?.kill('SIGTERM');
   }
 }

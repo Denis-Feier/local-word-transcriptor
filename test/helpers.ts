@@ -77,7 +77,7 @@ export function scratch(name: string) {
  * maxFileBlocks: no file the server writes can grow past this many blocks, like a disk that fills up (sh's ulimit -f:
  * blocks of 1,024 bytes on macOS, 512 on Linux; not on Windows).
  */
-export async function startServer({ model = process.env.TEST_MODEL ?? 'parakeet-ro-110m', env = {}, timeoutMs = 120000, maxFileBlocks = null }: StartServerOptions = {}): Promise<TestServer> {
+export async function startServer({ model = process.env.TEST_MODEL ?? 'parakeet-ro-110m', env = {}, timeoutMs = 120000, maxFileBlocks = null, until = 'ready' }: StartServerOptions = {}): Promise<TestServer> {
   const port = Number(env.PORT ?? (await freePort())); // env.PORT: restart on the same port (reconnect tests)
   const dir = scratch('server');
   let log = '';
@@ -107,19 +107,23 @@ export async function startServer({ model = process.env.TEST_MODEL ?? 'parakeet-
   const child = spawn(cmd, args, { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
   child.stdout.on('data', (d) => (log += d));
   child.stderr.on('data', (d) => (log += d));
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
   const t0 = Date.now();
-  // The ready line: "<model> ready on GPU (Metal) (0.2 s)" since the GPU work (#38), "<model> ready (0.2 s)" before it.
-  while (!/ ready\b.*\(\d+\.\d s\)|✖/.test(log)) {
+  // The ready line: "<model> ready on GPU (Metal) (0.2 s)" since the GPU work (#38), "<model> ready (0.2 s)" before it;
+  // until: 'listening' stops at the line before it, "Live transcriber (ro) → http://…", while the model still loads.
+  const started = until === 'listening' ? /Live transcriber \(|✖/ : / ready\b.*\(\d+\.\d s\)|✖/;
+  while (!started.test(log)) {
     if (child.exitCode !== null || Date.now() - t0 > timeoutMs) {
       child.kill('SIGKILL'); // never leave a test server running (TESTING.md §2 rule 5)
       throw new Error(`server did not start:\n${log}`);
     }
-    await sleep(100);
+    await sleep(until === 'listening' ? 5 : 100);
   }
   if (log.includes('✖')) throw new Error(`server failed:\n${log}`);
   return {
     port,
     pid: child.pid,
+    exited,
     dir,
     url: `http://127.0.0.1:${port}`,
     ws: (query = '') => `ws://127.0.0.1:${port}/ws${query}`,

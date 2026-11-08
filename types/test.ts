@@ -9,12 +9,16 @@ export interface StartServerOptions {
   timeoutMs?: number;
   /** Cap every file the server writes at this many blocks (ulimit -f), like a disk that fills up. */
   maxFileBlocks?: number | null;
+  /** Return once the model is ready (default), or as soon as the server listens, while its model still loads. */
+  until?: 'ready' | 'listening';
 }
 
 /** startServer(): an isolated server.ts with its own settings and transcripts folders. */
 export interface TestServer {
   port: number;
   pid: number | undefined;
+  /** How the server process ended, once it has. */
+  exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
   /** Its scratch folder; stop() removes it. */
   dir: string;
   url: string;

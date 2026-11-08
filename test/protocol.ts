@@ -2,9 +2,10 @@
 // mic layouts, broken input, startup and shutdown. Starts its own servers (Parakeet 110M by default).
 //
 //   node test/protocol.ts
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import WebSocket from 'ws';
 import { ROOT, SR, startServer, speakers, sleep, suite, fakeElevenLabs } from './helpers.ts';
 import { fmtTime } from '../lib/session.ts';
@@ -201,6 +202,68 @@ if (process.platform === 'win32') {
   }
 }
 
+// Stopping while the model loads (#62): SIGTERM a few milliseconds into the load, as `docker compose down` during a first
+// start or the desktop app quitting while a model loads. Before the fix a transcribe.cpp load deadlocked exit() (the
+// server never left and was killed after 10 s), and a model process just started (whisper-server, the NeMo server) was
+// left running after the server was gone. Signals: macOS and Linux.
+if (process.platform === 'win32') {
+  t.skip('PROT-RUN-03', 'SIGTERM while the model loads in the server: it still exits, cleanly', 'no SIGTERM on Windows');
+  t.skip('PROT-RUN-04', 'SIGTERM while a model\'s process starts: the server exits and the process is gone', 'no SIGTERM on Windows');
+} else {
+  /**
+   * Starts a server on `model`, sends SIGTERM once begun() says its load is under way, and reports how it ended: seen,
+   * the server got the signal mid-load (its "Stopping while … loads" line); missed, it exited cleanly but the load had
+   * already ended (the test was too slow, not the server).
+   */
+  const stopWhileLoading = async (model: string, begun: (s: TestServer) => Promise<boolean> | boolean, { withProcess = false } = {}) => {
+    const s = await startServer({ model, until: 'listening' });
+    try {
+      const t0 = Date.now();
+      while (!(await begun(s)) && Date.now() - t0 < 60000) await sleep(5);
+      const loading = await begun(s);
+      const children = withProcess ? await childProcesses(s.pid as number) : []; // a started server has a pid
+      const t1 = Date.now();
+      process.kill(s.pid as number, 'SIGTERM');
+      const exit = await Promise.race([s.exited, sleep(10000).then(() => null)]);
+      const exitMs = Date.now() - t1;
+      const t2 = Date.now();
+      while (children.some((c) => alive(c.pid)) && Date.now() - t2 < 5000) await sleep(50);
+      const left = children.filter((c) => alive(c.pid));
+      const log = s.log();
+      const seen = /Stopping while .* loads…/.test(log);
+      const readyAfter = seen && / ready\b.*\(\d+\.\d s\)/.test(log.slice(log.search(/Stopping while/)));
+      const clean = exit?.code === 0;
+      const how = `${loading ? 'sent during the load' : 'the load had not begun'}; ${seen ? 'the server saw it mid-load' : 'no "Stopping while … loads" line'}${readyAfter ? ', then said the model was ready' : ''}; ${exit ? `exit code ${exit.code}${exit.signal ? ` by ${exit.signal}` : ''} in ${exitMs} ms` : 'no exit in 10 s'}`;
+      return { ok: loading && seen && !readyAfter && clean, missed: loading && !seen && clean, how, children, left, goneMs: Date.now() - t2 };
+    } finally {
+      await s.stop();
+    }
+  };
+  // In the server's own process (transcribe.cpp): the signal as the native load begins (its debug line). Parakeet 110M
+  // loads in ~50 ms, so a signal that lands after the load is tried again, at most 3 times.
+  let inProcess;
+  const tries: string[] = [];
+  do {
+    inProcess = await stopWhileLoading('parakeet-ro-110m', (s) => /\[transcribe\.cpp\] loading/.test(s.log()));
+    tries.push(inProcess.how);
+  } while (inProcess.missed && tries.length < 3);
+  t.check('PROT-RUN-03', 'SIGTERM while the model loads in the server: it exits by itself with code 0, the model never ready', inProcess.ok,
+    tries.length > 1 ? `${inProcess.how} (try ${tries.length}; before it: ${tries.slice(0, -1).join(' / ')})` : inProcess.how);
+  // A model served by its own process, one model per such engine as in the full tier; skipped when not installed.
+  const { MODELS, isInstalled, isAvailable } = await import('../lib/models.ts');
+  for (const id of ['whisper-large-v3-turbo', 'jackrabbit-110m-ro']) {
+    const title = `SIGTERM while ${id}'s process starts: the server exits and the process is gone`;
+    const m = MODELS.find((x) => x.id === id);
+    if (!m || !isAvailable(m) || !isInstalled(m)) {
+      t.skip('PROT-RUN-04', title, 'not installed or not runnable here');
+      continue;
+    }
+    const r = await stopWhileLoading(id, async (s) => (await childProcesses(s.pid as number)).length > 0, { withProcess: true });
+    t.check('PROT-RUN-04', title, r.ok && r.children.length >= 1 && !r.left.length,
+      `${r.children.map((c) => `${c.name} (${c.pid})`).join(', ') || 'no process'} started; ${r.how}; ${r.left.length ? `still running: ${r.left.map((c) => c.pid).join(', ')}` : `process gone within ${r.goneMs} ms`}`);
+  }
+}
+
 // The disk fills up while Save audio is on (#1): no file may grow past 300 blocks (300 KB on macOS, 150 KB on Linux),
 // so the WAV is full after 9.6 s of 40 s (4.8 s on Linux). The server must keep transcribing and saving the
 // transcript, tell the page once, and keep the WAV playable.
@@ -313,6 +376,25 @@ try {
 } finally {
   await s5.stop();
   await fake.close();
+}
+
+/** A server's child processes (its model's process): pid and name, from pgrep. */
+async function childProcesses(pid: number): Promise<{ pid: number; name: string }[]> {
+  const { stdout } = await promisify(execFile)('pgrep', ['-lP', String(pid)]).catch(() => ({ stdout: '' })); // exit 1: none
+  return stdout.split('\n').filter(Boolean).map((line) => {
+    const [p, ...name] = line.trim().split(/\s+/);
+    return { pid: Number(p), name: name.join(' ') };
+  });
+}
+
+/** Whether a process still exists (a zombie counts until it is reaped). */
+function alive(pid: number) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: any) {
+    return err.code === 'EPERM';
+  }
 }
 
 async function waitFor(cond: () => unknown, ms: number = 15000) {

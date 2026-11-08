@@ -34,7 +34,7 @@ import { spokenOrder } from '../web/order.ts';
 import { SR, FIXTURE, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs, loadWav, saveWav } from './helpers.ts';
 import { memoryCheck } from './meeting.ts';
 import type { Model } from '../types/model.ts';
-import type { TimedResult } from '../types/engine.ts';
+import type { OnCrash, TimedResult } from '../types/engine.ts';
 import type { Vad } from 'sherpa-onnx-node';
 
 const t = suite('unit');
@@ -1007,6 +1007,129 @@ http.createServer((req, res) => {
     MODELS.splice(MODELS.indexOf(standIn), 1);
     config.elevenlabs.apiKey = keepKey;
   }
+}
+
+// ---------- stopping while a model loads (#62) ----------
+// The server is stopped 50 ms into a 300 ms load that cannot be interrupted (as transcribe.cpp's, in the server's own
+// process). Before the fix kill() reached only a loaded engine, so the one loading was never told, nothing said a load
+// was in progress, and a crash report or a model picked after kill() loaded a model again.
+{
+  const keepKey = config.elevenlabs.apiKey;
+  config.elevenlabs.apiKey = 'stand-in';
+  const other: Model = { id: 'stand-in-model-2', label: 'Stand-in model 2', tier: 'other', reason: 'a stand-in', engine: 'elevenlabs', size: 'cloud', notes: 'a stand-in', cloud: true, elevenlabs: { modelId: 'stand-in' } };
+  MODELS.push(other);
+  const log: string[] = [];
+  let onCrashOf: OnCrash | null = null;
+  class SlowLoad extends Transcriber {
+    createEngine(model, onCrash) {
+      onCrashOf = onCrash;
+      const n = log.filter((x) => x.startsWith('load ')).length + 1;
+      return {
+        load: async () => { log.push(`load ${n}`); await sleep(300); log.push(`loaded ${n}`); },
+        unload: async () => { log.push(`unload ${n}`); },
+        kill: () => { log.push(`kill ${n}`); },
+        transcribe: async () => ({ text: 'merge' }),
+      };
+    }
+  }
+  const tr = new SlowLoad(structuredClone(config));
+  const logError = console.error;
+  console.error = () => {};
+  try {
+    const selected = tr.select('elevenlabs-scribe-v2');
+    await sleep(50);
+    const during = Boolean(tr.loading);
+    tr.kill();
+    const early = await tr.loadEnded(50); // 100 ms into the load: not over yet
+    const t0 = Date.now();
+    const ended = await tr.loadEnded(2000);
+    const waited = Date.now() - t0;
+    await selected;
+    t.check('UNIT-ENG-04', 'kill() while a model loads: the engine being loaded is killed too, loadEnded() waits for its load, and the model it loaded is unloaded, never ready',
+      during && early === false && ended && waited >= 150 && waited < 1000 && !tr.loading && log.join() === 'load 1,kill 1,loaded 1,unload 1' && !tr.engine && tr.state !== 'ready',
+      `loading during the load: ${during}; loadEnded ${early} after 50 ms, then ${ended} after ${waited} ms more; ${log.join(', ')}; ${tr.state}`);
+    log.length = 0;
+    tr.select(other.id);
+    (onCrashOf as unknown as OnCrash)('stand-in crashed.');
+    await sleep(400);
+    t.check('UNIT-ENG-04', 'after kill() nothing is loaded again: not a model picked on the page, not a restart after a crash report',
+      !log.length && tr.model?.id === 'elevenlabs-scribe-v2' && !tr.loading, log.join(', ') || 'no load');
+  } finally {
+    console.error = logError;
+    MODELS.splice(MODELS.indexOf(other), 1);
+    config.elevenlabs.apiKey = keepKey;
+  }
+}
+
+// A model process still starting when the server stops (#62), a stand-in that never gets ready: before the fix it was not
+// killed and went on running after the server. Now it is killed, which ends its load at once, and is not started again
+// on the CPU; a transcribe.cpp load killed while the GPU attempt runs is not tried again on the CPU either, and one killed
+// before it began never begins.
+{
+  const script = path.join(dir, 'fake-slow-start.mjs');
+  fs.writeFileSync(script, 'setInterval(() => {}, 1000); // loads for ever: never answers /health\n');
+  class Starting extends SidecarEngine {
+    cpuFallback = true;
+    commands: string[] = [];
+    command(port, { cpu }) {
+      this.commands.push(cpu ? 'cpu' : 'gpu');
+      return { name: 'fake-slow', bin: process.execPath, args: [script, String(port)], missing: 'fake program missing' };
+    }
+
+    async transcribe() {
+      return { text: '' }; // never ready, never asked
+    }
+  }
+  const engines: Starting[] = [];
+  class Stopping extends Transcriber {
+    createEngine(model, onCrash) {
+      const engine = new Starting({ onCrash });
+      engines.push(engine);
+      return engine;
+    }
+  }
+  const keepKey = config.elevenlabs.apiKey;
+  config.elevenlabs.apiKey = 'stand-in';
+  const tr = new Stopping(structuredClone(config));
+  const logError = console.error;
+  console.error = () => {};
+  try {
+    const selected = tr.select('elevenlabs-scribe-v2');
+    const t0 = Date.now();
+    while (!engines[0]?.child?.pid && Date.now() - t0 < 5000) await sleep(20);
+    await sleep(300); // its process runs, still loading
+    const pid = engines[0]?.child?.pid;
+    tr.kill();
+    const t1 = Date.now();
+    const ended = await tr.loadEnded(3000);
+    const ms = Date.now() - t1;
+    await selected;
+    let gone = false;
+    try {
+      process.kill(pid as number, 0);
+    } catch (err: any) {
+      gone = err.code === 'ESRCH';
+    }
+    t.check('UNIT-ENG-05', 'kill() while a model process starts: the process is killed, its load ends at once, and it is not started again on the CPU',
+      Boolean(pid) && ended && ms < 1000 && gone && engines.length === 1 && engines[0].commands.join() === 'gpu' && tr.state !== 'ready',
+      `process ${pid} ${gone ? 'gone' : 'still running'}; load ended: ${ended}, ${ms} ms after kill(); started ${engines.map((e) => e.commands.join('+')).join(', ')}; ${tr.state}`);
+    if (pid && !gone) process.kill(pid, 'SIGKILL');
+  } finally {
+    console.error = logError;
+    config.elevenlabs.apiKey = keepKey;
+  }
+  const tries: string[] = [];
+  const gpuFails = new TranscribeCppEngine({ modelPath: 'x.gguf', language: 'ro', load: async (file, opts) => { tries.push(opts.backend); await sleep(100); throw new Error('stand-in: Metal could not allocate'); } });
+  const loading = gpuFails.load().then(() => 'loaded', (err) => err.message);
+  await sleep(20);
+  gpuFails.kill();
+  const failed = await loading;
+  const before = new TranscribeCppEngine({ modelPath: 'x.gguf', language: 'ro', load: async (file, opts) => { tries.push(`never ${opts.backend}`); throw new Error('stand-in: loaded'); } });
+  before.kill();
+  const skipped = await before.load().then(() => 'loaded', (err) => err.message);
+  t.check('UNIT-ENG-05', 'transcribe.cpp killed while it loads: a GPU load that fails is not tried again on the CPU; killed before the load, the load never begins',
+    tries.join() === 'auto' && failed === 'stand-in: Metal could not allocate' && /not loaded: the server is stopping/.test(skipped),
+    `tried ${tries.join(', ')}; killed during the GPU load: ${failed}; killed before: ${skipped}`);
 }
 
 // ---------- GPU first, CPU only as the fallback ----------

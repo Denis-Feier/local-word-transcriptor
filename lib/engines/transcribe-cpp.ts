@@ -3,6 +3,7 @@
  * Windows and Linux): the library's "auto" backend picks the best accelerator. If the model cannot be loaded there, it
  * is loaded on the CPU; if the GPU later fails on a sentence the CPU can transcribe, the model stays on the CPU.
  */
+import path from 'node:path';
 import type { TranscribeOptions, TranscribeResult } from '../../types/engine.ts';
 
 /** What this engine needs from a loaded model: transcribe.cpp's TranscribeModel, or a test's stand-in. */
@@ -20,6 +21,8 @@ export type LoadModel = (file: string, options: { backend: 'auto' | 'cpu' }) => 
 
 export class TranscribeCppEngine {
   supportsPrompt = false;
+  /** kill() was called (the server is exiting, #62): a load that fails is not tried again on the CPU. */
+  killed = false;
   modelPath: string;
   language: string;
   loadModel: LoadModel | undefined;
@@ -37,8 +40,15 @@ export class TranscribeCppEngine {
     this.fallback = null; // why the GPU was not used, when it was not
   }
 
-  #load(backend: 'auto' | 'cpu') {
-    const loadModel: LoadModel = this.loadModel ?? (async (file, options) => (await import('transcribe-cpp')).TranscribeModel.load(file, options));
+  async #load(backend: 'auto' | 'cpu') {
+    let loadModel: LoadModel | undefined = this.loadModel;
+    if (!loadModel) {
+      const { TranscribeModel } = await import('transcribe-cpp');
+      loadModel = (file, options) => TranscribeModel.load(file, options);
+    }
+    if (this.killed) throw new Error('The model was not loaded: the server is stopping'); // killed while the library loaded
+    // The native load starts right after this line; PROT-RUN-03 times its signal by it.
+    if (process.env.DEBUG) console.log(`[transcribe.cpp] loading ${path.basename(this.modelPath)} on ${backend}`);
     return loadModel(this.modelPath, { backend });
   }
 
@@ -46,6 +56,7 @@ export class TranscribeCppEngine {
     try {
       this.model = await this.#load('auto');
     } catch (err: any) {
+      if (this.killed) throw err; // the server is exiting (#62): no second load to wait for
       // The GPU could not take the model (a driver or memory problem): the CPU is slower but still works.
       this.fallback = err.message;
       this.model = await this.#load('cpu');
@@ -92,7 +103,12 @@ export class TranscribeCppEngine {
     this.model = null;
   }
 
+  /**
+   * Synchronous cleanup for process exit. A load in progress cannot be stopped, and exiting under it hangs (#62): the
+   * transcriber waits for it and then unload()s the model.
+   */
   kill() {
+    this.killed = true;
     this.model?.dispose();
   }
 }

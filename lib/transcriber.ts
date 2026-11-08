@@ -33,6 +33,11 @@ export class Transcriber extends EventEmitter {
   retryTimer: NodeJS.Timeout | null;
   commits: Set<Promise<unknown>>;
   sentences: Set<Promise<unknown>>;
+  /** The engine whose model is loading right now (null between loads): kill() reaches it too (#62). */
+  loading: Engine | null;
+  /** Set by kill(): the process is exiting, so nothing is loaded or restarted any more. */
+  closed: boolean;
+  #loadEnd: Promise<void> | null;
   // Set once a model has loaded, or crashed.
   declare device: string | null | undefined;
   declare lastCrashAt: number | undefined;
@@ -53,6 +58,9 @@ export class Transcriber extends EventEmitter {
     this.retryTimer = null;
     this.commits = new Set(); // streamed sentences waiting for their text
     this.sentences = new Set(); // transcribe() calls not finished yet, including a sentence waiting to be sent again
+    this.loading = null;
+    this.closed = false;
+    this.#loadEnd = null;
   }
 
   status(): TranscriberStatus {
@@ -71,6 +79,7 @@ export class Transcriber extends EventEmitter {
 
   /** Switch to another model. Queued behind in-flight requests; later requests wait for the load. */
   select(id: string) {
+    if (this.closed) return; // the process is exiting
     const model = findModel(id);
     if (!model) return this.#setState('error', `Unknown model "${id}"`);
     if (!isInstalled(model)) return this.#setState('error', model.cloud ? `${model.label} needs ELEVENLABS_API_KEY` : `${model.label} is not downloaded yet`);
@@ -84,14 +93,21 @@ export class Transcriber extends EventEmitter {
     this.model = model;
     if (!quiet) this.#setState('loading', `Loading ${model.label}…`);
     const job = this.queue.then(async () => {
-      if (this.model !== model) return; // superseded by a later select
+      if (this.model !== model || this.closed) return; // superseded by a later select, or the process is exiting
       await this.engine?.unload();
       this.engine = null;
       this.loaded = null;
+      if (this.closed) return;
       const engine = this.createEngine(model, (message) => this.#recover(model, engine, message));
       const t0 = Date.now();
-      await engine.load();
-      if (this.model !== model) return engine.unload();
+      // A load cannot be stopped mid-way (#62): kill() reaches the engine meanwhile (a model process is killed, which
+      // fails its load) and loadEnded() waits for it; a model that finished loading after kill() is thrown away below.
+      this.loading = engine;
+      const load = engine.load();
+      this.#loadEnd = load.catch(() => {}).finally(() => (this.loading = null));
+      await this.#loadEnd;
+      await load; // its error, if it failed
+      if (this.model !== model || this.closed) return engine.unload();
       this.engine = engine;
       this.loaded = model;
       this.device = engine.device;
@@ -103,7 +119,7 @@ export class Transcriber extends EventEmitter {
       if (engine.fallback) console.error(`\n! ${model.label} could not use the GPU, so it runs on the CPU: ${engine.fallback.split('\n')[0]}`);
     });
     this.queue = job.catch((err) => {
-      if (this.model !== model) return;
+      if (this.model !== model || this.closed) return; // superseded, or the process is exiting: nothing to report
       if (quiet) this.#retryLater(model);
       else this.#setState('error', err.message);
     });
@@ -220,10 +236,24 @@ export class Transcriber extends EventEmitter {
     await this.engine?.unload();
   }
 
-  /** Synchronous cleanup for process exit. */
+  /**
+   * Synchronous cleanup for process exit: the loaded model and the one being loaded (#62), and nothing loads or restarts
+   * after. A load in this process goes on regardless: loadEnded() waits for it.
+   */
   kill() {
+    this.closed = true;
     this.#stopRetrying();
+    this.loading?.kill();
     this.engine?.kill();
+  }
+
+  /** Wait (at most ms) for the model being loaded, if any; true when no load is in progress any more. */
+  async loadEnded(ms: number): Promise<boolean> {
+    if (!this.loading) return true;
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([this.#loadEnd, new Promise((resolve) => (timer = setTimeout(resolve, ms)))]);
+    clearTimeout(timer);
+    return !this.loading;
   }
 
   /**
@@ -273,7 +303,7 @@ export class Transcriber extends EventEmitter {
   #recover(model: Model, engine: Engine, message: string) {
     // Its sentences wait for the model that is loaded next, this one again or the one being switched to.
     if (this.engine === engine) Object.assign(this, { engine: null, loaded: null });
-    if (this.model !== model) return;
+    if (this.model !== model || this.closed) return;
     // Only repeated crashes in quick succession count towards giving up.
     if (Date.now() - (this.lastCrashAt ?? 0) > 60_000) this.restarts = 0;
     this.lastCrashAt = Date.now();

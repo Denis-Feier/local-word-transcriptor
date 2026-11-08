@@ -250,9 +250,18 @@ server.listen(config.port, config.host, async () => {
   if (transcriber.state === 'ready') console.log(`  ✔ ${transcriber.message}. Open the page and press Start.\n`);
 });
 
+// A model loading in this process (transcribe.cpp) cannot be interrupted, and exit() under it never returns: the load's
+// thread calls back into JavaScript while exit() waits for that thread (#62). So the load gets this long to end; the
+// desktop app and Docker give the server 10 and 15 s.
+const LOAD_WAIT_MS = 5000;
+/** Ends the process; killed outright when a model is still loading in it (see above). */
+const quit = () => {
+  if (transcriber.loading) process.kill(process.pid, 'SIGKILL');
+  process.exit(0);
+};
 let stopping = false;
 const shutdown = async () => {
-  if (stopping) process.exit(0); // second Ctrl+C: quit immediately
+  if (stopping) return quit(); // second Ctrl+C: quit immediately
   stopping = true;
   // Finish and save the sentence that was being spoken when the server was stopped.
   for (const session of sessions) session.close();
@@ -260,8 +269,13 @@ const shutdown = async () => {
     console.log('\n  Saving the last sentence… (Ctrl+C again to quit now)');
     await transcriber.drain(8000);
   }
+  // Also the model being loaded (#62): its process is killed, which ends its load; a load in this process is waited for.
   transcriber.kill();
-  process.exit(0);
+  if (transcriber.loading) {
+    console.log(`\n  Stopping while ${transcriber.model?.label} loads… (Ctrl+C again to quit now)`);
+    await transcriber.loadEnded(LOAD_WAIT_MS);
+  }
+  quit();
 };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
