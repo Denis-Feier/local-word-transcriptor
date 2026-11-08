@@ -1,0 +1,170 @@
+// Microphones: lists the computer's audio inputs and records several of them at once.
+// How a mic is connected (built-in, USB, jack, Bluetooth) doesn't matter: any input the browser lists can be used.
+// All mics feed one AudioContext and one worklet, so every chunk holds the same moment from each mic.
+import type { Capture, MicFeed, MicSlot } from '../types/page.ts';
+
+/** The browser's noiseSuppression and autoGainControl for one use of a mic. */
+export interface MicProcessing {
+  noiseSuppression: boolean;
+  autoGainControl: boolean;
+}
+
+export interface CaptureOptions {
+  noiseSuppression: boolean;
+  /** Per mic. */
+  muted: boolean[];
+  /** Each ~100 ms chunk (see pcm-worklet.ts): a Uint32 mic count, then each mic's 1600 samples. */
+  onChunk(buffer: ArrayBuffer): void;
+  /** A mic disconnected or came back. */
+  onChange(): void;
+}
+
+/** listInputs(): the audio inputs and the one behind "System default". */
+export interface Inputs {
+  inputs: MediaDeviceInfo[];
+  defaultId: string;
+}
+
+/**
+ * Audio inputs, minus "default" and "communications", which repeat a real mic under another name.
+ * Until the mic is allowed once, browsers list only a nameless placeholder, which is left out too.
+ */
+export async function listInputs(): Promise<Inputs> {
+  const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+  const all = devices.filter((d) => d.kind === 'audioinput');
+  const inputs = all.filter((d) => d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications');
+  // The mic behind "System default" right now, so the same mic can't be picked twice.
+  const alias = all.find((d) => d.deviceId === 'default');
+  const behind = alias && (inputs.find((d) => d.label && alias.label.endsWith(d.label)) ?? inputs.find((d) => d.groupId === alias.groupId));
+  return { inputs, defaultId: behind?.deviceId ?? inputs[0]?.deviceId ?? '' };
+}
+
+function openStream(deviceId: string, processing: MicProcessing) {
+  return navigator.mediaDevices.getUserMedia({
+    audio: {
+      deviceId: deviceId ? { exact: deviceId } : undefined,
+      channelCount: 1,
+      echoCancellation: false, // it would also cancel the talker's own voice coming back from the room's speaker
+      ...processing,
+    },
+  });
+}
+
+/**
+ * Open the given mics (device ids; '' = system default) as slots { deviceId, stream, source, rate, error, muted }.
+ * muted: per mic, whether it starts muted. A mic that can't be opened has no stream. Throws if none of them can be opened.
+ */
+export async function openMics(deviceIds: string[], processing: MicProcessing, muted: boolean[] = []): Promise<MicSlot[]> {
+  const slots: MicSlot[] = deviceIds.map((deviceId, i) => ({ deviceId, stream: null, source: null, rate: null, error: null, muted: Boolean(muted[i]) }));
+  const opened = await Promise.allSettled(deviceIds.map((id) => openStream(id, processing)));
+  opened.forEach((result, i) => {
+    if (result.status === 'fulfilled') slots[i].stream = result.value;
+    else slots[i].error = result.reason;
+  });
+  if (!slots.some((slot) => slot.stream)) throw slots[0].error;
+  return slots;
+}
+
+/**
+ * Feed the slots' mics into ctx, each through connect(source, input), and keep them fed: a mic that ends drops out
+ * and onChange() runs; reattach() opens it again. mute() silences a mic and keeps it open. close() stops the mics, not ctx.
+ */
+export function feedMics(ctx: AudioContext, slots: MicSlot[], processing: MicProcessing, connect: (source: MediaStreamAudioSourceNode, input: number) => void, onChange: () => void): MicFeed {
+  const drop = (slot: MicSlot) => {
+    slot.source?.disconnect();
+    slot.stream?.getTracks().forEach((t) => t.stop());
+    Object.assign(slot, { stream: null, source: null });
+  };
+  const attach = (slot: MicSlot, input: number) => {
+    const stream = slot.stream as MediaStream; // attach() is called for a slot with one
+    const track = stream.getAudioTracks()[0];
+    track.enabled = !slot.muted; // a disabled track plays digital silence
+    try {
+      slot.source ??= ctx.createMediaStreamSource(stream);
+      connect(slot.source, input);
+    } catch (err) {
+      drop(slot);
+      slot.error = err;
+      return;
+    }
+    slot.rate = track.getSettings().sampleRate ?? null;
+    // Unplugged, switched off or out of Bluetooth range.
+    track.addEventListener('ended', () => {
+      drop(slot);
+      onChange();
+    });
+  };
+  slots.forEach((slot, input) => slot.stream && attach(slot, input));
+  let closed = false;
+
+  return {
+    /** Try again to open a mic that is missing, e.g. because it was just switched back on. */
+    async reattach(input, deviceId) {
+      const slot = slots[input];
+      if (slot.stream || slot.opening) return;
+      slot.opening = true;
+      try {
+        const stream = await openStream(deviceId, processing);
+        if (closed) return stream.getTracks().forEach((t) => t.stop());
+        Object.assign(slot, { stream, deviceId, error: null });
+        attach(slot, input);
+      } catch (err) {
+        slot.error = err;
+      } finally {
+        slot.opening = false;
+      }
+      if (!closed) onChange();
+    },
+    /** Mute or unmute a mic: muted, it sends silence but stays open, so it is back at once, and a reattach keeps it muted. */
+    mute(input, muted) {
+      const slot = slots[input];
+      slot.muted = muted;
+      slot.stream?.getAudioTracks().forEach((t) => (t.enabled = !muted));
+    },
+    close() {
+      closed = true;
+      slots.forEach(drop);
+    },
+  };
+}
+
+/**
+ * Record the given mics together (device ids; '' = system default). onChunk(buffer) gets each chunk
+ * (see pcm-worklet.ts); onChange() runs when a mic disconnects or comes back. A mic that can't be opened, or is
+ * muted (per mic in muted), records silence until reattach() succeeds or it is unmuted. Throws if none of them can be opened.
+ */
+export async function openCapture(deviceIds: string[], { noiseSuppression, muted, onChunk, onChange }: CaptureOptions): Promise<Capture> {
+  // The browser's noise filter can eat distant voices; auto gain lifts quiet or far-away speakers.
+  const processing = { noiseSuppression, autoGainControl: true };
+  const slots = await openMics(deviceIds, processing, muted);
+  const first = slots.find((slot) => slot.stream) as MicSlot; // openMics() throws when none opened
+
+  // Ask the browser to resample to 16 kHz; Firefox refuses to mix rates, so fall back to the native rate
+  // and let the worklet downsample.
+  let ctx: AudioContext | undefined;
+  try {
+    ctx = new AudioContext({ sampleRate: 16000 });
+    first.source = ctx.createMediaStreamSource(first.stream as MediaStream);
+  } catch {
+    await ctx?.close();
+    ctx = new AudioContext();
+    first.source = null;
+  }
+  await ctx.resume();
+  await ctx.audioWorklet.addModule('/pcm-worklet.js');
+  const node = new AudioWorkletNode(ctx, 'pcm-capture', { numberOfInputs: slots.length, processorOptions: { mics: slots.length } });
+  node.port.onmessage = (e) => onChunk(e.data);
+  node.connect(ctx.destination); // keeps the node pulled by the graph; it outputs silence
+  const mics = feedMics(ctx, slots, processing, (source, input) => source.connect(node, 0, input), onChange);
+
+  return {
+    slots,
+    reattach: mics.reattach,
+    mute: mics.mute,
+    close() {
+      node.port.onmessage = null;
+      mics.close();
+      ctx.close();
+    },
+  };
+}

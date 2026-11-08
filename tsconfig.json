@@ -1,0 +1,20 @@
+{
+  // The server side: server.ts, lib/, scripts/, desktop/ and the shared types in types/ (the tests: tsconfig.test.json;
+  // the page: tsconfig.web.json). Checked only (noEmit): Node runs .ts files itself, so there is no build
+  // (docs/typescript-migration.md, D1); erasableSyntaxOnly and .ts import specifiers keep every file loadable by Node as
+  // it is. Nothing JavaScript is left in these projects (test/ui/preload.cjs, Electron's preload, stays JavaScript, D6).
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "module": "nodenext",
+    "target": "es2024",
+    "lib": ["es2024"],
+    "types": ["node"],
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "skipLibCheck": true
+  },
+  "include": ["server.ts", "lib", "scripts", "desktop", "types"],
+  "exclude": ["node_modules", "test/fixtures", "types/page.ts"]
+}

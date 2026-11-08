@@ -1,0 +1,12 @@
+{
+  // The test suites (test/): checked like the server side, except that a function parameter without a type may stay
+  // `any` (noImplicitAny off). The suites probe messages, files and stand-ins loosely, by design, and a thousand
+  // parameter annotations would say nothing (docs/typescript-migration.md, Phase 2 N7). preload.cjs runs inside
+  // Chromium and stays JavaScript (D6).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noImplicitAny": false
+  },
+  "include": ["test", "types"],
+  "exclude": ["node_modules", "test/fixtures", "test/ui/preload.cjs", "types/page.ts"]
+}
