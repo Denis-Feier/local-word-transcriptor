@@ -75,6 +75,7 @@ export class CrosstalkGate {
   floors: Floor[];
   history: Float32Array[];
   heard: Uint8Array[];
+  kept: Uint8Array[];
   latest: number;
   past: Entry[];
   ahead: Entry[];
@@ -86,6 +87,7 @@ export class CrosstalkGate {
     this.floors = Array.from({ length: count }, (_, mic) => floors[mic] ?? new NoiseFloor());
     this.history = Array.from({ length: count }, () => new Float32Array(HISTORY).fill(NaN));
     this.heard = Array.from({ length: count }, () => new Uint8Array(HISTORY)); // the detector's verdict, before the gate
+    this.kept = Array.from({ length: count }, () => new Uint8Array(HISTORY)); // and the gate's: the mic's own speech
     this.latest = -1; // index of the newest frame in history
     this.past = []; // decided entries, kept as look-back
     this.ahead = []; // entries waiting for look-ahead
@@ -168,6 +170,29 @@ export class CrosstalkGate {
   }
 
   /**
+   * How long the speaker on mic `other` paused when this mic's speech between two session times ended, in seconds
+   * (issue #46): the longest stretch without speech of `other`'s own (as the gate kept it) that begins within HOLD
+   * frames of this mic's last speech there, allowing for lag. A sentence's last word that reached this mic too ends
+   * where its speaker pauses; a reply said while they talk on does not. A stretch that reaches the frames not decided
+   * yet is Infinity (the pause may go on); 0 if this mic kept no speech there.
+   */
+  pauseAfter(other: number, mic: number, start: number, end: number): number {
+    const decided = this.latest - HOLD;
+    const from = Math.max(Math.floor(start / FRAME_SEC), decided - HISTORY + 1 + 2 * HOLD);
+    let last = -1;
+    for (let i = Math.min(Math.ceil(end / FRAME_SEC), decided); i >= from && last < 0; i--) if (this.kept[mic][i % HISTORY]) last = i;
+    if (last < 0) return 0;
+    let longest = 0;
+    for (let k = last - HOLD; k <= last + HOLD; k++) {
+      let run = 0;
+      while (k + run <= decided && !this.kept[other][(k + run) % HISTORY]) run++;
+      if (k + run > decided) return Infinity;
+      longest = Math.max(longest, run);
+    }
+    return longest * FRAME_SEC;
+  }
+
+  /**
    * At every frame between two session times where this mic's detector heard speech: how much more clearly the
    * clearest other mic heard that moment (dB), each mic at its clearest within HOLD frames, allowing for lag.
    */
@@ -226,6 +251,7 @@ export class CrosstalkGate {
       if (entry.clarity[mic] < MIN_CLARITY || peak(near, mic) < rival - this.marginDb) frame.loud = false;
       this.counts[mic].speech += Number(entry.speech[mic]);
       this.counts[mic].kept += Number(frame.loud);
+      this.kept[mic][frame.index % HISTORY] = frame.loud ? 1 : 0;
     });
     this.past.push(entry);
     if (this.past.length > HOLD) this.past.shift();

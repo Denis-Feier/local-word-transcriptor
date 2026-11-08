@@ -1,7 +1,7 @@
 // Downloads models into models/, where they stay for offline use.
 //   npm run setup                  voice detector + the default model (Canary 1B v2)
 //   npm run setup -- <model-id>    another model (or several, space separated)
-//   npm run setup -- --all         every model (~10 GB, plus ~1.4 GB of Python for the NeMo models)
+//   npm run setup -- --all         every model (~16 GB, plus ~1.4 GB of Python for the NeMo models)
 //   npm run setup -- --list        show all models and which are downloaded
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';

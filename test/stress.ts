@@ -466,7 +466,7 @@ async function capacity() {
   const m = meeting(v, { minutes: { R: 15 } });
   const length = m.toSession(m.length);
   const rows: string[] = [];
-  const onGpu: [string, ReturnType<typeof devices>][] = []; // [id, devices()] of every model that can use the GPU (Apple's speech picks its own chip)
+  const onGpu: [string, ReturnType<typeof devices>][] = []; // [id, devices()] of every model that can use the GPU (Apple's speech picks its own chip; sherpa-onnx has none)
   for (const id of ids) {
     const server = await startServer({ model: id, timeoutMs: 900000 }).catch((err) => ({ error: err })) as TestServer & { error?: Error };
     if (server.error) {
@@ -488,7 +488,7 @@ async function capacity() {
       const model = MODELS.find((x) => x.id === id) as Model; // ids come from the catalogue
       const required = model.tier === 'recommended' || id === MODEL;
       const dev = devices(r.statuses);
-      if (model.engine !== 'apple-speech') onGpu.push([id, dev]);
+      if (model.engine !== 'apple-speech' && model.engine !== 'sherpa-onnx') onGpu.push([id, dev]); // sherpa-onnx: CPU only (#60)
       rows.push(`| ${id} | ${ok ? 'yes' : 'no'} | ${dev.seen.join(', ')} | ${p(first, 1)} → ${p(last, 1)} s (p95 ${p(quantile(delays(0, 300), 0.95), 1)} → ${p(quantile(delays(length - 300, Infinity), 0.95), 1)}) | ${p(quantile(r.finals.map((f) => f.ms), 0.5), 0)} ms | ${(busy * 100).toFixed(0)} % | ${pc(j.all.solo.caught, j.all.solo.n)} | ${j.all.wrong} |`);
       t.check('STRESS-CAP-01', `${id} keeps up with a meeting at 2× real time`, ok,
         `median delay first 5 min ${p(first, 1)} s, last 5 min ${p(last, 1)} s (audio); model busy ${(busy * 100).toFixed(0)} % of the time; ${r.missingFinals} never finished; on ${dev.detail}${required ? '' : '; not a recommended model'}`, { known: !required });

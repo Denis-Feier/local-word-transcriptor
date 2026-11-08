@@ -47,4 +47,29 @@ declare module 'sherpa-onnx-node' {
     reset(): void;
     flush(): void;
   }
+
+  /** An offline recognizer's settings, as lib/engines/sherpa-onnx.ts builds them for a NeMo transducer. */
+  export interface OfflineRecognizerConfig {
+    featConfig: { sampleRate: number; featureDim: number };
+    modelConfig: {
+      transducer: { encoder: string; decoder: string; joiner: string };
+      tokens: string;
+      modelType: string;
+      numThreads: number;
+      provider: string;
+      debug: number;
+    };
+  }
+
+  /** One utterance to decode (node_modules/sherpa-onnx-node/non-streaming-asr.js). */
+  export class OfflineStream {
+    acceptWaveform(waveform: { samples: Float32Array; sampleRate: number }): void;
+  }
+
+  /** sherpa-onnx's offline (whole-utterance) recognizer. createAsync rejects when a file is missing or unreadable. */
+  export class OfflineRecognizer {
+    static createAsync(config: OfflineRecognizerConfig): Promise<OfflineRecognizer>;
+    createStream(): OfflineStream;
+    decodeAsync(stream: OfflineStream): Promise<{ text?: string }>;
+  }
 }

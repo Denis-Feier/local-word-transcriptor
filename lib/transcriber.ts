@@ -3,6 +3,7 @@ import { findModel, isInstalled, modelPath } from './models.ts';
 import { WhisperCppEngine } from './engines/whisper-cpp.ts';
 import { TranscribeCppEngine } from './engines/transcribe-cpp.ts';
 import { PythonNemoEngine } from './engines/python-nemo.ts';
+import { SherpaOnnxEngine } from './engines/sherpa-onnx.ts';
 import { AppleSpeechEngine } from './engines/apple-speech.ts';
 import { ElevenLabsEngine } from './engines/elevenlabs.ts';
 import type { Config } from '../types/config.ts';
@@ -279,6 +280,9 @@ export class Transcriber extends EventEmitter {
         threads: config.threads,
         onCrash,
       });
+    }
+    if (model.engine === 'sherpa-onnx') {
+      return new SherpaOnnxEngine({ modelDir: modelPath(model), sherpa: model.sherpa, threads: config.threads });
     }
     if (model.engine === 'apple-speech') {
       return new AppleSpeechEngine({

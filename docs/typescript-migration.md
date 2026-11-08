@@ -469,6 +469,8 @@ the smoke test on both runners; for the Windows one `STATIC-07` compares after t
 row, no build step), CLAUDE.md (a standing "TypeScript" section in place of the migration one) and TESTING.md §13
 follow. No emitted page file changed. **The migration is complete**; this document stays as the record of its decisions.
 
+Afterwards (2026-11-08, [#61](https://github.com/Denis-Feier/local-word-transcriptor/issues/61)): `exactOptionalPropertyTypes` is on in `tsconfig.json` (and so the tests) and `tsconfig.web.json`. By then it raised 15 errors, the 14 measured above plus `test/unit.ts`'s `Stopping` stand-in from #62, and two of the 14 had moved: the engines were refused as `Engine` for `fallback` (`string | undefined` in the sidecar engines, `string | null` in the contract), not `supportsPrompt`. The rule: where a property may hold `undefined`, its type says so (`SidecarEngine`'s `onCrash`, `Engine.fallback`, `AppleSpeechEngine`'s `preset` and `ElevenLabsEngine`'s `baseUrl`, which take a default for it, and `writeSettings` in `server.ts`, where `undefined` removes a key from the settings file, the tuning's Reset); where it is built from a value that may be missing, it is left out (ElevenLabs' `previousText` and the SDK client's `baseUrl`, the `final` message's `model` and `ms` when the request failed, the page's `deviceId` when no mic is picked). The wire and the requests are the same as before. `noUncheckedIndexedAccess` stays off.
+
 ## 9. Rules for every step
 
 1. Branch off `main` first (`ts/<phase>-<batch>`); commit, merge and push only when the owner asks.

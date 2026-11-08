@@ -31,7 +31,8 @@ const readSettings = (): Settings => {
     return {};
   }
 };
-const writeSettings = (patch: Partial<Settings>) => {
+/** Each key of patch replaces the saved one; a key set to undefined is removed from the file (Reset in the Settings panel). */
+const writeSettings = (patch: { [K in keyof Settings]?: Settings[K] | undefined }) => {
   try {
     fs.mkdirSync(path.dirname(config.settingsFile), { recursive: true });
     fs.writeFileSync(config.settingsFile, JSON.stringify({ ...readSettings(), ...patch }, null, 2));

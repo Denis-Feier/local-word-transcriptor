@@ -6,7 +6,8 @@ import type { OnCrash, SidecarCommand, TranscribeResult } from '../../types/engi
 import type { NemoSpec } from '../../types/model.ts';
 
 /**
- * Runs an NVIDIA NeMo model (Jackrabbit, the UPB FastConformer) in python/nemo_server.py, a small local HTTP server.
+ * Runs an NVIDIA NeMo model (Jackrabbit, the UPB FastConformer, Nemotron unified) in python/nemo_server.py, a small
+ * local HTTP server. A multilingual model is told the language (`--lang`, e.g. Nemotron's `target_lang="ro"`).
  * The server puts the model on the GPU when PyTorch has one (MPS on a Mac) and on the CPU otherwise; if it cannot
  * start that way it is started again with --device cpu.
  */
@@ -37,6 +38,7 @@ export class PythonNemoEngine extends SidecarEngine {
       '--device', cpu ? 'cpu' : process.env.NEMO_DEVICE || 'auto', // NEMO_DEVICE=cpu: to compare with the GPU
     ];
     if (this.nemo.lm) args.push('--lm', path.join(this.modelDir, this.nemo.lm));
+    if (this.nemo.lang) args.push('--lang', this.nemo.lang);
     return {
       name: 'nemo',
       bin: PYTHON_BIN,
