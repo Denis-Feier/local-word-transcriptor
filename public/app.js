@@ -813,7 +813,9 @@ function render() {
     const signature = JSON.stringify([engine.model, models.map(modelOptionLabel)]);
     if (signature !== modelSignature) {
         modelSignature = signature;
-        els.model.length = 0;
+        // Not `length = 0`: that removes the options but leaves their emptied <optgroup>s, which then pile up as bare
+        // "Recommended" / "Other models" headers at the top of the menu, two more on every rebuild.
+        els.model.replaceChildren();
         if (!engine.model)
             els.model.add(new Option('Choose a model…', ''));
         // Recommended models first, then the rest, each group in ranking order (the server's order).
