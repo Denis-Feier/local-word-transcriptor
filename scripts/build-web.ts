@@ -38,7 +38,8 @@ export function staleWebFiles(emitted: Map<string, string> = emitWeb()): string[
       return null;
     }
   };
-  const stale = [...emitted].filter(([name, js]) => read(name) !== js).map(([name]) => name);
+  // A Windows checkout also gives tsc CRLF sources, and a template string spanning lines keeps them in the emit.
+  const stale = [...emitted].filter(([name, js]) => read(name) !== js.replace(/\r\n/g, '\n')).map(([name]) => name);
   const orphans = fs.readdirSync(path.join(ROOT, 'public')).filter((name) => name.endsWith('.js') && !emitted.has(name));
   return [...stale, ...orphans.map((name) => `${name} (no source in web/)`)];
 }
