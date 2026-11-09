@@ -1,7 +1,9 @@
 /**
  * Runs a GGUF speech model (Canary, Parakeet, ...) in-process with transcribe.cpp. GPU first (Metal on a Mac, Vulkan on
  * Windows and Linux): the library's "auto" backend picks the best accelerator. If the model cannot be loaded there, it
- * is loaded on the CPU; if the GPU later fails on a sentence the CPU can transcribe, the model stays on the CPU.
+ * is loaded on the CPU; if the GPU later fails on a sentence the CPU can transcribe, the model stays on the CPU. A
+ * sentence whose decoding stopped early (its output began repeating, or reached the model's limit) is no failure: its
+ * text up to there is the answer, on whichever device.
  */
 import path from 'node:path';
 import type { TranscribeOptions, TranscribeResult } from '../../types/engine.ts';
@@ -18,6 +20,14 @@ export type LoadedModel = {
 /** What transcribe.cpp says about the device a model runs on. */
 export type DeviceInfo = { kind?: string; deviceType?: string; name?: string };
 export type LoadModel = (file: string, options: { backend: 'auto' | 'cpu' }) => Promise<LoadedModel>;
+
+/**
+ * transcribe.cpp's errors for a decoding it stopped early, with the text so far in `partialResult` (repeats dropped):
+ * OutputRepetition ("run stopped: output began repeating") and OutputTruncated (the generation limit). They say what
+ * the model wrote for this audio, not that the device failed.
+ */
+const STOPPED_EARLY = new Set(['OutputRepetition', 'OutputTruncated']);
+const partialText = (err: any): string | null => (STOPPED_EARLY.has(err?.name) && typeof err.partialResult?.text === 'string' ? err.partialResult.text : null);
 
 export class TranscribeCppEngine {
   supportsPrompt = false;
@@ -72,7 +82,19 @@ export class TranscribeCppEngine {
     const options: { language?: string; prompt?: string } = {};
     if (this.hint) options.language = this.hint;
     if (this.supportsPrompt && prompt) options.prompt = prompt;
-    const run = async (model: LoadedModel) => ({ text: (await model.transcribe(samples, options)).text ?? '' });
+    const run = async (model: LoadedModel) => {
+      try {
+        return { text: (await model.transcribe(samples, options)).text ?? '' };
+      } catch (err: any) {
+        // Decoding stopped early: keep the text before it, on this device. Moving to the CPU for it cost a 2-hour
+        // soak its GPU: the CPU, decoding the same audio a little differently, did not repeat, so the GPU was taken
+        // to be at fault (STRESS-SOAK-08, 2026-11-09).
+        const text = partialText(err);
+        if (text === null) throw err;
+        if (process.env.DEBUG) console.log(`[transcribe.cpp] ${err.message}: kept the text before it`);
+        return { text: text.trim() };
+      }
+    };
     const loaded = this.model as LoadedModel; // transcribe() comes after load()
     try {
       return await run(loaded);

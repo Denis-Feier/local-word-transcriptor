@@ -1253,6 +1253,34 @@ http.createServer((req, res) => res.end(JSON.stringify({ status: 'ok' }))).liste
       && stayed.text === 'threw stand-in: Metal failed' && stayed.device === 'GPU (Metal)' && !stayed.fallback && stayed.disposed === 'CPU',
     `CPU works: "${moved.text}" on ${moved.device}, disposed ${moved.disposed}; CPU fails too: ${stayed.text}, on ${stayed.device}, disposed ${stayed.disposed}`);
 
+  // transcribe.cpp stops a decoding whose output began repeating, or that reached its limit, and throws with the text so
+  // far (OutputRepetition, OutputTruncated). That is the model's answer for the audio, not a GPU fault: on 2026-11-09
+  // one such sentence moved Canary to the CPU for the last 70 minutes of the soak (STRESS-SOAK-03/06/08).
+  {
+    const { OutputRepetition, OutputTruncated, BackendError } = await import('transcribe-cpp');
+    const stopped = (Cls, text) => Object.assign(new Cls('stand-in stopped', 1), { partialResult: { text, rawText: text, aborted: false, truncated: true } });
+    const run = async (thrown, device = 'gpu') => {
+      const loads: string[] = [];
+      const engine = new TranscribeCppEngine({ modelPath: 'x.gguf', language: 'ro', load: async (file, opts) => {
+        loads.push(opts.backend);
+        return { ...fakeModel(opts.backend === 'cpu' || device === 'cpu' ? 'CPU' : 'Metal', opts.backend === 'cpu' || device === 'cpu' ? 'cpu' : 'gpu'), transcribe: async () => { throw thrown; } };
+      } });
+      await engine.load();
+      const text = await engine.transcribe(new Float32Array(SR)).then((r) => r.text, (err) => `threw ${err.name}`);
+      return { text, device: engine.device, fallback: engine.fallback, loads: loads.join() };
+    };
+    const rep = await run(stopped(OutputRepetition, ' contractul de mentenanță expiră '));
+    const cut = await run(stopped(OutputTruncated, 'prima parte'));
+    const onCpu = await run(stopped(OutputRepetition, 'pe procesor'), 'cpu');
+    const fault = await run(Object.assign(new BackendError('stand-in: Metal failed', 1), { partialResult: { text: 'not this' } }));
+    t.check('UNIT-GPU-08', 'transcribe.cpp: a sentence whose output began repeating, or reached the limit, keeps its text so far and the model stays on the GPU (no CPU load); on the CPU too; any other GPU error still tries the CPU',
+      rep.text === 'contractul de mentenanță expiră' && rep.device === 'GPU (Metal)' && !rep.fallback && rep.loads === 'auto'
+        && cut.text === 'prima parte' && cut.device === 'GPU (Metal)' && cut.loads === 'auto'
+        && onCpu.text === 'pe procesor' && onCpu.device === 'CPU'
+        && fault.text === 'threw BackendError' && fault.loads === 'auto,cpu' && fault.device === 'GPU (Metal)',
+      `repeating: "${rep.text}" on ${rep.device}, loads ${rep.loads}; truncated: "${cut.text}" on ${cut.device}; on the CPU: "${onCpu.text}"; other error: ${fault.text}, loads ${fault.loads}, on ${fault.device}`);
+  }
+
   // sherpa-onnx (#60, Parakeet Redux): the engine the transcriber builds for it, with a stand-in recognizer.
   {
     const redux = findModel('parakeet-redux') as Model;
