@@ -21,8 +21,9 @@ import { SidecarEngine } from '../lib/engines/sidecar.ts';
 import { WhisperCppEngine } from '../lib/engines/whisper-cpp.ts';
 import { PythonNemoEngine } from '../lib/engines/python-nemo.ts';
 import { SherpaOnnxEngine } from '../lib/engines/sherpa-onnx.ts';
-import { config, ROOT } from '../lib/config.ts';
-import { MODELS, findModel, modelPath } from '../lib/models.ts';
+import { config, ROOT, modelFile } from '../lib/config.ts';
+import { MODELS, findModel, isAvailable, modelPath } from '../lib/models.ts';
+import { pythonShipped } from '../lib/python-env.ts';
 import { liveSteadiness, sumSteadiness } from '../lib/benchmark/metrics.ts';
 import { withNoise, withGain, inRoom, silence as benchSilence, joinClips, rms, db } from '../lib/benchmark/audio.ts';
 import { machineInfo, describeMachine } from '../lib/benchmark/machine.ts';
@@ -30,6 +31,7 @@ import { loadClips, selectClips, clipSamples } from '../lib/benchmark/dataset.ts
 import { runModel, planStages, STAGES, CONDITIONS, SILENCE_INPUTS } from '../lib/benchmark/suite.ts';
 import { renderReport } from '../lib/benchmark/report.ts';
 import { parseArgs } from '../scripts/benchmark-suite.ts';
+import { VC_RUNTIME_DLLS, bundledModelFiles, fileVersion, pickRuntime } from '../scripts/bundle.ts';
 import { createBacklog, lostNote } from '../web/backlog.ts';
 import { spokenOrder } from '../web/order.ts';
 import { SR, FIXTURE, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs, loadWav, saveWav, parseTopMem } from './helpers.ts';
@@ -107,6 +109,68 @@ t.check('UNIT-MODEL-01', 'every NeMo model uses a decoder nemo_server.py accepts
     nemotron?.engine === 'python-nemo' && nemotron.nemo.decoder === 'rnnt' && langArg(cmd(nemotron)) === 'ro' && langArg(cmd(findModel('jackrabbit-110m-ro'))) === null
       && reduxOk && [nemotron, redux].every((m) => m?.tier === 'other') && new Set(ids).size === ids.length,
     `Nemotron ${nemotron?.engine} --lang ${langArg(cmd(nemotron))}; Redux ${redux?.engine}: ${reduxFiles.join(', ')}; tiers ${[nemotron, redux].map((m) => m?.tier).join('/')}`);
+}
+
+// ---------- what the installers carry: plug and play (scripts/bundle.ts) ----------
+{
+  // The installed app reads the default model and the voice detector from its own resources; a model downloaded into
+  // the models folder wins, and a model in neither is downloaded there (the installer's copy is read-only).
+  const own = scratch('own-models');
+  const shipped = scratch('shipped-models');
+  for (const f of ['a.gguf', 'b.gguf']) fs.writeFileSync(path.join(shipped, f), 'x');
+  fs.writeFileSync(path.join(own, 'b.gguf'), 'x');
+  const found = { a: modelFile('a.gguf', own, shipped), b: modelFile('b.gguf', own, shipped), c: modelFile('c.gguf', own, shipped), none: modelFile('a.gguf', own, null) };
+  t.check('UNIT-BUNDLE-01', "a model is read from the models folder, else from the installer's copy; one in neither goes to the models folder",
+    found.a === path.join(shipped, 'a.gguf') && found.b === path.join(own, 'b.gguf') && found.c === path.join(own, 'c.gguf') && found.none === path.join(own, 'a.gguf'),
+    Object.entries(found).map(([k, v]) => `${k}: ${v.startsWith(shipped) ? 'installer' : 'models folder'}`).join(', '));
+  fs.rmSync(own, { recursive: true, force: true });
+  fs.rmSync(shipped, { recursive: true, force: true });
+
+  const files = bundledModelFiles();
+  const canary = findModel('canary-1b-v2') as Model;
+  let refused = '';
+  try {
+    bundledModelFiles('jackrabbit-110m-ro');
+  } catch (err: any) {
+    refused = err.message;
+  }
+  t.check('UNIT-BUNDLE-02', 'the installers carry the voice detector and the default model (Canary, one recommended file); a model that is not one file cannot be carried',
+    config.defaultModel === 'canary-1b-v2' && canary.tier === 'recommended' && JSON.stringify(files.map((f) => f.file)) === JSON.stringify(['silero_vad.onnx', canary.file])
+      && files.every((f) => f.url.startsWith('https://')) && /not one file/.test(refused),
+    `${files.map((f) => f.file).join(', ')}; Jackrabbit: ${refused || 'accepted'}`);
+
+  // A stand-in DLL: bytes, the version resource's key, then VS_FIXEDFILEINFO (signature, struct version, file version).
+  const dll = (v: number[]) => {
+    const info = Buffer.alloc(16);
+    info.writeUInt32LE(0xfeef04bd, 0);
+    info.writeUInt32LE(0x10000, 4);
+    info.writeUInt32LE((v[0] as number) * 0x10000 + (v[1] as number), 8); // not <<: 35211 << 16 overflows an int32
+    info.writeUInt32LE((v[2] as number) * 0x10000 + (v[3] as number), 12);
+    return Buffer.concat([Buffer.from('MZ' + 'x'.repeat(300)), Buffer.from('VS_VERSION_INFO\0', 'utf16le'), Buffer.alloc(2), info, Buffer.alloc(40)]);
+  };
+  const root = scratch('vc-runtime');
+  const folder = (name: string, versions: number[][]) => {
+    const dir = path.join(root, name);
+    fs.mkdirSync(dir);
+    versions.forEach((v, i) => fs.writeFileSync(path.join(dir, VC_RUNTIME_DLLS[i] as string), dll(v)));
+    return dir;
+  };
+  const old = folder('old', [[14, 29, 30133, 0], [14, 29, 30133, 0], [14, 29, 30133, 0]]); // the 2021 runtime that crashes
+  const good = folder('good', [[14, 44, 35211, 0], [14, 44, 35211, 0], [14, 44, 35211, 0]]);
+  const partial = folder('partial', [[14, 50, 1, 0], [14, 50, 1, 0]]); // no vcruntime140_1.dll
+  const mixed = folder('mixed', [[14, 50, 1, 0], [14, 38, 33135, 0], [14, 50, 1, 0]]); // counts as its oldest DLL
+  const picked = pickRuntime([old, partial, mixed, good]);
+  t.check('UNIT-BUNDLE-03', 'the Windows installer takes the newest complete Visual C++ runtime that is 14.40 or newer, and none when there is only an older one',
+    fileVersion(dll([14, 44, 35211, 7]))?.join('.') === '14.44.35211.7' && fileVersion(Buffer.from('no version here')) === null
+      && picked?.dir === good && picked.version.join('.') === '14.44.35211.0' && pickRuntime([old, mixed]) === null,
+    `picked ${picked ? `${path.basename(picked.dir)} ${picked.version.join('.')}` : 'none'}`);
+  fs.rmSync(root, { recursive: true, force: true });
+
+  // The installers do not carry python/, so the NeMo models are never offered there, not even where uv is installed.
+  const nemo = MODELS.filter((m) => m.python);
+  t.check('UNIT-MODEL-04', 'without python/ (the installed app) no NeMo model is offered; the other local models are; this checkout has python/',
+    nemo.length > 0 && nemo.every((m) => !isAvailable(m, { python: false })) && isAvailable(canary, { python: false }) && pythonShipped(),
+    `${nemo.length} NeMo models hidden without python/; python/ here: ${pythonShipped()}`);
 }
 
 // ---------- the page's backlog while the server is unreachable (#11) ----------

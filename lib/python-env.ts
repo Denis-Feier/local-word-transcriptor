@@ -8,6 +8,8 @@ export const PYTHON_BIN = path.join(VENV, 'bin', 'python');
 const REQUIREMENTS = path.join(ROOT, 'python', 'requirements.txt');
 
 export const pythonReady = () => fs.existsSync(PYTHON_BIN);
+/** The NeMo server and its requirements are in this copy of the app: from source and in Docker, not in the installers. */
+export const pythonShipped = () => fs.existsSync(REQUIREMENTS) && fs.existsSync(path.join(ROOT, 'python', 'nemo_server.py'));
 
 function uv(args: string[], log: (line: string) => void): Promise<void> {
   return new Promise((resolve, reject) => {

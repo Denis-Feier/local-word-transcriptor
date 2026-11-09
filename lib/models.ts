@@ -4,9 +4,9 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { MODELS_DIR, ROOT, config } from './config.ts';
+import { MODELS_DIR, ROOT, config, modelFile } from './config.ts';
 import { convertHfWhisper } from './convert-whisper.ts';
-import { ensurePythonEnv, pythonReady } from './python-env.ts';
+import { ensurePythonEnv, pythonReady, pythonShipped } from './python-env.ts';
 import type { Model, ModelFile, OnProgress, WhisperConvert } from '../types/model.ts';
 
 /** The voice detector's model file (lib/models.ts SILERO_VAD). */
@@ -245,7 +245,8 @@ export const MODELS: Model[] = [
 
 export const findModel = (id: string) => MODELS.find((m) => m.id === id);
 
-export const modelPath = (model: Model) => path.join(MODELS_DIR, (model.file ?? model.dir) as string); // every model has one of the two
+/** The model's file or folder: downloaded into the models folder, or the installer's own copy (`modelFile`). */
+export const modelPath = (model: Model) => modelFile((model.file ?? model.dir) as string); // every model has one of the two
 
 export const isInstalled = (model: Model) => (model.cloud ? Boolean(config.elevenlabs.apiKey)
   : fs.existsSync(modelPath(model)) && (!model.python || pythonReady()));
@@ -257,11 +258,12 @@ function onPath(cmd: string) {
 }
 
 /**
- * Whether this computer can run a model at all. Whisper models need whisper.cpp and Jackrabbit needs Python (or uv
- * to set it up). The desktop app ships neither, so on a plain computer only the transcribe.cpp models (Canary,
- * Parakeet...) are offered.
+ * Whether this computer can run a model at all. Whisper models need whisper.cpp and the NeMo models need Python (or
+ * uv to set it up) and this app's python/ folder. The desktop app ships neither whisper.cpp nor python/, so it offers
+ * the in-process models (transcribe.cpp: Canary, Parakeet...; sherpa-onnx) and, with a key, the cloud model; it offers
+ * the NeMo models not even where uv is installed. `python` says whether python/ is here (tests set it).
  */
-export function isAvailable(model: Model, { whisperBin = 'whisper-server' }: { whisperBin?: string } = {}) {
+export function isAvailable(model: Model, { whisperBin = 'whisper-server', python = pythonShipped() }: { whisperBin?: string; python?: boolean } = {}) {
   if (model.cloud) return isInstalled(model); // without a key it would only be a menu entry that cannot work
   if (model.engine === 'whisper.cpp') return onPath(whisperBin);
   // SpeechAnalyzer is macOS 26 (Darwin 25) and later. Building the helper needs the Xcode command-line tools and its
@@ -270,7 +272,7 @@ export function isAvailable(model: Model, { whisperBin = 'whisper-server' }: { w
     return process.platform === 'darwin' && Number(os.release().split('.')[0]) >= 25
       && (isInstalled(model) || (onPath('swiftc') && fs.existsSync(path.join(APPLE_SPEECH_SRC, 'AppleSpeechServer.swift'))));
   }
-  if (model.python) return pythonReady() || onPath(process.env.UV_BIN ?? 'uv');
+  if (model.python) return python && (pythonReady() || onPath(process.env.UV_BIN ?? 'uv'));
   return true;
 }
 

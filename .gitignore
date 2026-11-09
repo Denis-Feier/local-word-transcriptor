@@ -11,3 +11,4 @@ transcripts/
 .claude/settings.local.json
 graphify-out/
 test-results/
+bundle/

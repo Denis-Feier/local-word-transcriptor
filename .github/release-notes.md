@@ -1,5 +1,5 @@
-Live Romanian speech-to-text for meetings. Everything runs on your own computer: no account, no internet after
-the first start, and the audio never leaves the machine, except with the optional ElevenLabs cloud model, which
+Live Romanian speech-to-text for meetings. Everything runs on your own computer: no account, no internet, nothing
+else to install, and the audio never leaves the machine, except with the optional ElevenLabs cloud model, which
 appears only once you add your own ElevenLabs API key (see the README).
 
 ## Descărcare (Română)
@@ -22,8 +22,9 @@ Alegeți fișierul potrivit din lista **Assets** de mai jos:
   apăsați *Open Anyway*. Pe macOS 14 sau mai vechi ajunge clic dreapta pe aplicație → *Open*.
 - **Windows:** la mesajul „Windows protected your PC” apăsați *More info*, apoi *Run anyway*.
 
-Apoi aplicația descarcă modelul pentru limba română (1,1 GB) și arată progresul. Apăsați **Start** și permiteți
-accesul la microfon. Transcrierile se salvează în **Documente → Live Transcriber**.
+Apoi apăsați **Start** și permiteți accesul la microfon. Nu trebuie instalat sau descărcat nimic altceva: modelul
+pentru limba română este inclus în aplicație, care funcționează și fără internet. Transcrierile se salvează în
+**Documente → Live Transcriber**.
 
 Dacă textul apare greu pe un calculator mai vechi, alegeți *Parakeet Romanian 110M* din meniul **Model**.
 
@@ -46,7 +47,8 @@ Pick the file for your computer from **Assets** below:
   *Open Anyway*. On macOS 14 or older, right-click the app → *Open* is enough.
 - **Windows:** when "Windows protected your PC" appears, click *More info*, then *Run anyway*.
 
-The app then downloads the Romanian model (1.1 GB) with a progress bar. Press **Start** and allow the microphone.
+Then press **Start** and allow the microphone. There is nothing else to install or download: the Romanian model
+comes with the app, which works offline too.
 Transcripts are saved in **Documents → Live Transcriber**.
 
 If text appears slowly on an older computer, choose *Parakeet Romanian 110M* in the **Model** menu.

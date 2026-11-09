@@ -23,8 +23,8 @@
     "benchmark:suite": "node scripts/benchmark-suite.ts",
     "manual": "node scripts/manual.ts",
     "app": "electron .",
-    "dist:mac": "electron-builder --mac",
-    "dist:win": "electron-builder --win"
+    "dist:mac": "node scripts/bundle.ts --mac && electron-builder --mac",
+    "dist:win": "node scripts/bundle.ts --win && electron-builder --win"
   },
   "engines": {
     "node": ">=22.18"
@@ -65,6 +65,12 @@
       "!**/*.md",
       "!node_modules/@elevenlabs/elevenlabs-js/dist/**"
     ],
+    "extraResources": [
+      {
+        "from": "bundle/models",
+        "to": "models"
+      }
+    ],
     "mac": {
       "target": [
         {
@@ -95,7 +101,13 @@
           ]
         }
       ],
-      "icon": "desktop/build/icon.png"
+      "icon": "desktop/build/icon.png",
+      "extraFiles": [
+        {
+          "from": "bundle/vc-runtime",
+          "to": "."
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,

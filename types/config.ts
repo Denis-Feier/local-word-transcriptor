@@ -5,7 +5,7 @@
 export interface VadConfig {
   /** 'silero' (neural, robust in rooms) or 'energy' (loudness threshold); any other value counts as 'silero'. */
   engine: string;
-  /** Path of silero_vad.onnx in the models folder. */
+  /** Path of silero_vad.onnx: in the models folder, or the installer's copy (`modelFile` in lib/config.ts). */
   sileroModel: string;
   /** Silero's speech probability threshold; lower picks up quieter, farther voices. */
   sileroThreshold: number;

@@ -1,5 +1,7 @@
 # Builds the desktop installers on real machines: a Mac (.dmg, Apple Silicon) and a Windows PC (.exe).
-# Each job first runs test/smoke.ts, which transcribes a Romanian clip with the speech engine on that OS.
+# Each job first runs test/smoke.ts, which transcribes a Romanian clip with the speech engine on that OS. The installers
+# carry the default model, the voice detector and, on Windows, the Visual C++ runtime (scripts/bundle.ts), and after the
+# build test/smoke.ts --app runs the built app's own server: it must transcribe the clip with nothing downloaded.
 #
 #   Actions tab → "Desktop app" → Run workflow     installers appear under the run's Artifacts
 #   git tag v1.0.0 && git push origin v1.0.0       also publishes them on the GitHub Releases page
@@ -41,6 +43,8 @@ jobs:
         run: npm run ${{ matrix.dist }} -- --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false # no certificates yet: the Mac app is ad-hoc signed, Windows unsigned
+      - name: The built app works out of the box (SMOKE-03; its own model, nothing downloaded; Windows its own C++ runtime)
+        run: node test/smoke.ts --app dist
       - uses: actions/upload-artifact@v4
         with:
           name: installer-${{ matrix.os }}

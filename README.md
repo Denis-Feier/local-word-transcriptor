@@ -13,8 +13,11 @@ For people who just want to use it, on a Mac with Apple Silicon or a Windows PC:
    `Live-Transcriber-…-mac-arm64.dmg` for Mac (M1 or newer, macOS 12+), `Live-Transcriber-…-windows-setup.exe`
    for Windows 10/11.
 2. Mac: open the `.dmg` and drag *Live Transcriber* into Applications. Windows: run the installer.
-3. Open Live Transcriber. The first time, it downloads the Romanian model (1.1 GB) and shows the progress; then
-   press **Start**. The Mac asks once for permission to use the microphone.
+3. Open Live Transcriber and press **Start**. The Mac asks once for permission to use the microphone.
+
+Nothing else to install and nothing to download: the installer carries the Romanian model (NVIDIA Canary, so it is
+~1.2 GB), the voice detector and, on Windows, the Microsoft Visual C++ runtime the speech engine needs. It works
+offline from the first start. Other models in the menu are downloaded when you pick them.
 
 Transcripts are saved in **Documents → Live Transcriber** (File → *Open transcripts folder*).
 
@@ -28,12 +31,15 @@ the app once, then System Settings → Privacy & Security → **Open Anyway** (m
 **Open**); on Windows, **More info → Run anyway**. The Mac app is ad-hoc signed, which is what keeps macOS from
 calling the download "damaged".
 
-The desktop app runs the models that need no extra software: NVIDIA Canary (the default and most accurate) and
-the Parakeet family, plus ElevenLabs' cloud model once you add your API key (*ElevenLabs, in the cloud*, below). The Whisper models, the NeMo models (Jackrabbit, the UPB FastConformer) and Apple's dictation appear only in the developer setup
+The desktop app runs the models that need no extra software: NVIDIA Canary (the default and most accurate, inside the
+installer) and the Parakeet family, plus ElevenLabs' cloud model once you add your API key (*ElevenLabs, in the cloud*, below). The Whisper models, the NeMo models (Jackrabbit, the UPB FastConformer) and Apple's dictation appear only in the developer setup
 below, where whisper.cpp, Python and the Xcode command-line tools are installed.
 
 **Building the installers:** `npm run dist:mac` on a Mac, `npm run dist:win` on Windows; the result is in
-`dist/`. Or let GitHub build both: Actions tab → *Desktop app* → **Run workflow**, or push a version tag
+`dist/`. Each first runs `scripts/bundle.ts`, which puts what the installer carries in `bundle/`: the default model and
+the voice detector (copied from `models/` after `npm run setup`, else downloaded) and, on Windows, the Visual C++
+runtime (14.40 or newer, from Visual Studio's C++ tools or the installed Redistributable; `VC_RUNTIME_DIR` picks
+another folder). Or let GitHub build both: Actions tab → *Desktop app* → **Run workflow**, or push a version tag
 (`git tag v1.0.1 && git push origin v1.0.1`) to also publish them on the Releases page, with the download and
 install steps from `.github/release-notes.md`. Bump `version` in `package.json` first; it is in the file names.
 Then update the user manual, which the installers and the release include: in Claude Code, `/user-manual` checks
@@ -41,7 +47,8 @@ what changed for users since the last manual, rewrites what is needed, retakes t
 PDFs (by hand: edit `docs/manual/manual.*.html`, then `npm run manual`). `npm test` fails (`STATIC-05`) while the
 manual is built for an older version.
 Each build first runs `test/smoke.ts`, which transcribes a Romanian test clip with the speech engine on that
-system. To try the app from source: `npm run app`.
+system, and after building runs `test/smoke.ts --app dist`, which runs the built app's own server and must transcribe
+the clip with nothing downloaded (on Windows, with the app's own copy of the Visual C++ runtime). To try the app from source: `npm run app`.
 
 ## Quick start (developer setup)
 
@@ -400,10 +407,11 @@ where macOS decides. In Docker there is no GPU, so everything runs on the CPU th
 | `scripts/benchmark-suite.ts`, `lib/benchmark/` | The shareable one-hour benchmark (`npm run benchmark:suite`): accuracy, speed, live-text steadiness, noise, long sentences, silence, exported with the computer's description |
 | `Dockerfile`, `docker-compose.yml` | The Docker image and how it is started |
 | `desktop/main.ts` | The desktop app (Electron): starts the server in the background, opens its page, sends the caption window to the projector, data folders per user |
+| `scripts/bundle.ts` | What the installers carry beside the app (`npm run dist:*` runs it): the default model and the voice detector, and on Windows the Visual C++ runtime, gathered into `bundle/` |
 | `docs/manual/` | The user manual: `manual.en.html` / `manual.ro.html` (the text), `manual.css`, `img/` (screenshots) and the PDFs built from them |
 | `scripts/manual.ts` | Builds the manual (`npm run manual`): screenshots of the page with the UI test's fake microphones, then a PDF per language; `--pdf-only` skips the screenshots |
 | `types/` | The contracts shared between modules, imported as types only: the WebSocket protocol (`protocol.ts`), the model catalogue (`model.ts`), the configuration (`config.ts`), the engine interface (`engine.ts`), the audio shapes (`audio.ts`), the page's (`page.ts`) and the tests' (`test.ts`) |
-| `test/smoke.ts` | End-to-end check on any OS: server, automatic model download, transcription of `test/fixtures/ro.wav` (one mic and two) |
+| `test/smoke.ts` | End-to-end check on any OS: server, automatic model download, transcription of `test/fixtures/ro.wav` (one mic and two); with `--app dist`, the same through a built app, which must need no download |
 | `test/run-all.ts` | Runs the whole test plan (`TESTING.md`): logic, server, two-mic conversations, the page in Electron; `npm test` |
 | `.github/workflows/desktop.yml` | Builds and tests the Mac and Windows installers on GitHub; publishes them on version tags |
 

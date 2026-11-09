@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
@@ -9,6 +10,19 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 dotenv.config({ path: process.env.ENV_FILE ?? path.join(ROOT, '.env.local'), quiet: true });
 // The desktop app keeps models in its user-data folder; from source they live in ./models.
 export const MODELS_DIR = process.env.MODELS_DIR ?? path.join(ROOT, 'models');
+// The installers also carry the default model and the voice detector (scripts/bundle.ts), so the app works the first
+// time with no download; the desktop app says where they are. Read-only: downloads always go to MODELS_DIR.
+export const BUNDLED_MODELS_DIR = process.env.BUNDLED_MODELS_DIR || null;
+
+/**
+ * Where a model file (or folder) is: in the models folder, else in the installer's copy, else where a download will
+ * put it (the models folder). A copy in the models folder wins, so a model downloaded again is the one used.
+ */
+export function modelFile(name: string, own: string = MODELS_DIR, bundled: string | null = BUNDLED_MODELS_DIR): string {
+  const mine = path.join(own, name);
+  if (bundled && !fs.existsSync(mine) && fs.existsSync(path.join(bundled, name))) return path.join(bundled, name);
+  return mine;
+}
 
 const env = process.env;
 const num = (value: string | undefined, fallback: number) => (value === undefined || value === '' ? fallback : Number(value));
@@ -36,7 +50,7 @@ export const config: Config = {
 
   vad: {
     engine: env.VAD ?? 'silero', // 'silero' (neural, robust in rooms) or 'energy' (loudness threshold)
-    sileroModel: path.join(MODELS_DIR, 'silero_vad.onnx'),
+    sileroModel: modelFile('silero_vad.onnx'),
     sileroThreshold: num(env.VAD_THRESHOLD, 0.5), // lower (e.g. 0.35) picks up quieter, farther voices
     minRms: num(env.VAD_MIN_RMS, 0.006), // energy detector only
     noiseRatio: num(env.VAD_NOISE_RATIO, 3), // energy detector only

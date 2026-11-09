@@ -134,6 +134,21 @@ function staticChecks() {
   const packaged = pkg.build.files;
   check('STATIC-02', 'the installers include server.ts, lib/, public/ and web/', ['server.ts', 'lib/**', 'public/**', 'web/**', 'desktop/main.ts'].every((p) => packaged.includes(p)), packaged.join(' '));
 
+  // Plug and play: scripts/bundle.ts gathers the default model, the voice detector and (Windows) the Visual C++ runtime
+  // before electron-builder runs, the installers carry them, and the desktop app reads the models from its resources.
+  type Copy = { from: string; to: string };
+  const carries = (list: Copy[] | undefined, from: string, to: string) => (list ?? []).some((e) => e.from === from && e.to === to);
+  const desktopMain = fs.readFileSync(path.join(ROOT, 'desktop', 'main.ts'), 'utf8');
+  const unbundled = [
+    !/^node scripts\/bundle\.ts --mac && electron-builder --mac\b/.test(pkg.scripts['dist:mac'] ?? '') && 'dist:mac does not run scripts/bundle.ts --mac first',
+    !/^node scripts\/bundle\.ts --win && electron-builder --win\b/.test(pkg.scripts['dist:win'] ?? '') && 'dist:win does not run scripts/bundle.ts --win first',
+    !carries(pkg.build.extraResources, 'bundle/models', 'models') && 'build.extraResources lacks bundle/models → models',
+    !carries(pkg.build.win?.extraFiles, 'bundle/vc-runtime', '.') && 'build.win.extraFiles lacks bundle/vc-runtime → .',
+    !/BUNDLED_MODELS_DIR: app\.isPackaged \? path\.join\(process\.resourcesPath, 'models'\)/.test(desktopMain) && 'desktop/main.ts does not pass BUNDLED_MODELS_DIR',
+  ].filter(Boolean);
+  check('STATIC-08', 'the installers carry the default model, the voice detector and, on Windows, the Visual C++ runtime', !unbundled.length,
+    unbundled.join('; ') || 'scripts/bundle.ts before electron-builder; bundle/models → resources/models; bundle/vc-runtime → beside the .exe');
+
   // A new version needs its manual rebuilt (npm run manual, or the user-manual skill) before it is tagged.
   let manual: { version?: string } = {};
   try {

@@ -12,8 +12,9 @@ const TEST = process.env.LT_TEST === '1'; // automated checks: no microphone pro
 
 if (!app.requestSingleInstanceLock()) app.quit(); // a second launch just focuses the first window
 
-// Packaged: models, settings and API keys (.env.local) in the app's data folder, transcripts in Documents where
-// people find them. From source: the repository's folders, shared with `npm start`.
+// Packaged: downloaded models, settings and API keys (.env.local) in the app's data folder, transcripts in Documents
+// where people find them; the default model ships inside the app. From source: the repository's folders, shared with
+// `npm start`.
 const userData = app.getPath('userData');
 const paths = app.isPackaged
   ? {
@@ -64,10 +65,12 @@ async function startServer(): Promise<string> {
       HOST,
       PORT: String(port),
       MODELS_DIR: process.env.MODELS_DIR ?? paths.models,
+      // The default model and the voice detector inside the installed app (scripts/bundle.ts): no download at first.
+      BUNDLED_MODELS_DIR: app.isPackaged ? path.join(process.resourcesPath, 'models') : '',
       SETTINGS_FILE: process.env.SETTINGS_FILE ?? paths.settings,
       ENV_FILE: process.env.ENV_FILE ?? paths.env,
       TRANSCRIPTS_DIR: process.env.TRANSCRIPTS_DIR ?? paths.transcripts,
-      AUTO_INSTALL: '1', // first run downloads the default model with a progress bar in the page
+      AUTO_INSTALL: '1', // a default model that is missing all the same is downloaded, with a progress bar in the page
     } as Record<string, string>,
   });
   (server.stdout as NodeJS.ReadableStream).pipe(log); // stdio: 'pipe' gives both
