@@ -32,8 +32,8 @@ import { renderReport } from '../lib/benchmark/report.ts';
 import { parseArgs } from '../scripts/benchmark-suite.ts';
 import { createBacklog, lostNote } from '../web/backlog.ts';
 import { spokenOrder } from '../web/order.ts';
-import { SR, FIXTURE, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs, loadWav, saveWav } from './helpers.ts';
-import { memoryCheck } from './meeting.ts';
+import { SR, FIXTURE, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs, loadWav, saveWav, parseTopMem } from './helpers.ts';
+import { finishedAfterDrop, memoryCheck, serverMemoryOk } from './meeting.ts';
 import type { Model } from '../types/model.ts';
 import type { OnCrash, TimedResult } from '../types/engine.ts';
 import type { Vad } from 'sherpa-onnx-node';
@@ -1961,6 +1961,51 @@ if (!silero) {
       && s.span < 1 && s.growth === 0 && memoryCheck(short.slice(0, 5), 600).span === 0,
     `hump: low point ${h.from} → ${h.to} MB, ${h.perHour.toFixed(1)} MB/h, peak ${h.peakOver} MB above the first 30 min; `
       + `rising floor: ${l.from.toFixed(0)} → ${l.to.toFixed(0)} MB, ${l.perHour.toFixed(1)} MB/h; short: ${s.growth} MB over ${s.span.toFixed(2)} h`);
+}
+
+{
+  // The server in the soak of the stress run on 36453f3 (2026-11-08), its resident size once a minute for 2 hours: flat
+  // at ~210 MB, but three minutes at 126–131 MB while the loop was silent, 57 minutes in (macOS took back memory the
+  // server had freed when another process needed it). The low point of the first 30 minutes after warm-up is that dip.
+  const soak = [194, 231, 193, 197, 208, 236, 196, 200, 209, 207, 204, 197, 193, 243, 205, 210, 184, 176, 148, 140, 194, 196, 201, 240, 205, 207, 207, 211, 216, 210,
+    214, 211, 251, 248, 212, 216, 216, 205, 201, 201, 251, 212, 248, 213, 216, 254, 208, 244, 192, 204, 194, 187, 199, 209, 210, 200, 126, 131, 131, 130,
+    187, 178, 193, 197, 204, 193, 201, 203, 241, 201, 206, 208, 210, 208, 204, 247, 210, 210, 210, 210, 202, 201, 209, 210, 213, 211, 249, 209, 209, 245,
+    212, 213, 215, 221, 219, 214, 214, 214, 214, 214, 215, 216, 210, 216, 216, 254, 215, 214, 221, 219, 218, 215, 214, 214, 215, 252, 215, 215, 215, 215]
+    .map((value, i) => ({ at: (i + 1) * 60, value }));
+  const d = memoryCheck(soak, 1800);
+  // The same with the floor rising 30 MB per hour after warm-up: a leak under the same dip still fails.
+  const rising = memoryCheck(soak.map(({ at, value }) => ({ at, value: value + (30 * Math.max(0, at - 1800)) / 3600 })), 1800);
+  t.check('UNIT-MEM-02', 'the stress tier\'s memory check: a dip in the first 30 minutes is no floor (the soak of 2026-11-08 passes), a floor rising 30 MB per hour under the same dip still fails',
+    d.from === 131 && d.growth > 50 && d.midGrowth <= 10 && d.rise <= 10 && serverMemoryOk(d) && rising.rise > 30 && rising.perHour > 10 && !serverMemoryOk(rising),
+    `soak: low point ${d.from} → ${d.to} MB, median ${d.fromMid} → ${d.toMid} MB, risen ${d.rise} MB, ok ${serverMemoryOk(d)}; rising floor: risen ${rising.rise.toFixed(0)} MB, ${rising.perHour.toFixed(1)} MB/h, ok ${serverMemoryOk(rising)}`);
+}
+
+{
+  // What `top -l 1 -pid <pid> -stats pid,mem` prints on macOS: a header, then the process's physical footprint.
+  const top = (mem) => `Processes: 612 total, 3 running, 609 sleeping, 3121 threads\n2026/11/09 10:00:00\nLoad Avg: 2.10, 2.31, 2.40\nPhysMem: 23G used (2961M wired, 1203M compressor), 412M unused.\n\nPID    MEM\n4242   ${mem}\n`;
+  const read = ['210M', '2048K', '1.5G', '345M+', '12M-', '900B'].map((x) => parseTopMem(top(x), 4242));
+  t.check('UNIT-MEM-03', 'the stress tier reads a process\'s physical footprint from top: M, K, G and B, with or without the + or - of a change; no row for the process: null',
+    JSON.stringify(read) === '[210,2,1536,345,12,0]' && parseTopMem(top('210M'), 4243) === null && parseTopMem('', 4242) === null && parseTopMem('PID MEM\n4242 n/a\n', 4242) === null,
+    JSON.stringify(read));
+}
+
+{
+  // A meeting whose connection dropped at 30 s and at 60 s (#10, D2). The page got three lines; the .txt has five: the
+  // line the first connection finished after its drop (two sentences from 21 s), and the second's, from 57 s. The same
+  // words said again later on the page are not taken for the .txt line.
+  const finals = [
+    { mic: 0, start: 2.4, text: 'bună ziua tuturor' },
+    { mic: 1, start: 31.2, text: 'mulțumesc pentru răbdare' },
+    { mic: 0, start: 70.9, text: 'propun să amânăm decizia' },
+  ];
+  const txt = ['[00:02] Mic 1: bună ziua tuturor', '[00:21] Mic 1: propun să amânăm decizia avem nevoie de aprobare', '[00:31] Mic 2: mulțumesc pentru răbdare',
+    '[00:57] Mic 2: termenele de livrare', '[01:10] Mic 1: propun să amânăm decizia', 'not a line'];
+  const late = finishedAfterDrop(txt, finals, [60, 30]);
+  const alone = finishedAfterDrop(['[1:00:05] contractul expiră'], [], [3605.4, 3630]); // 3605.4: before or after the line began?
+  t.check('UNIT-DROP-01', 'the lines a connection finished after it dropped (D2) are found in the .txt: each line the page did not get, from its time to the drop after it; hour times, one mic; a drop within the line\'s second is taken as after it only from the next second',
+    JSON.stringify(late) === JSON.stringify([{ mic: 0, start: 21, end: 30, text: 'propun să amânăm decizia avem nevoie de aprobare' }, { mic: 1, start: 57, end: 60, text: 'termenele de livrare' }])
+      && JSON.stringify(alone) === JSON.stringify([{ mic: 0, start: 3605, end: 3630, text: 'contractul expiră' }]),
+    `${JSON.stringify(late)}; ${JSON.stringify(alone)}`);
 }
 
 fs.rmSync(dir, { recursive: true, force: true });

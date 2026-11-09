@@ -11,7 +11,7 @@ import { config } from '../../lib/config.ts';
 import { MODELS, isInstalled, isAvailable } from '../../lib/models.ts';
 import { TUNING, tuningFrom } from '../../lib/tuning.ts';
 import { ROOT, SR, fakeServer, freePort, outOfPlace, saveWav, scratch, serverMemory, silence, sleep, startServer, suite } from '../helpers.ts';
-import { SCRIPTS, Room, contentWords, judge, loopOffset, loopTruth, meeting, memoryCheck, quantile, table, voices, windows } from '../meeting.ts';
+import { SCRIPTS, Room, contentWords, judge, loopOffset, loopTruth, meeting, memoryCheck, memoryWords, quantile, serverMemoryOk, table, voices, windows } from '../meeting.ts';
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -375,10 +375,11 @@ async function soak() {
       + `transcript nodes per line ${p(perLine0, 1)} (${shown[0]?.lines ?? '—'} lines) → ${p(perLine1, 1)} (${shown.at(-1)?.lines ?? '—'} lines); page process peak ${p(pagePeak, 0)} MB, end ${samples.at(-1)?.page ?? '—'} MB`);
     t.check('STRESS-SOAK-05', 'the caption window shows the newest line', onCaptions, JSON.stringify(newest?.slice(0, 60)));
     const srv = memoryCheck(series((s) => s.server), warm);
-    const parts = (s) => (Number.isFinite(s?.serverParts?.heap) ? ` (heap ${s.serverParts.heap}, outside the heap ${s.serverParts.external}, native ${s.serverParts.native} MB)` : '');
-    t.check('STRESS-SOAK-06', 'server memory in real time, as STRESS-MEET-08: low point rises ≤ 50 MB and ≤ 10 MB per hour, peak ≤ 200 MB above the first 30 min',
-      srv.growth <= 50 && (srv.span < 1 || srv.perHour <= 10) && srv.peakOver <= 200,
-      `low point ${srv.from} → ${srv.to} MB (${p(srv.perHour, 1)} MB/h over ${p(srv.span, 1)} h); peak ${srv.peak} MB, ${p(srv.peakOver, 0)} MB above the first 30 min${parts(samples.find((s) => s.sec >= warm && s.server === srv.peak))}; end ${samples.at(-1)?.server ?? '—'} MB${parts(samples.at(-1))}`);
+    const parts = (s) => (Number.isFinite(s?.serverParts?.heap) ? ` (heap ${s.serverParts.heap} with ${s.serverParts.used} in use, outside the heap ${s.serverParts.external}, native ${s.serverParts.native} MB)` : '');
+    const end = samples.at(-1);
+    t.check('STRESS-SOAK-06', 'server memory in real time, as STRESS-MEET-08: after warm-up its low point and median rise ≤ 50 MB and ≤ 10 MB per hour, its peak ≤ 200 MB above the first 30 min',
+      serverMemoryOk(srv),
+      `${end?.serverParts?.footprint ? 'footprint' : 'resident'}: ${memoryWords(srv)}${parts(samples.find((s) => s.sec >= warm && s.server === srv.peak))}; end ${end?.server ?? '—'} MB${parts(end)}, resident ${end?.serverParts?.rss ?? '—'} MB`);
     const txt = fs.readdirSync(server.transcripts).filter((n) => n.endsWith('.txt')).flatMap((n) => fs.readFileSync(path.join(server.transcripts, n), 'utf8').split('\n').filter(Boolean));
     const lastIn = txt.some((l) => l.endsWith(lines.at(-1)?.text ?? '\u0000'));
     const differs = download.findIndex((l, i) => l !== txt[i]);

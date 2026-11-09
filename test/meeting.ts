@@ -420,24 +420,43 @@ const median = (xs) => (xs.length ? [...xs].sort((a, b) => a - b)[Math.floor((xs
 export const quantile = (xs, p) => (xs.length ? [...xs].sort((a, b) => a - b)[Math.floor(p * (xs.length - 1))] : NaN);
 
 /**
- * Memory after warm-up (#48), from samples [{ at (seconds), value }]: the low point (10th percentile) of the first and
- * of the last 30 minutes, and the peak. A leak raises the floor memory falls back to; a rise that comes back down (a
- * model's buffers, a late garbage collection) does not. (A straight line through the samples read such a hump as
- * growth.) Shorter runs use a third of the time after warm-up for each window.
- *   growth: last low point − first; perHour: growth per hour between the windows' middles (at least 1 h);
- *   peakOver: the highest sample above the first window's median; span: hours after warm-up.
+ * Memory after warm-up (#48), from samples [{ at (seconds), value }]: the low point (10th percentile) and the median of
+ * the first and of the last 30 minutes, and the peak. A leak raises the floor memory falls back to, and everything
+ * above it; a rise that comes back down (a model's buffers, a late garbage collection) does not. (A straight line
+ * through the samples read such a hump as growth.) A dip is no floor either: three minutes at 126 MB in a soak that
+ * otherwise stayed at 210 MB made a low point 82 MB under the last one (2026-11-08), so memory has risen only when
+ * the low point and the median both did. Shorter runs use a third of the time after warm-up for each window.
+ *   growth: last low point − first; midGrowth: last median − first; rise: the smaller of the two, what is judged;
+ *   perHour: rise per hour between the windows' middles (at least 1 h); peakOver: the highest sample above the
+ *   first window's median; span: hours after warm-up.
  */
 export function memoryCheck(samples, warmSec) {
   const s = samples.filter((x) => x.at >= warmSec && Number.isFinite(x.value));
-  if (s.length < 6) return { from: NaN, to: NaN, growth: NaN, perHour: NaN, peak: NaN, peakOver: NaN, span: 0 };
+  if (s.length < 6) return { from: NaN, to: NaN, fromMid: NaN, toMid: NaN, growth: NaN, midGrowth: NaN, rise: NaN, perHour: NaN, peak: NaN, peakOver: NaN, span: 0 };
   const [t0, t1] = [s[0].at, s.at(-1).at];
   const w = Math.min(1800, (t1 - t0) / 3);
   const first = s.filter((x) => x.at <= t0 + w).map((x) => x.value);
   const last = s.filter((x) => x.at >= t1 - w).map((x) => x.value);
   const [from, to] = [quantile(first, 0.1), quantile(last, 0.1)];
+  const [fromMid, toMid] = [median(first), median(last)];
+  const rise = Math.min(to - from, toMid - fromMid);
   const peak = Math.max(...s.map((x) => x.value));
-  return { from, to, growth: to - from, perHour: (to - from) / Math.max(1, (t1 - t0 - w) / 3600), peak, peakOver: peak - median(first), span: (t1 - t0) / 3600 };
+  return { from, to, fromMid, toMid, growth: to - from, midGrowth: toMid - fromMid, rise, perHour: rise / Math.max(1, (t1 - t0 - w) / 3600), peak, peakOver: peak - fromMid, span: (t1 - t0) / 3600 };
 }
+
+/**
+ * The limits for the server's memory over a long meeting (STRESS-MEET-08, -MIC3-02, -SOAK-06; #48): after warm-up it
+ * may rise ≤ 50 MB, and ≤ 10 MB per hour once an hour or more is judged; its peak may be ≤ 200 MB above the first
+ * 30 minutes. `mem` is memoryCheck() of its samples.
+ */
+export const serverMemoryOk = (mem: ReturnType<typeof memoryCheck>) => mem.rise <= 50 && (mem.span < 1 || mem.perHour <= 10) && mem.peakOver <= 200;
+
+/** memoryCheck() in words, for a check's detail. */
+export const memoryWords = (mem: ReturnType<typeof memoryCheck>) => {
+  const n = (x: number, d = 0) => (Number.isFinite(x) ? x.toFixed(d) : '—');
+  return `low point ${n(mem.from)} → ${n(mem.to)} MB, median ${n(mem.fromMid)} → ${n(mem.toMid)} MB after warm-up (risen ${mem.rise >= 0 ? '+' : ''}${n(mem.rise)} MB, `
+    + `${n(mem.perHour, 1)} MB/h over ${n(mem.span, 1)} h); peak ${n(mem.peak)} MB, ${n(mem.peakOver)} MB above the first 30 min`;
+};
 
 /**
  * Compare a server's final lines ({ mic (0-based), start, end, text, ms?, sentSec? }) with the truth (truth()):
@@ -536,6 +555,37 @@ export function judge(items: any[], lines: any[], { groups = [], partials = [] }
   };
   const all = stats(-Infinity, Infinity, { wer: false });
   return { lines: judged, both, utterances, all, groups: groups.map((g) => ({ ...g, ...stats(g.start, g.end) })) };
+}
+
+/**
+ * The lines a connection finished after it dropped (#10, D2): the old connection finishes the sentence it was hearing,
+ * so its line is in the .txt but no page ever gets it. A line often holds two or three sentences said one after the
+ * other (up to 17 s in the stress run of 2026-11-08), so judging only the page's lines lost the earlier sentences of
+ * that line too. txt: the .txt's lines ("[h:mm:ss] Mic N: text"); finals: the lines the page got ({ mic (0-based),
+ * start, text }); drops: when the connections dropped (session seconds). Each .txt line no final accounts for (same
+ * mic and text, the same second) and with a drop after it is returned as a line to judge, { mic, start, end, text }:
+ * from its time to the drop that ended its connection, since no audio reached that connection after it.
+ */
+export function finishedAfterDrop(txt: string[], finals: { mic: number, start: number, text: string }[], drops: number[]) {
+  const unused = [...finals];
+  const out: { mic: number, start: number, end: number, text: string }[] = [];
+  for (const l of txt) {
+    const m = l.match(/^\[(?:(\d+):)?(\d\d):(\d\d)\] (?:Mic (\d): )?(.*)$/);
+    if (!m) continue;
+    const at = Number(m[1] ?? 0) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+    const mic = m[4] ? Number(m[4]) - 1 : 0;
+    const text = m[5] as string;
+    const i = unused.findIndex((f) => f.mic === mic && f.text === text && Math.abs(Math.floor(f.start) - at) <= 1);
+    if (i >= 0) {
+      unused.splice(i, 1);
+      continue;
+    }
+    // The .txt has whole seconds: a drop within the line's second may have come before it, so the next one is taken
+    // (a longer span only lets the line's own words count for more sentences, never other text).
+    const drop = [...drops].sort((a, b) => a - b).find((d) => d >= at + 1);
+    if (drop !== undefined) out.push({ mic, start: at, end: drop, text });
+  }
+  return out;
 }
 
 /** 10-minute windows (or `sec`) over a session of `length` seconds. */

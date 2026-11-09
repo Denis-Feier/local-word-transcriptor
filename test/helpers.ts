@@ -13,10 +13,14 @@ import { decodeWav, encodeWav } from '../lib/wav.ts';
 import type { FakeConnection, FakeElevenLabs, FakeServer, StartServerOptions, StreamResult, Suite, TestCase, TestServer } from '../types/test.ts';
 import type { ServerMessage } from '../types/protocol.ts';
 
-/** serverMemory(): MB, as the system counts it and as the server reports its parts (#48). */
+/** serverMemory(): MB, as the system charges it (and its resident size) and as the server reports its parts (#48). */
 export interface ServerMemory {
   mb: number;
+  rss: number;
+  /** mb is the physical footprint (macOS), not the resident size. */
+  footprint: boolean;
   heap?: number;
+  used?: number;
   external?: number;
   native?: number;
 }
@@ -143,19 +147,66 @@ export async function startServer({ model = process.env.TEST_MODEL ?? 'parakeet-
   };
 }
 
+const UNITS: Record<string, number> = { B: 1 / 1048576, K: 1 / 1024, M: 1, G: 1024, T: 1048576 };
+
 /**
- * A test server's memory in MB (#48): all of it as the system counts it (`ps`: resident), and what it is made of as the
- * server reports it (/debug/memory, with DEBUG): V8's heap, the memory V8 tracks outside it (audio buffers), and the
- * native rest (an in-process model and its GPU buffers, the voice detectors). Only `mb` when the server does not answer.
+ * A process's MEM in MB from `top -l 1 -pid <pid> -stats pid,mem` (macOS: its physical footprint), or null when the
+ * output has no row for it: "12345  210M", "2048K", "1.2G", a trailing + or - when it changed.
+ */
+export function parseTopMem(out: string, pid: number): number | null {
+  const row = out.split('\n').map((l) => l.trim().match(/^(\d+)\s+([\d.]+)([BKMGT])[+-]?$/)).find((m) => m && Number(m[1]) === pid);
+  return row ? Math.round(Number(row[2]) * (UNITS[row[3]] as number)) : null;
+}
+
+const resident = async (pid: number | undefined) => Math.round(Number((await promisify(execFile)('ps', ['-o', 'rss=', '-p', String(pid)])).stdout) / 1024);
+
+/**
+ * A process's memory in MB, as the system charges it to the process. On macOS that is its physical footprint (what
+ * Activity Monitor shows), not its resident size: V8 and malloc hand freed memory back to macOS as "reusable"
+ * (MADV_FREE_REUSABLE), which stays resident, and counted by `ps`, until the system needs it. So the resident size
+ * stayed up after the server's heap shrank by 124 MB, and fell by 80 MB whenever another process needed memory
+ * (the stress run of 2026-11-08: STRESS-MEET-08 and -SOAK-06 failed on that alone). Elsewhere, and if `top` gives no
+ * answer, the resident size. `rss` is the resident size, for comparison.
+ */
+export async function processMemory(pid: number | undefined): Promise<{ mb: number, rss: number, footprint: boolean }> {
+  const rss = await resident(pid);
+  if (process.platform !== 'darwin') return { mb: rss, rss, footprint: false };
+  try {
+    const { stdout } = await promisify(execFile)('top', ['-l', '1', '-pid', String(pid), '-stats', 'pid,mem'], { timeout: 10000 });
+    const mb = parseTopMem(stdout, pid as number);
+    return mb === null ? { mb: rss, rss, footprint: false } : { mb, rss, footprint: true };
+  } catch {
+    return { mb: rss, rss, footprint: false };
+  }
+}
+
+/**
+ * One reading of a process's memory (processMemory) for a check that compares two moments: the median of `n`
+ * readings `gapMs` apart, since single readings of a busy server swing by 30 MB from one to the next.
+ */
+export async function settledMemory(pid: number | undefined, { n = 5, gapMs = 400 }: { n?: number, gapMs?: number } = {}): Promise<number> {
+  const xs: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (i) await sleep(gapMs);
+    xs.push((await processMemory(pid)).mb);
+  }
+  return xs.sort((a, b) => a - b)[Math.floor((n - 1) / 2)] as number;
+}
+
+/**
+ * A test server's memory in MB (#48): all of it as the system charges it (processMemory: the physical footprint on
+ * macOS; `rss`, the resident size, beside it), and what it is made of as the server reports it (/debug/memory, with
+ * DEBUG): V8's heap (`heap`, with `used` of it in use), the memory V8 tracks outside it (audio buffers), and the
+ * native rest (an in-process model and its GPU buffers, the voice detectors). Only `mb`, `rss` and `footprint` when the
+ * server does not answer.
  */
 export async function serverMemory(server: TestServer): Promise<ServerMemory> {
-  const { stdout } = await promisify(execFile)('ps', ['-o', 'rss=', '-p', String(server.pid)]);
-  const mb = Math.round(Number(stdout) / 1024);
+  const { mb, rss, footprint } = await processMemory(server.pid);
   try {
-    const m = await (await fetch(`${server.url}/debug/memory`, { signal: AbortSignal.timeout(5000) })).json() as { heapTotal: number, external: number };
-    return { mb, heap: m.heapTotal, external: m.external, native: mb - m.heapTotal - m.external };
+    const m = await (await fetch(`${server.url}/debug/memory`, { signal: AbortSignal.timeout(5000) })).json() as { heapTotal: number, heapUsed: number, external: number };
+    return { mb, rss, footprint, heap: m.heapTotal, used: m.heapUsed, external: m.external, native: mb - m.heapTotal - m.external };
   } catch {
-    return { mb };
+    return { mb, rss, footprint };
   }
 }
 

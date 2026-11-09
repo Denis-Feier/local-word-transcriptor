@@ -16,8 +16,8 @@ import { MODELS, isInstalled, isAvailable } from '../lib/models.ts';
 import { wordKey } from '../lib/steady.ts';
 import { TUNING, sanitizeTuning } from '../lib/tuning.ts';
 import { sharedWords } from '../lib/wer.ts';
-import { SR, serverMemory, startServer, scratch, sleep, suite } from './helpers.ts';
-import { CHUNK, SCRIPTS, Room, contentWords, hoursScript, judge, meeting, meetingFrom, memoryCheck, quantile, sessionBlocks, table, truth, voices, windows } from './meeting.ts';
+import { SR, processMemory, serverMemory, settledMemory, startServer, scratch, sleep, suite } from './helpers.ts';
+import { CHUNK, SCRIPTS, Room, contentWords, finishedAfterDrop, hoursScript, judge, meeting, meetingFrom, memoryCheck, memoryWords, quantile, serverMemoryOk, sessionBlocks, table, truth, voices, windows } from './meeting.ts';
 
 /** What play() records: every message with the audio sent when it arrived (sentSec), the probes and the memory samples. */
 type Played = {
@@ -45,7 +45,9 @@ const STEP = CHUNK / SR;
 
 // ---------- the server, from outside ----------
 
-const rss = async (pid) => Math.round(Number((await run('ps', ['-o', 'rss=', '-p', String(pid)])).stdout) / 1024);
+// The server's memory as the system charges it (helpers.ts: its physical footprint on macOS), one reading; checks that
+// compare two moments take settledMemory(), the median of a few.
+const memoryNow = async (pid) => (await processMemory(pid)).mb;
 const openFiles = async (pid) => (await run('lsof', ['-p', String(pid)], { maxBuffer: 1 << 24 })).stdout.trim().split('\n').length - 1;
 const alive = (pid) => {
   try {
@@ -208,18 +210,17 @@ const voicesFor = async (server: TestServer, opts?: any) => {
 };
 
 /**
- * The server's memory after warm-up, in hours of meeting (#48): its floor may rise ≤ 50 MB, and ≤ 10 MB per hour once
- * an hour or more is judged; its peak may be ≤ 200 MB above the first 30 minutes. With what the memory is made of at
- * the peak and at the end, to trace a failure.
+ * The server's memory after warm-up, in hours of meeting (#48; limits: serverMemoryOk in meeting.ts), as the system
+ * charges it (the physical footprint on macOS). With what the memory is made of at the peak and at the end, and its
+ * resident size at the end, to trace a failure.
  */
 function serverMemoryCheck(samples, warmSec) {
   const mem = memoryCheck(samples.map((x) => ({ at: x.sentSec, value: x.mb })), warmSec);
-  const ok = mem.growth <= 50 && (mem.span < 1 || mem.perHour <= 10) && mem.peakOver <= 200;
-  const parts = (x) => (x && Number.isFinite(x.heap) ? ` (heap ${x.heap}, outside the heap ${x.external}, native ${x.native} MB)` : '');
+  const parts = (x) => (x && Number.isFinite(x.heap) ? ` (heap ${x.heap} with ${x.used} in use, outside the heap ${x.external}, native ${x.native} MB)` : '');
   const peakAt = samples.find((x) => x.sentSec >= warmSec && x.mb === mem.peak);
-  const detail = `low point ${mem.from} → ${mem.to} MB after warm-up (${mem.growth >= 0 ? '+' : ''}${mem.growth} MB, ${p(mem.perHour, 1)} MB/h over ${p(mem.span, 1)} h); `
-    + `peak ${mem.peak} MB, ${p(mem.peakOver, 0)} MB above the first 30 min${parts(peakAt)}; end ${samples.at(-1)?.mb ?? '—'} MB${parts(samples.at(-1))}`;
-  return { ok, detail };
+  const end = samples.at(-1);
+  const detail = `${end?.footprint ? 'footprint' : 'resident'}: ${memoryWords(mem)}${parts(peakAt)}; end ${end?.mb ?? '—'} MB${parts(end)}, resident ${end?.rss ?? '—'} MB`;
+  return { ok: serverMemoryOk(mem), detail };
 }
 
 const lineList = (r) => r.finals.map((f) => ({ id: f.id, mic: f.mic, start: f.start, end: f.end, text: f.text, ms: f.ms, sentSec: f.sentSec }));
@@ -380,7 +381,7 @@ async function longMeeting(three) {
     t.check('STRESS-MEET-05', 'no clock drift: every block within 0.1 s of R', drift.every((x) => Math.abs(x.d) <= 0.1), drift.map((x) => `${x.name} ${p(x.d)}`).join(', '));
     t.check('STRESS-MEET-06', 'keeps up: delay and model time in R′ as in R', keepsUp, keepsDetail);
     t.check('STRESS-MEET-07', 'live text to the end: live guesses in R′ ≥ 80 % of R', B.R2.partials >= 0.8 * B.R.partials, `${B.R.partials} → ${B.R2.partials}`);
-    t.check('STRESS-MEET-08', 'server memory after warm-up: its low point rises ≤ 50 MB and ≤ 10 MB per hour, its peak ≤ 200 MB above the first 30 min', memOk, memDetail);
+    t.check('STRESS-MEET-08', 'server memory after warm-up: its low point and median rise ≤ 50 MB and ≤ 10 MB per hour, its peak ≤ 200 MB above the first 30 min', memOk, memDetail);
     const files = checkFiles(server.transcripts, r, m.events.filter((e) => e.type === 'clear').length, length);
     t.check('STRESS-MEET-09', 'files: every line in the .txt with hour times, WAVs as long as the audio sent', files.ok, files.detail);
     t.check('STRESS-MEET-10', 'the server answers within 500 ms throughout', probeMax(r) <= 500, `slowest of ${r.probes.length} probes: ${probeMax(r)} ms`);
@@ -410,11 +411,11 @@ async function overload(model, minutes, label) {
     const v = await voicesFor(server);
     const m = meeting(v, { minutes: { R: minutes } });
     await warmUp(server, v);
-    const before = await rss(server.pid);
+    const before = await settledMemory(server.pid);
     let httpMax = 0;
     let peak = before;
     const prober = setInterval(async () => {
-      rss(server.pid).then((mb) => (peak = Math.max(peak, mb))).catch(() => {});
+      memoryNow(server.pid).then((mb) => (peak = Math.max(peak, mb))).catch(() => {});
       const t0 = Date.now();
       try {
         await (await fetch(`${server.url}/`)).text();
@@ -425,14 +426,14 @@ async function overload(model, minutes, label) {
     }, 1000);
     const r = await play(server, m, { speed: Infinity, waitMs: 3600000, saveAudio: false });
     await sleep(15000);
-    const after = await rss(server.pid);
+    const after = await settledMemory(server.pid);
     const up = alive(server.pid);
     await close(r.ws);
     // Memory a process has used stays with it, so the question is whether a second overload needs more again.
     const again = await play(server, m, { speed: Infinity, waitMs: 3600000, saveAudio: false, probe: false });
     await close(again.ws);
     await sleep(15000);
-    const afterAgain = await rss(server.pid);
+    const afterAgain = await settledMemory(server.pid);
     clearInterval(prober);
     const perId = new Map();
     for (const f of r.allFinals) perId.set(f.id, (perId.get(f.id) ?? 0) + 1);
@@ -521,7 +522,7 @@ async function connections() {
     for (let i = 0; i < cycles; i++) {
       if (i === warm) {
         await sleep(2000);
-        [files0, mem0] = [await openFiles(server.pid), await rss(server.pid)];
+        [files0, mem0] = [await openFiles(server.pid), await settledMemory(server.pid)];
       }
       const c = clips[i % clips.length];
       const m = meetingFrom([{ person: 0, start: 1, clip: c }]);
@@ -534,7 +535,7 @@ async function connections() {
       }
     }
     await sleep(4000);
-    const [files1, mem1] = [await openFiles(server.pid), await rss(server.pid)];
+    const [files1, mem1] = [await openFiles(server.pid), await settledMemory(server.pid)];
     const answers = (await fetch(`${server.url}/`)).status === 200;
     const txt = fs.readdirSync(server.transcripts).filter((n) => n.endsWith('.txt')).flatMap((n) => fs.readFileSync(path.join(server.transcripts, n), 'utf8').split('\n').filter(Boolean));
     t.check('STRESS-CONN-01', `${cycles} connections opened and closed: open files and memory back, the server answers`, files1 <= files0 + 2 && mem1 - mem0 <= 30 && answers,
@@ -569,7 +570,7 @@ async function reconnects() {
     let name: string | null = null;
     let sentSamples = 0; // per mic, as the page counts it
     let from = 0;
-    let mem0: number | null = null;
+    let mem0: Promise<number> | null = null; // read while the next connections play
     let last: Played | null = null;
     for (const cut of [...cuts, Infinity]) {
       const r = await play(server, m, { room, from, cutAt: cut === Infinity ? Infinity : cut * STEP, probe: false, waitMs: 120000, resume: from ? { name, samples: sentSamples } : null });
@@ -577,7 +578,7 @@ async function reconnects() {
       for (const f of r.files) all.names.add(f.name);
       name = r.files.find((f) => f.name)?.name ?? name;
       sentSamples += r.sentPerMic[0];
-      if (mem0 === null) mem0 = await rss(server.pid);
+      mem0 ??= settledMemory(server.pid).catch(() => NaN); // awaited after the loop: a failed reading fails the check
       last = r;
       if (cut === Infinity) break;
       from = cut;
@@ -585,21 +586,31 @@ async function reconnects() {
     }
     await close((last as Played).ws); // the loop ran at least once
     await sleep(1500);
-    const mem1 = await rss(server.pid);
+    const mem1 = await settledMemory(server.pid);
+    const memBefore = await (mem0 as Promise<number>); // the loop ran at least once
     const txt = txtLines(server.transcripts);
     const txtFiles = fs.readdirSync(server.transcripts).filter((n) => n.endsWith('.txt'));
     const wavs = fs.readdirSync(server.transcripts).filter((n) => n.endsWith('.wav')).map((n) => (fs.statSync(path.join(server.transcripts, n)).size - 44) / 2 / SR);
     const sentSec = sentSamples / SR;
     const cutTimes = cuts.map((c) => c * STEP);
     const items = truth(m).map((u) => ({ ...u, cut: cutTimes.some((c) => c >= u.start - 0.5 && c <= u.end + 1) }));
-    const j = judge(items.map((u) => ({ ...u, orphan: u.orphan || u.cut })), lineList(all));
+    // The sentences in a line the old connection finished after a drop are judged on that line in the .txt: no page got
+    // it (D2), and it often holds the sentences said before the one the drop cut, too.
+    const late = finishedAfterDrop(txt, all.finals, cutTimes);
+    const received = lineList(all);
+    const j = judge(items.map((u) => ({ ...u, orphan: u.orphan || u.cut })), [...received, ...late]);
+    const onPage = (u) => received.some((l) => l.mic === u.home && l.end > u.at[u.home][0] - 0.3 && l.start < u.at[u.home][1] + 0.3);
+    const caughtLate = j.utterances.filter((u) => u.judged && u.solo && u.caught && !onPage(u)).length;
+    // Everything judged, for tracing a failure (TESTING.md §10).
+    fs.writeFileSync(path.join(OUT, 'reconnects.json'), JSON.stringify({ drops: cutTimes, txt, late, lines: j.lines, utterances: j.utterances.map(({ clip, ...u }) => u) }));
     const ok = all.names.size === 1 && txtFiles.length === 1 && !malformed(txt).length && backwards(txt) === 0
       && wavs.length === 2 && wavs.every((s) => Math.abs(s - sentSec) <= 0.2)
       && txt.length >= all.finals.length && txt.length - all.finals.length <= 2 * drops
-      && rate(j.all.solo) >= 0.98 && j.all.wrong === 0 && all.errors.length === 0 && mem1 - (mem0 as number) <= 30;
+      && rate(j.all.solo) >= 0.98 && j.all.wrong === 0 && all.errors.length === 0 && mem1 - memBefore <= 30;
     t.check('STRESS-CONN-03', `(D2) the connection drops ${drops} times in a ${minutes}-minute meeting and resumes the transcript: one .txt with the clock going on, WAVs whole, nothing lost, memory flat`, ok,
       `${txtFiles.length} .txt (${all.names.size} name(s)); ${txt.length} lines for ${all.finals.length} received (${txt.length - all.finals.length} finished after a drop), ${backwards(txt)} with an earlier time than the line before, ${malformed(txt).length} malformed; `
-      + `WAVs ${wavs.map((s) => p(s, 1)).join(', ')} s for ${p(sentSec, 1)} s sent; solo caught ${pc(j.all.solo.caught, j.all.solo.n)} (${items.filter((u) => u.cut && !u.orphan).length} cut by a drop, not judged), wrong mic ${j.all.wrong}; ${all.errors.length} errors; memory ${mem0} → ${mem1} MB`);
+      + `WAVs ${wavs.map((s) => p(s, 1)).join(', ')} s for ${p(sentSec, 1)} s sent; solo caught ${pc(j.all.solo.caught, j.all.solo.n)} (${caughtLate} of them only in a line finished after a drop; `
+      + `${items.filter((u) => u.cut && !u.orphan).length} cut by a drop, not judged), wrong mic ${j.all.wrong}; ${all.errors.length} errors; memory ${memBefore} → ${mem1} MB`);
   } finally {
     keepLog(server, 'reconnects');
     await server.stop();
@@ -668,10 +679,10 @@ async function tuning() {
     const expected: Record<string, number> = {};
     let sent = 0;
     let toggles = 0;
-    let mem0 = null as number | null; // set by onChunk below
+    let mem0: Promise<number> | null = null; // read by onChunk below, while the meeting plays on
     const r = await play(server, m, {
       async onChunk(i, res, ws) {
-        if (i === from) mem0 = await rss(server.pid);
+        if (i === from) mem0 = settledMemory(server.pid).catch(() => NaN); // awaited after the meeting: a failed reading fails the check
         if (i < from || i >= to || (i - from) % every || sent >= changes) return;
         const keys = Object.keys(TUNING).filter(() => rand() < 0.4);
         const values = Object.fromEntries((keys.length ? keys : ['vadThreshold']).map((k) => [k, TUNING[k].min + rand() * (TUNING[k].max - TUNING[k].min)]));
@@ -683,7 +694,9 @@ async function tuning() {
       },
     });
     await close(r.ws);
-    const mem1 = await rss(server.pid);
+    await sleep(1500);
+    const mem1 = await settledMemory(server.pid);
+    const memBefore = await (mem0 as Promise<number> | null); // null only if the meeting never reached `from`
     let saved: Record<string, number> | null = null;
     try {
       saved = JSON.parse(fs.readFileSync(server.settingsFile, 'utf8')).tuning;
@@ -693,8 +706,8 @@ async function tuning() {
     const last = r.tuning.at(-1)?.values ?? {};
     const applied = Object.entries(expected).every(([k, x]) => last[k] === x && saved?.[k] === x);
     const late = r.finals.filter((f) => f.end > 0.8 * m.length).length;
-    t.check('STRESS-TUNE-01', `${sent} setting changes and ${toggles} Steady live text toggles during a meeting: memory flat, the last values applied and saved`, mem1 - (mem0 as number) <= 30 && applied && saved !== null && late > 0,
-      `memory ${mem0} → ${mem1} MB; last values ${applied ? 'applied and saved' : `differ: sent ${JSON.stringify(expected)}, server ${JSON.stringify(last)}, file ${JSON.stringify(saved)}`}; ${late} lines in the last fifth`);
+    t.check('STRESS-TUNE-01', `${sent} setting changes and ${toggles} Steady live text toggles during a meeting: memory flat, the last values applied and saved`, memBefore !== null && mem1 - memBefore <= 30 && applied && saved !== null && late > 0,
+      `memory ${memBefore} → ${mem1} MB; last values ${applied ? 'applied and saved' : `differ: sent ${JSON.stringify(expected)}, server ${JSON.stringify(last)}, file ${JSON.stringify(saved)}`}; ${late} lines in the last fifth`);
   } finally {
     await server.stop();
   }
