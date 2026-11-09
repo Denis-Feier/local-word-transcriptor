@@ -618,6 +618,18 @@ app.whenReady().then(async () => {
       downloaded.join('\n') === spoken.join('\n') && copied.join('\n') === spoken.map((l) => l.slice(8)).join('\n') && onPage.join('\n') === copied.join('\n'),
       `Download ${JSON.stringify(downloaded)}; on the page ${onPage.map((l) => l.slice(0, 12)).join(' | ')}; Copy ${copied.map((l) => l.slice(0, 12)).join(' | ')}`);
 
+    // The Model menu rebuilt (a new list, a download's progress, a model switch): still only its two groups. Each
+    // rebuild used to leave the old <optgroup>s behind, empty, as stacked "Recommended" / "Other models" headers.
+    const standModel = (id, label, tier, installed) => ({ id, label, engine: 'fake', tier, reason: 'for the test', size: '1 MB', download: '1 MB', notes: 'Stand-in.', cloud: false, installed, progress: null });
+    stand.send({ type: 'models', active: 'fake', models: [standModel('fake', 'Fake model', 'recommended', true), standModel('fake-2', 'Second fake', 'other', false)] });
+    for (const progress of [0.1, 0.5]) stand.send({ type: 'progress', id: 'fake-2', progress });
+    stand.send({ type: 'status', state: 'loading', message: 'Loading Second fake', model: 'fake-2' });
+    // The switch is the last message, so once the status line shows it every rebuild has happened.
+    for (let n = 0; n < 50 && (await js(`document.getElementById('statusText').textContent`)) !== 'Loading Second fake'; n++) await sleep(100);
+    const rebuilt = await js(`[...document.querySelectorAll('#model optgroup')].map((g) => \`\${g.label} (\${g.children.length})\`)`);
+    t.check('UI-MODEL-04', 'the Model menu rebuilt four times (new list, two download steps, a model switch): still one Recommended and one Other models group, none empty',
+      rebuilt.join(', ') === 'Recommended (1), Other models (1)', rebuilt.join(', '));
+
     t.check('UI-LOAD-02', 'no errors in the page console', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
   } catch (err: any) {
     t.check('UI-RUN', 'the UI run finished', false, err.stack);
