@@ -2,6 +2,7 @@
 // voice detector (models/silero_vad.onnx) and are skipped without it. Case ids match TESTING.md.
 //
 //   node test/unit.ts
+import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import { createRequire } from 'node:module';
@@ -34,8 +35,8 @@ import { parseArgs } from '../scripts/benchmark-suite.ts';
 import { VC_RUNTIME_DLLS, bundledModelFiles, fileVersion, pickRuntime } from '../scripts/bundle.ts';
 import { createBacklog, lostNote } from '../web/backlog.ts';
 import { spokenOrder } from '../web/order.ts';
-import { SR, FIXTURE, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs, loadWav, saveWav, parseTopMem } from './helpers.ts';
-import { finishedAfterDrop, memoryCheck, serverMemoryOk } from './meeting.ts';
+import { SR, FIXTURE, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs, loadWav, saveWav, parseTopMem, capYoungGeneration } from './helpers.ts';
+import { finishedAfterDrop, judge, keepsUp, memoryCheck, serverMemoryOk } from './meeting.ts';
 import type { Model } from '../types/model.ts';
 import type { OnCrash, TimedResult } from '../types/engine.ts';
 import type { Vad } from 'sherpa-onnx-node';
@@ -2079,6 +2080,60 @@ if (!silero) {
   t.check('UNIT-MEM-03', 'the stress tier reads a process\'s physical footprint from top: M, K, G and B, with or without the + or - of a change; no row for the process: null',
     JSON.stringify(read) === '[210,2,1536,345,12,0]' && parseTopMem(top('210M'), 4243) === null && parseTopMem('', 4242) === null && parseTopMem('PID MEM\n4242 n/a\n', 4242) === null,
     JSON.stringify(read));
+}
+
+{
+  // A server started as the stress tier's 8× meetings start it (§14.5 #22): Node takes the cap from NODE_OPTIONS (a
+  // wrong flag there stops it), V8's heap limit drops by the young generation it gives up (3 × 48 MB where the default
+  // semi-space is 64 MB, as on the stress runs' Mac), and a burst of short-lived objects keeps it at 32 MB.
+  const probe = `const v8 = require('node:v8'); const keep = []; for (let i = 0; i < 60000; i++) keep.push({ i, s: 'x'.repeat(40) });
+    const newSpace = () => v8.getHeapSpaceStatistics().find((x) => x.space_name === 'new_space').space_size;
+    const live = []; let most = 0; const t0 = Date.now();
+    const tick = () => { const b = []; for (let i = 0; i < 300; i++) b.push({ i, text: 'cuvânt ' + i }); live.push(b); if (live.length > 20) live.shift();
+      most = Math.max(most, newSpace()); if (Date.now() - t0 < 1500) setTimeout(tick, 1);
+      else console.log(JSON.stringify({ newSpace: Math.round(most / 1048576), limit: Math.round(v8.getHeapStatistics().heap_size_limit / 1048576) })); };
+    tick();`;
+  const runProbe = (nodeOptions: string) => new Promise<any>((resolve) => execFile(process.execPath, ['-e', probe], { env: { ...process.env, NODE_OPTIONS: nodeOptions }, timeout: 20000 },
+    (err, stdout) => resolve(err ? { error: err.message.split('\n')[0] } : JSON.parse(stdout))));
+  const [capped, plain] = await Promise.all([runProbe(capYoungGeneration('')), runProbe('')]);
+  const joined = capYoungGeneration('--trace-warnings');
+  t.check('UNIT-MEM-04', 'the stress tier\'s 8× meetings cap the server\'s young generation: Node takes the cap from NODE_OPTIONS (the heap limit drops), the young generation stays ≤ 32 MB, other options are kept',
+    !capped.error && !plain.error && capped.newSpace <= 32 && capped.limit < plain.limit && joined === '--trace-warnings --max-semi-space-size=16' && capYoungGeneration('') === '--max-semi-space-size=16',
+    `capped: ${JSON.stringify(capped)}; uncapped: ${JSON.stringify(plain)}; ${joined}`);
+}
+
+{
+  // A block of 20 solo lines (1.0–1.4 s after the speech) and two people talking over each other once or twice (their
+  // lines wait for each other, D5: 9 s). The p95 of all lines moves from the solo lines to the waiting ones with one
+  // more overlap; the solo lines' p95 does not, and still catches solo lines that all came 0.8 s later (§14.5 #23).
+  const block = (t0: number, { overlaps = 1, later = 0 } = {}) => {
+    const items: any[] = [];
+    const lines: any[] = [];
+    const words = ['raportul', 'bugetul', 'contractul', 'furnizorul', 'serverul'];
+    for (let i = 0; i < 20; i++) {
+      const s = t0 + i * 5;
+      const text = `${words[i % 5]} numărul ${'abcdefghijklmnopqrstuvwxyz'[i]}${i} trebuie verificat mâine dimineață`;
+      items.push({ home: 0, solo: true, first: true, text, at: [[s, s + 3], [s + 0.15, s + 3.15]] });
+      lines.push({ mic: 0, start: s, end: s + 3, text, ms: 30, sentSec: s + 3 + 1 + i * 0.02 + later });
+    }
+    for (let k = 0; k < overlaps; k++) {
+      const s = t0 + 110 + k * 10;
+      const [a, b] = ['întârzierea vine de la vama portului', 'clienții cer oferta nouă până vineri'];
+      items.push({ home: 0, solo: false, text: a, at: [[s, s + 3], [s + 0.15, s + 3.15]] }, { home: 1, solo: false, text: b, at: [[s + 1.15, s + 4.15], [s + 1, s + 4]] });
+      lines.push({ mic: 0, start: s, end: s + 3, text: a, ms: 30, sentSec: s + 12 }, { mic: 1, start: s + 1, end: s + 4, text: b, ms: 30, sentSec: s + 13 });
+    }
+    return { items, lines };
+  };
+  const parts = { R: block(0), more: block(1000, { overlaps: 2 }), later: block(2000, { later: 0.8 }) };
+  const all = Object.values(parts);
+  const j = judge(all.flatMap((x) => x.items), all.flatMap((x) => x.lines), { groups: [{ name: 'R', start: 0, end: 200 }, { name: 'more', start: 1000, end: 1200 }, { name: 'later', start: 2000, end: 2200 }] });
+  const [R, more, later] = j.groups as any[];
+  const p2 = (x: number) => x.toFixed(2);
+  t.check('UNIT-JUDGE-01', 'keeping up is judged on solo lines: one more overlap moves the p95 of all lines from 1.4 to 9 s but not the solo lines\' (it keeps up); solo lines all 0.8 s later do not keep up',
+    R.delayP95 < 1.5 && more.delayP95 === 9 && Math.abs(R.soloDelayP95 - more.soloDelayP95) < 0.01 && later.soloDelayP95 - R.soloDelayP95 > 0.7
+      && keepsUp(R, more) && !keepsUp(R, later) && R.lines === 22 && more.lines === 24,
+    `p95 all/solo: R ${p2(R.delayP95)}/${p2(R.soloDelayP95)} s, one more overlap ${p2(more.delayP95)}/${p2(more.soloDelayP95)} s, 0.8 s later ${p2(later.delayP95)}/${p2(later.soloDelayP95)} s; `
+      + `keeps up: ${keepsUp(R, more)}, ${keepsUp(R, later)}`);
 }
 
 {

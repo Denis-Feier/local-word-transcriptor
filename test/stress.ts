@@ -16,8 +16,8 @@ import { MODELS, isInstalled, isAvailable } from '../lib/models.ts';
 import { wordKey } from '../lib/steady.ts';
 import { TUNING, sanitizeTuning } from '../lib/tuning.ts';
 import { sharedWords } from '../lib/wer.ts';
-import { SR, processMemory, serverMemory, settledMemory, startServer, scratch, sleep, suite } from './helpers.ts';
-import { CHUNK, SCRIPTS, Room, contentWords, finishedAfterDrop, hoursScript, judge, meeting, meetingFrom, memoryCheck, memoryWords, quantile, serverMemoryOk, sessionBlocks, table, truth, voices, windows } from './meeting.ts';
+import { SR, capYoungGeneration, processMemory, serverMemory, settledMemory, startServer, scratch, sleep, suite } from './helpers.ts';
+import { CHUNK, SCRIPTS, Room, contentWords, finishedAfterDrop, hoursScript, judge, keepsUp, meeting, meetingFrom, memoryCheck, memoryWords, quantile, serverMemoryOk, sessionBlocks, table, truth, voices, windows } from './meeting.ts';
 
 /** What play() records: every message with the audio sent when it arrived (sentSec), the probes and the memory samples. */
 type Played = {
@@ -340,12 +340,14 @@ function devices(statuses: any[]) {
 
 async function longMeeting(three) {
   const minutes = three ? SCRIPTS.mic3 : short ? SCRIPTS.short : hours === 4 ? SCRIPTS.full : hoursScript(hours);
-  const server = await startServer({ model: MODEL, env: three ? { MAX_MICS: '3' } : {} });
+  // V8's young generation capped at 32 MB: at 8× it grew to 128 MB, which the memory checks read as growth (§14.5 #22)
+  const server = await startServer({ model: MODEL, env: { ...(three ? { MAX_MICS: '3' } : {}), NODE_OPTIONS: capYoungGeneration() } });
   try {
     const v = await voicesFor(server);
     const m = meeting(v, { minutes, mics: three ? 3 : 2 });
     const length = m.toSession(m.length);
-    console.log(`${three ? 'three mics' : 'meeting'}: ${(length / 3600).toFixed(2)} h, ${m.utterances.length} utterances, ${v.source}, ${speed}× → ~${(length / speed / 60).toFixed(0)} min`);
+    console.log(`${three ? 'three mics' : 'meeting'}: ${(length / 3600).toFixed(2)} h, ${m.utterances.length} utterances, ${v.source}, ${speed}× → ~${(length / speed / 60).toFixed(0)} min; `
+      + `the server's young generation ≤ 32 MB (${capYoungGeneration('')})`);
     await warmUp(server, v);
     const filesBefore = await openFiles(server.pid);
     const r = await play(server, m);
@@ -363,14 +365,15 @@ async function longMeeting(three) {
     const caught = rate(j.all.solo) >= 0.98 && rate(j.all.overlapped) >= 0.9;
     const caughtDetail = `solo ${pc(j.all.solo.caught, j.all.solo.n)}, overlapped ${pc(j.all.overlapped.caught, j.all.overlapped.n)}`;
     const drift = blocks.filter((g) => Number.isFinite(g.offset)).map((g) => ({ name: g.name, d: g.offset - B.R.offset }));
-    const keepsUp = B.R2.delayP95 <= 1.25 * B.R.delayP95 + 0.3 && B.R2.modelMs <= 1.25 * B.R.modelMs;
-    const keepsDetail = `delay p95 R ${p(B.R.delayP95)} s → R′ ${p(B.R2.delayP95)} s; model ${p(B.R.modelMs, 0)} → ${p(B.R2.modelMs, 0)} ms`;
+    const keptUp = keepsUp(B.R, B.R2);
+    const keepsDetail = `solo lines' delay p95 R ${p(B.R.soloDelayP95)} s → R′ ${p(B.R2.soloDelayP95)} s (all lines ${p(B.R.delayP95)} → ${p(B.R2.delayP95)} s); `
+      + `model ${p(B.R.modelMs, 0)} → ${p(B.R2.modelMs, 0)} ms`;
     const { ok: memOk, detail: memDetail } = serverMemoryCheck(r.memory, Math.min(1800, 0.25 * length));
     if (three) {
       t.check('STRESS-MIC3-01', 'three mics for 2 hours: lines on the right mic, nothing lost, no phantom lines',
         attribution && caught && j.all.phantom === 0, `wrong+both/lines: ${attrDetail}; ${caughtDetail}; phantom ${j.all.phantom}`);
       t.check('STRESS-MIC3-02', 'three mics: no clock drift, keeps up, memory flat',
-        drift.every((x) => Math.abs(x.d) <= 0.1) && keepsUp && memOk, `drift ${drift.map((x) => `${x.name} ${p(x.d)}`).join(', ')}; ${keepsDetail}; ${memDetail}`);
+        drift.every((x) => Math.abs(x.d) <= 0.1) && keptUp && memOk, `drift ${drift.map((x) => `${x.name} ${p(x.d)}`).join(', ')}; ${keepsDetail}; ${memDetail}`);
       return;
     }
     t.check('STRESS-MEET-01', 'every line on the right mic (none in the easy blocks, ≤ 1 % in the hard ones)', attribution, `wrong+both/lines: ${attrDetail}`);
@@ -379,7 +382,7 @@ async function longMeeting(three) {
     const wer = B.R.wer.map((w, mic) => ({ mic, r: w, r2: B.R2.wer[mic] }));
     t.check('STRESS-MEET-04', 'accuracy holds: WER in R′ at most 2 points above R', wer.every((w) => w.r2 <= w.r + 0.02), wer.map((w) => `mic ${w.mic + 1} ${pc(w.r, 1)} → ${pc(w.r2, 1)}`).join(', '));
     t.check('STRESS-MEET-05', 'no clock drift: every block within 0.1 s of R', drift.every((x) => Math.abs(x.d) <= 0.1), drift.map((x) => `${x.name} ${p(x.d)}`).join(', '));
-    t.check('STRESS-MEET-06', 'keeps up: delay and model time in R′ as in R', keepsUp, keepsDetail);
+    t.check('STRESS-MEET-06', 'keeps up: solo lines\' delay and model time in R′ as in R', keptUp, keepsDetail);
     t.check('STRESS-MEET-07', 'live text to the end: live guesses in R′ ≥ 80 % of R', B.R2.partials >= 0.8 * B.R.partials, `${B.R.partials} → ${B.R2.partials}`);
     t.check('STRESS-MEET-08', 'server memory after warm-up: its low point and median rise ≤ 50 MB and ≤ 10 MB per hour, its peak ≤ 200 MB above the first 30 min', memOk, memDetail);
     const files = checkFiles(server.transcripts, r, m.events.filter((e) => e.type === 'clear').length, length);

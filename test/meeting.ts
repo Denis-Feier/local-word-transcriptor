@@ -459,6 +459,16 @@ export const memoryWords = (mem: ReturnType<typeof memoryCheck>) => {
 };
 
 /**
+ * Whether the server keeps up to the end of a long meeting (STRESS-MEET-06, -MIC3-02): the end block R′ against the same
+ * speech at the start, R, each a judge() group. The delay is the p95 of the solo lines (§14.5 #23): a line said over
+ * other speech waits for it by design (D5, §14.5 #11), and with ~6 such lines among a block's 117, the p95 of all lines
+ * sits on the edge of that group and moves with a single line (1.69 → 2.78 s on 2026-11-10, while the solo lines went
+ * 1.40 → 1.73 s). Model time is the median per sentence.
+ */
+export const keepsUp = (r: { soloDelayP95: number, modelMs: number }, r2: { soloDelayP95: number, modelMs: number }) =>
+  r2.soloDelayP95 <= 1.25 * r.soloDelayP95 + 0.3 && r2.modelMs <= 1.25 * r.modelMs;
+
+/**
  * Compare a server's final lines ({ mic (0-based), start, end, text, ms?, sentSec? }) with the truth (truth()):
  * each line is ok, phantom (nobody spoke) or wrong (another person's speech); pairs of lines are "both" when two mics
  * kept the same words; each utterance is caught or not (§14.3). An ok line is solo when nobody else spoke during it. groups: [{ name, start, end }] in session seconds
@@ -533,6 +543,7 @@ export function judge(items: any[], lines: any[], { groups = [], partials = [] }
     const us = utterances.filter((u) => mid(u.at[u.home]) >= from && mid(u.at[u.home]) < to);
     const rate = (list) => ({ n: list.length, caught: list.filter((u) => u.caught).length });
     const delays = ls.filter((l) => l.sentSec !== undefined).map((l) => l.sentSec - l.end);
+    const soloDelays = ls.filter((l) => l.solo && l.sentSec !== undefined).map((l) => l.sentSec - l.end);
     const wer = !withWer ? [] : perMic.map((_, mic) => {
       const ref = us.filter((u) => u.home === mic && !u.orphan && u.text).sort((a, b) => a.at[mic][0] - b.at[mic][0]).map((u) => u.text).join(' ');
       const hyp = ls.filter((l) => l.mic === mic).sort((a, b) => a.start - b.start).map((l) => l.text).join(' ');
@@ -549,6 +560,7 @@ export function judge(items: any[], lines: any[], { groups = [], partials = [] }
       offset: median(us.map((u) => u.offset).filter((x) => x !== null && x !== undefined)),
       delayP50: quantile(delays, 0.5),
       delayP95: quantile(delays, 0.95),
+      soloDelayP95: quantile(soloDelays, 0.95),
       modelMs: median(ls.map((l) => l.ms).filter(Number.isFinite)),
       partials: partials.filter((p) => p.sentSec >= from && p.sentSec < to).length,
     };
@@ -612,6 +624,7 @@ export function table(groups: any[], extra: (group: any) => Record<string, unkno
     WER: g.wer.map((w, mic) => `m${mic + 1} ${pct(w)}`).join(', '),
     'Clock (s)': num(g.offset),
     'Delay p50/p95 (s)': `${num(g.delayP50)} / ${num(g.delayP95)}`,
+    'Solo p95 (s)': num(g.soloDelayP95),
     'Model ms': num(g.modelMs, 0),
     'Live guesses': g.partials,
     ...extra(g),

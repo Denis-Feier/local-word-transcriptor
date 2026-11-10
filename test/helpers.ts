@@ -181,6 +181,20 @@ export async function processMemory(pid: number | undefined): Promise<{ mb: numb
 }
 
 /**
+ * The V8 flag the stress tier's meetings played at 8× start their server with (§14.5 #22): a semi-space of at most
+ * 16 MB, so a young generation of at most 32 MB. V8 sizes the young generation by how fast the process allocates, and a
+ * meeting played at 8× allocates eight times as fast as a real one: in the three stress runs that recorded V8's heap
+ * (2026-11-08, -09 and -10), Node 24 doubled it 16 → 32 → 64 → 128 MB in the first 80 minutes of meeting (heapTotal
+ * 29 → 45 → 77 → 142 MB, ~12 MB of it in use), and macOS went on charging those pages to the server after V8 shrank it
+ * again, so STRESS-MEET-08 and -MIC3-02 read V8's tuning as growth. In real time it never grew (STRESS-SOAK-06, the page
+ * at 1×: a 14 MB heap for 2 hours). The server reaches 32 MB in the warm-up, so the memory checks see what it keeps.
+ */
+export const YOUNG_GENERATION_CAP = '--max-semi-space-size=16';
+
+/** NODE_OPTIONS for a server with the young generation capped (YOUNG_GENERATION_CAP), keeping the options it has. */
+export const capYoungGeneration = (nodeOptions: string | undefined = process.env.NODE_OPTIONS): string => [nodeOptions, YOUNG_GENERATION_CAP].filter(Boolean).join(' ');
+
+/**
  * One reading of a process's memory (processMemory) for a check that compares two moments: the median of `n`
  * readings `gapMs` apart, since single readings of a busy server swing by 30 MB from one to the next.
  */
