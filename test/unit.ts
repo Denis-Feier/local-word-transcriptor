@@ -35,8 +35,8 @@ import { parseArgs } from '../scripts/benchmark-suite.ts';
 import { VC_RUNTIME_DLLS, bundledModelFiles, fileVersion, pickRuntime } from '../scripts/bundle.ts';
 import { createBacklog, lostNote } from '../web/backlog.ts';
 import { spokenOrder } from '../web/order.ts';
-import { SR, FIXTURE, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs, loadWav, saveWav, parseTopMem, capYoungGeneration } from './helpers.ts';
-import { finishedAfterDrop, judge, keepsUp, memoryCheck, serverMemoryOk } from './meeting.ts';
+import { SR, FIXTURE, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs, loadWav, saveWav, parseTopMem, capYoungGeneration, parseThermal, thermalPressure, coolDown, cooledWords } from './helpers.ts';
+import { MICS, finishedAfterDrop, heatIn, heatWords, heavy, judge, keepsUp, loopOffset, loopTruth, loopTruthByWindow, memoryCheck, serverMemoryOk, windowOffsets, windows } from './meeting.ts';
 import type { Model } from '../types/model.ts';
 import type { OnCrash, TimedResult } from '../types/engine.ts';
 import type { Vad } from 'sherpa-onnx-node';
@@ -2134,6 +2134,66 @@ if (!silero) {
       && keepsUp(R, more) && !keepsUp(R, later) && R.lines === 22 && more.lines === 24,
     `p95 all/solo: R ${p2(R.delayP95)}/${p2(R.soloDelayP95)} s, one more overlap ${p2(more.delayP95)}/${p2(more.soloDelayP95)} s, 0.8 s later ${p2(later.delayP95)}/${p2(later.soloDelayP95)} s; `
       + `keeps up: ${keepsUp(R, more)}, ${keepsUp(R, later)}`);
+}
+
+{
+  // macOS's thermal pressure (§14.5 #24), as `notifyutil -g com.apple.system.thermalpressurelevel` prints it. The
+  // stress groups whose speed is judged wait for it to be nominal before they start, and a speed check that fails
+  // while it was heavy (2 or more) is a known limit: in the heat of 2026-11-11 the model took 5–10× longer.
+  const parsed = ['com.apple.system.thermalpressurelevel 0\n', 'com.apple.system.thermalpressurelevel 2', 'com.apple.system.thermalstate 2', ''].map(parseThermal);
+  const reader = (levels: (number | null)[]) => { let i = 0; return async () => levels[Math.min(i++, levels.length - 1)] as number | null; };
+  const cooled = await coolDown({ read: reader([2, 1, 0]), pauseMs: 1 });
+  const stillHot = await coolDown({ read: reader([2]), pauseMs: 5, maxMin: 0.001 });
+  const unread = await coolDown({ read: reader([null]), pauseMs: 1 });
+  const samples = [{ at: 0, level: 0 }, { at: 600, level: 1 }, { at: 1200, level: 2 }, { at: 1800, level: 1 }, { at: 2400, level: null }];
+  const ins = [heatIn(samples, 0, 1200), heatIn(samples, 1000, 1900), heatIn(samples, 2400, 3000), heatIn([], 0, 10)];
+  const here = await thermalPressure();
+  t.check('UNIT-HEAT-01', 'macOS\'s thermal pressure: read from notifyutil\'s line, waited for until nominal (at most the time given, at once where it cannot be read), the worst level of a stretch; heavy (2) and above make a failed speed check a known limit',
+    JSON.stringify(parsed) === '[0,2,null,null]' && cooled.level === 0 && stillHot.level === 2 && unread.level === null && unread.waitedSec === 0
+      && JSON.stringify(ins) === '[1,2,null,null]' && !heavy(1) && heavy(2) && heavy(3) && !heavy(null)
+      && heatWords(2).includes('heavy') && heatWords(1) === '' && cooledWords(stillHot).startsWith('thermal pressure heavy') && (process.platform === 'darwin' ? here !== null : here === null),
+    `parsed ${JSON.stringify(parsed)}; cooled to ${cooled.level}, still ${stillHot.level} after the limit, unread ${unread.level}; worst ${JSON.stringify(ins)}; here (${process.platform}) ${here}`);
+}
+
+{
+  // The soak (§14.5 #24): a 20-minute meeting played in a loop, whose clock is 1.3 s later in its first two passes
+  // (the page lost audio in the heat, then caught up). One alignment for the whole soak, taken from the majority of
+  // the passes, puts the short replies of the first two on the other mic; aligned every 10 minutes, none.
+  const bank = fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'meeting-ro.txt'), 'utf8').split('\n').map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#') && l.split(' ').length >= 5).slice(0, 50);
+  const replies = ['Exact.', 'Sigur.', 'De acord.', 'Mulțumesc!'];
+  const P = 1200;
+  const utterances: any[] = [];
+  bank.forEach((text, i) => {
+    const start = 60 + i * 20; // the passes start 52.5 s into a 10-minute window: none straddles the step
+    const end = start + Math.min(12, 0.4 * text.split(' ').length);
+    const person = i % 2;
+    utterances.push({ person, home: person, start, end, text, first: true, solo: false });
+    utterances.push({ person: 1 - person, home: 1 - person, start: end - 2, end: end - 1, text: replies[i % 4], first: true, solo: false, short: true });
+  });
+  const m = { utterances };
+  const OFF = 7.5;
+  const length = 5 * P;
+  const lines: any[] = [];
+  for (let k = 0; k < 5; k++) {
+    const shift = k < 2 ? 1.3 : 0;
+    for (const u of utterances) {
+      const lag = MICS[u.home].lag + k * P - OFF + shift;
+      lines.push({ mic: u.home, start: u.start + lag - 0.3, end: u.end + lag + 0.2, text: u.text });
+    }
+  }
+  const global = [0, 1].map((mic) => loopOffset(m, lines, mic, P)) as number[];
+  const once = judge(loopTruth(m, global, length, P), lines, { groups: windows(length) });
+  const perWindow = windowOffsets(m, lines, global, length, P);
+  const followed = judge(loopTruthByWindow(m, global, perWindow, length, P), lines, { groups: windows(length) });
+  const wrongIn = (j) => j.groups.map((g) => g.wrong);
+  const off = (w) => (w.offsets[0] as number).toFixed(2);
+  t.check('UNIT-LOOP-01', 'the soak aligned every 10 minutes: a clock 1.3 s later in the first two passes of the loop puts their short replies on the other mic with one alignment, none when each 10 minutes is aligned on its own; every utterance caught either way',
+    once.all.wrong === 100 && wrongIn(once).slice(4).every((x) => x === 0) && followed.all.wrong === 0
+      && followed.all.overlapped.caught === 250 && followed.all.overlapped.n === 250 && once.all.overlapped.caught === 250
+      && perWindow.slice(0, 4).every((w) => Math.abs((w.offsets[0] as number) - (OFF - 1.3)) < 0.05) && perWindow.slice(4).every((w) => Math.abs((w.offsets[0] as number) - OFF) < 0.05),
+    `one alignment (${global.map((x) => x.toFixed(2)).join(', ')} s): ${once.all.wrong} wrong (${wrongIn(once).join(', ')} per 10 min), ${once.all.overlapped.caught}/${once.all.overlapped.n} caught; every 10 minutes (${perWindow.map(off).join(', ')} s): ${followed.all.wrong} wrong, `
+      + `${followed.all.overlapped.caught}/${followed.all.overlapped.n} caught`);
 }
 
 {

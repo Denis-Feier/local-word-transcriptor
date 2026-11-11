@@ -16,13 +16,13 @@ import { MODELS, isInstalled, isAvailable } from '../lib/models.ts';
 import { wordKey } from '../lib/steady.ts';
 import { TUNING, sanitizeTuning } from '../lib/tuning.ts';
 import { sharedWords } from '../lib/wer.ts';
-import { SR, capYoungGeneration, processMemory, serverMemory, settledMemory, startServer, scratch, sleep, suite } from './helpers.ts';
-import { CHUNK, SCRIPTS, Room, contentWords, finishedAfterDrop, hoursScript, judge, keepsUp, meeting, meetingFrom, memoryCheck, memoryWords, quantile, serverMemoryOk, sessionBlocks, table, truth, voices, windows } from './meeting.ts';
+import { SR, THERMAL_LEVELS, capYoungGeneration, coolDown, cooledWords, processMemory, serverMemory, settledMemory, startServer, scratch, sleep, suite, thermalPressure } from './helpers.ts';
+import { CHUNK, SCRIPTS, Room, contentWords, finishedAfterDrop, heatIn, heatWords, heavy, hoursScript, judge, keepsUp, meeting, meetingFrom, memoryCheck, memoryWords, quantile, serverMemoryOk, sessionBlocks, table, truth, voices, windows } from './meeting.ts';
 
 /** What play() records: every message with the audio sent when it arrived (sentSec), the probes and the memory samples. */
 type Played = {
   finals: any[]; allFinals: any[]; partials: any[]; starts: Set<number>; errors: any[]; files: any[]; statuses: any[]; tuning: any[]; behind: any[];
-  unknown: any[]; sentSec: number; sentPerMic: number[]; probes: any[]; memory: any[]; backlog: any[]; closed: boolean; ws: WebSocket; wallSec: number; missingFinals: number;
+  unknown: any[]; sentSec: number; sentPerMic: number[]; probes: any[]; memory: any[]; heat: { at: number, level: number | null }[]; backlog: any[]; closed: boolean; ws: WebSocket; wallSec: number; missingFinals: number;
 };
 type PlayOptions = {
   speed?: number; saveAudio?: boolean; onChunk?: (i: number, r: Played, ws: WebSocket) => unknown; cutAt?: number; startAt?: number; probe?: boolean;
@@ -93,7 +93,7 @@ const familyRss = (serverPid) => Math.round(family(serverPid).reduce((sum, r) =>
  */
 async function play(server: TestServer, m: any, { speed: pace = speed, saveAudio = true, onChunk, cutAt = Infinity, startAt = 0, probe = true, waitMs = 300000, room = new Room(m), from = 0, resume = null }: PlayOptions = {}): Promise<Played> {
   const ws = new WebSocket(server.ws('?mics'));
-  const r: Played = { finals: [], allFinals: [], partials: [], starts: new Set(), errors: [], files: [], statuses: [], tuning: [], behind: [], unknown: [], sentSec: from * STEP, sentPerMic: [0, 0, 0], probes: [], memory: [], backlog: [], closed: false, ws, wallSec: 0, missingFinals: 0 };
+  const r: Played = { finals: [], allFinals: [], partials: [], starts: new Set(), errors: [], files: [], statuses: [], tuning: [], behind: [], unknown: [], sentSec: from * STEP, sentPerMic: [0, 0, 0], probes: [], memory: [], heat: [], backlog: [], closed: false, ws, wallSec: 0, missingFinals: 0 };
   const finalIds = new Set();
   ws.on('message', (data) => {
     const msg = JSON.parse(data.toString());
@@ -141,6 +141,8 @@ async function play(server: TestServer, m: any, { speed: pace = speed, saveAudio
     }, 2000));
     // The server's memory and what it is made of (#48): { mb, heap, external, native }.
     timers.push(setInterval(() => serverMemory(server).then((mem) => r.memory.push({ sentSec: r.sentSec, ...mem, wall: Date.now() })).catch(() => {}), 10000));
+    // macOS's thermal pressure, by session time (§14.5 #24): the speed checks are known limits where it was heavy.
+    timers.push(setInterval(() => thermalPressure().then((level) => r.heat.push({ at: r.sentSec, level })), 10000));
   }
   while (Date.now() < startAt) await sleep(2);
   const events = new Map<number, any>(m.events.filter((e) => e.type !== 'layout').map((e) => [Math.round(e.t / STEP), e]));
@@ -235,7 +237,8 @@ function report(name, title, m, r, extra = '') {
   const j = judge(items, lineList(r), { groups: [...blocks, ...windows(length).map((w) => ({ ...w, window: true }))], partials: r.partials });
   const mem = (g) => {
     const s = r.memory.filter((x) => x.sentSec >= g.start && x.sentSec < g.end);
-    return { 'Server MB': s.length ? s.at(-1).mb : '—' };
+    const heat = heatIn(r.heat, g.start, g.end);
+    return { 'Server MB': s.length ? s.at(-1).mb : '—', 'Heat (macOS)': heat === null ? '—' : (THERMAL_LEVELS[heat] ?? heat) };
   };
   const md = [
     `# ${title}`, '', `Voices: ${m.voice}. ${(length / 3600).toFixed(2)} h of meeting, ${m.utterances.length} utterances, ${r.finals.length} lines, streamed in ${(r.wallSec / 60).toFixed(1)} min.`, extra, '',
@@ -248,7 +251,7 @@ function report(name, title, m, r, extra = '') {
   // Everything judged, for tracing a failure (TESTING.md §10): lines with their verdict, utterances caught or not.
   const plain = ({ clip, ...u }) => u;
   // memory: every sample of the server's memory, with what it is made of (#48).
-  fs.writeFileSync(path.join(OUT, `${name}.json`), JSON.stringify({ lines: j.lines, utterances: j.utterances.map(plain), events: m.events, dropouts: m.dropouts, blocks: sessionBlocks(m), memory: r.memory }));
+  fs.writeFileSync(path.join(OUT, `${name}.json`), JSON.stringify({ lines: j.lines, utterances: j.utterances.map(plain), events: m.events, dropouts: m.dropouts, blocks: sessionBlocks(m), memory: r.memory, heat: r.heat }));
   console.log(`report: ${path.join(OUT, `${name}.md`)}`);
   return j;
 }
@@ -340,6 +343,8 @@ function devices(statuses: any[]) {
 
 async function longMeeting(three) {
   const minutes = three ? SCRIPTS.mic3 : short ? SCRIPTS.short : hours === 4 ? SCRIPTS.full : hoursScript(hours);
+  // Its speed is judged, so it starts on a Mac that is not hot from the group before it (§14.5 #24).
+  const cooled = await coolDown();
   // V8's young generation capped at 32 MB: at 8× it grew to 128 MB, which the memory checks read as growth (§14.5 #22)
   const server = await startServer({ model: MODEL, env: { ...(three ? { MAX_MICS: '3' } : {}), NODE_OPTIONS: capYoungGeneration() } });
   try {
@@ -347,7 +352,7 @@ async function longMeeting(three) {
     const m = meeting(v, { minutes, mics: three ? 3 : 2 });
     const length = m.toSession(m.length);
     console.log(`${three ? 'three mics' : 'meeting'}: ${(length / 3600).toFixed(2)} h, ${m.utterances.length} utterances, ${v.source}, ${speed}× → ~${(length / speed / 60).toFixed(0)} min; `
-      + `the server's young generation ≤ 32 MB (${capYoungGeneration('')})`);
+      + `the server's young generation ≤ 32 MB (${capYoungGeneration('')}); ${cooledWords(cooled)}`);
     await warmUp(server, v);
     const filesBefore = await openFiles(server.pid);
     const r = await play(server, m);
@@ -366,14 +371,18 @@ async function longMeeting(three) {
     const caughtDetail = `solo ${pc(j.all.solo.caught, j.all.solo.n)}, overlapped ${pc(j.all.overlapped.caught, j.all.overlapped.n)}`;
     const drift = blocks.filter((g) => Number.isFinite(g.offset)).map((g) => ({ name: g.name, d: g.offset - B.R.offset }));
     const keptUp = keepsUp(B.R, B.R2);
+    // The speed checks judge R′ against R: one that fails while macOS was heavy in R′ is a known limit (§14.5 #24). A hot
+    // R alone excuses nothing: it only makes R′ easier to match.
+    const heat = heatIn(r.heat, B.R2.start, B.R2.end);
     const keepsDetail = `solo lines' delay p95 R ${p(B.R.soloDelayP95)} s → R′ ${p(B.R2.soloDelayP95)} s (all lines ${p(B.R.delayP95)} → ${p(B.R2.delayP95)} s); `
-      + `model ${p(B.R.modelMs, 0)} → ${p(B.R2.modelMs, 0)} ms`;
+      + `model ${p(B.R.modelMs, 0)} → ${p(B.R2.modelMs, 0)} ms${heatWords(heat)}`;
     const { ok: memOk, detail: memDetail } = serverMemoryCheck(r.memory, Math.min(1800, 0.25 * length));
     if (three) {
       t.check('STRESS-MIC3-01', 'three mics for 2 hours: lines on the right mic, nothing lost, no phantom lines',
         attribution && caught && j.all.phantom === 0, `wrong+both/lines: ${attrDetail}; ${caughtDetail}; phantom ${j.all.phantom}`);
-      t.check('STRESS-MIC3-02', 'three mics: no clock drift, keeps up, memory flat',
-        drift.every((x) => Math.abs(x.d) <= 0.1) && keptUp && memOk, `drift ${drift.map((x) => `${x.name} ${p(x.d)}`).join(', ')}; ${keepsDetail}; ${memDetail}`);
+      const noDrift = drift.every((x) => Math.abs(x.d) <= 0.1);
+      t.check('STRESS-MIC3-02', 'three mics: no clock drift, keeps up, memory flat', noDrift && keptUp && memOk,
+        `drift ${drift.map((x) => `${x.name} ${p(x.d)}`).join(', ')}; ${keepsDetail}; ${memDetail}`, { known: noDrift && memOk && heavy(heat) });
       return;
     }
     t.check('STRESS-MEET-01', 'every line on the right mic (none in the easy blocks, ≤ 1 % in the hard ones)', attribution, `wrong+both/lines: ${attrDetail}`);
@@ -382,8 +391,8 @@ async function longMeeting(three) {
     const wer = B.R.wer.map((w, mic) => ({ mic, r: w, r2: B.R2.wer[mic] }));
     t.check('STRESS-MEET-04', 'accuracy holds: WER in R′ at most 2 points above R', wer.every((w) => w.r2 <= w.r + 0.02), wer.map((w) => `mic ${w.mic + 1} ${pc(w.r, 1)} → ${pc(w.r2, 1)}`).join(', '));
     t.check('STRESS-MEET-05', 'no clock drift: every block within 0.1 s of R', drift.every((x) => Math.abs(x.d) <= 0.1), drift.map((x) => `${x.name} ${p(x.d)}`).join(', '));
-    t.check('STRESS-MEET-06', 'keeps up: solo lines\' delay and model time in R′ as in R', keptUp, keepsDetail);
-    t.check('STRESS-MEET-07', 'live text to the end: live guesses in R′ ≥ 80 % of R', B.R2.partials >= 0.8 * B.R.partials, `${B.R.partials} → ${B.R2.partials}`);
+    t.check('STRESS-MEET-06', 'keeps up: solo lines\' delay and model time in R′ as in R', keptUp, keepsDetail, { known: heavy(heat) });
+    t.check('STRESS-MEET-07', 'live text to the end: live guesses in R′ ≥ 80 % of R', B.R2.partials >= 0.8 * B.R.partials, `${B.R.partials} → ${B.R2.partials}${heatWords(heat)}`, { known: heavy(heat) });
     t.check('STRESS-MEET-08', 'server memory after warm-up: its low point and median rise ≤ 50 MB and ≤ 10 MB per hour, its peak ≤ 200 MB above the first 30 min', memOk, memDetail);
     const files = checkFiles(server.transcripts, r, m.events.filter((e) => e.type === 'clear').length, length);
     t.check('STRESS-MEET-09', 'files: every line in the .txt with hour times, WAVs as long as the audio sent', files.ok, files.detail);

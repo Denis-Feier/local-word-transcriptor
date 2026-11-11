@@ -195,6 +195,51 @@ export const YOUNG_GENERATION_CAP = '--max-semi-space-size=16';
 export const capYoungGeneration = (nodeOptions: string | undefined = process.env.NODE_OPTIONS): string => [nodeOptions, YOUNG_GENERATION_CAP].filter(Boolean).join(' ');
 
 /**
+ * macOS's thermal pressure levels (§14.5 #24), as OSThermalNotification numbers them: what `notifyutil -g
+ * com.apple.system.thermalpressurelevel` reads. At `heavy` and above macOS slows the chips: in the stress run of
+ * 2026-11-11 the model took 5–10× longer on the same audio while it was heavy.
+ */
+export const THERMAL_LEVELS = ['nominal', 'moderate', 'heavy', 'trapping', 'sleeping'] as const;
+export const HEAVY = 2;
+
+/** The level in `notifyutil -g com.apple.system.thermalpressurelevel`'s output ("<name> <level>"), or null. */
+export function parseThermal(out: string): number | null {
+  const m = out.trim().match(/^com\.apple\.system\.thermalpressurelevel\s+(\d+)$/);
+  return m ? Number(m[1]) : null;
+}
+
+/** macOS's thermal pressure now (THERMAL_LEVELS), or null elsewhere or when it cannot be read. */
+export async function thermalPressure(): Promise<number | null> {
+  if (process.platform !== 'darwin') return null;
+  try {
+    const { stdout } = await promisify(execFile)('notifyutil', ['-g', 'com.apple.system.thermalpressurelevel'], { timeout: 5000 });
+    return parseThermal(stdout);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Before a stress group whose speed is judged: wait until macOS's thermal pressure is back to nominal, at most
+ * `maxMin` minutes, so the group does not start on a Mac still hot from the one before it (§14.5 #24; the stress run
+ * of 2026-11-11 started 11 minutes after a full tier and went heavy 9 minutes in). Returns the level it starts at and
+ * how long it waited; at once where the pressure cannot be read.
+ */
+export async function coolDown({ maxMin = 15, read = thermalPressure, pauseMs = 15000 }: { maxMin?: number, read?: () => Promise<number | null>, pauseMs?: number } = {}): Promise<{ level: number | null, waitedSec: number }> {
+  const t0 = Date.now();
+  let level = await read();
+  while (level !== null && level > 0 && Date.now() - t0 < maxMin * 60000) {
+    await sleep(pauseMs);
+    level = await read();
+  }
+  return { level, waitedSec: Math.round((Date.now() - t0) / 1000) };
+}
+
+/** coolDown()'s outcome in words, for a group's log. */
+export const cooledWords = ({ level, waitedSec }: { level: number | null, waitedSec: number }) =>
+  (level === null ? 'thermal pressure not read here' : `thermal pressure ${THERMAL_LEVELS[level] ?? level}${waitedSec >= 15 ? ` after waiting ${(waitedSec / 60).toFixed(1)} min` : ''}`);
+
+/**
  * One reading of a process's memory (processMemory) for a check that compares two moments: the median of `n`
  * readings `gapMs` apart, since single readings of a busy server swing by 30 MB from one to the next.
  */

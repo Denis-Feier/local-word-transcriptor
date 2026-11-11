@@ -10,8 +10,8 @@ import path from 'node:path';
 import { config } from '../../lib/config.ts';
 import { MODELS, isInstalled, isAvailable } from '../../lib/models.ts';
 import { TUNING, tuningFrom } from '../../lib/tuning.ts';
-import { ROOT, SR, fakeServer, freePort, outOfPlace, saveWav, scratch, serverMemory, silence, sleep, startServer, suite } from '../helpers.ts';
-import { SCRIPTS, Room, contentWords, judge, loopOffset, loopTruth, meeting, memoryCheck, memoryWords, quantile, serverMemoryOk, table, voices, windows } from '../meeting.ts';
+import { ROOT, SR, coolDown, cooledWords, fakeServer, freePort, outOfPlace, saveWav, scratch, serverMemory, silence, sleep, startServer, suite, thermalPressure } from '../helpers.ts';
+import { SCRIPTS, Room, contentWords, heatIn, heatWords, heavy, judge, loopOffset, loopTruth, loopTruthByWindow, meeting, memoryCheck, memoryWords, quantile, serverMemoryOk, table, voices, windowOffsets, windows } from '../meeting.ts';
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
@@ -154,6 +154,15 @@ const messages = (l) => {
 
 async function pageGroup() {
   const N = short ? 1000 : 5000;
+  // Its speed is judged, so it starts on a Mac that is not hot from the group before it, and the checks that time the
+  // page are known limits where macOS reported heavy thermal pressure while they ran (§14.5 #24).
+  console.log(`page: ${cooledWords(await coolDown())}`);
+  const heatLog: { at: number, level: number | null }[] = [];
+  const readHeat = async () => heatLog.push({ at: Date.now(), level: await thermalPressure() });
+  const heatTimer = setInterval(readHeat, 5000);
+  heatTimer.unref();
+  /** The worst thermal pressure from `t0` (Date.now()) until now, with a reading now. */
+  const heatSince = async (t0: number) => (await readHeat(), heatIn(heatLog, t0, Infinity));
   for (const f of ['a', 'b', 'c']) saveWav(path.join(SPEAKERS, `${f}.wav`), silence(1));
   const fake = await fakeServer({ greet: [{ type: 'tuning', values: tuningFrom(config), defaults: tuningFrom(config), ranges: TUNING }] });
   const win = newWindow();
@@ -178,6 +187,7 @@ async function pageGroup() {
 
     // PAGE-01, 02: the lines of a long meeting, in batches of 500 to see whether each costs more as the page fills.
     const all = fakeLines(0, N);
+    const fedFrom = Date.now();
     const batches: number[] = [];
     for (let b = 0; b < N; b += 500) {
       const before = await dt.metrics();
@@ -186,8 +196,9 @@ async function pageGroup() {
       batches.push(((after.TaskDuration - before.TaskDuration) * 1000) / (Math.min(500, N - b) * 5));
     }
     const longest = Math.max(0, ...(await js(win, 'window.__long')));
+    const heat1 = await heatSince(fedFrom);
     t.check('STRESS-PAGE-01', `${N} lines with their live guesses: each message costs no more at the end than at the start (≤ 2×), no task over 200 ms`,
-      (batches.at(-1) as number) <= 2 * batches[0] && longest <= 200, `main-thread time per message: ${batches.map((x) => p(x, 2)).join(', ')} ms; longest task ${p(longest, 0)} ms`);
+      (batches.at(-1) as number) <= 2 * batches[0] && longest <= 200, `main-thread time per message: ${batches.map((x) => p(x, 2)).join(', ')} ms; longest task ${p(longest, 0)} ms${heatWords(heat1)}`, { known: heavy(heat1) });
     const dom = await js(win, `[...document.querySelectorAll('#transcript .line')].map((l) => ({ text: l.querySelector('.text').textContent, time: l.querySelector('time').textContent, overlap: l.classList.contains('overlap'), mic: l.dataset.mic, partial: l.classList.contains('partial') }))`);
     const expectOverlap = all.map((l) => all.some((o) => o.mic !== l.mic && Math.min(l.end, o.end) - Math.max(l.start, o.start) >= 0.5));
     const inOrder = dom.length === N && dom.every((d, i) => d.text === all[i].text && !d.partial && d.mic === String(all[i].mic + 1));
@@ -227,6 +238,7 @@ async function pageGroup() {
     await js(win, watch);
     await js(captions, watch);
     const probes = fakeLines(N + 350, 5).map((l, i) => ({ ...l, text: `${l.text} (proba ${i + 1})` }));
+    const probedFrom = Date.now();
     const sentAt: number[] = [];
     for (const l of probes) {
       sentAt.push(Date.now());
@@ -240,18 +252,23 @@ async function pageGroup() {
       return probes.map((l, i) => (Object.entries(seen as Record<string, number>).find(([text]) => text.includes(l.text))?.[1] ?? Infinity) - sentAt[i]);
     };
     const [onStage, onCaptions] = [await lag(win), await lag(captions)];
+    const heat5 = await heatSince(probedFrom);
     t.check('STRESS-PAGE-05', `at line ~${N} the projector and the caption window show a new line within 300 ms`, [...onStage, ...onCaptions].every((x) => x <= 300),
-      `projector ${onStage.map((x) => p(x, 0)).join(', ')} ms; caption window ${onCaptions.map((x) => p(x, 0)).join(', ')} ms`);
+      `projector ${onStage.map((x) => p(x, 0)).join(', ')} ms; caption window ${onCaptions.map((x) => p(x, 0)).join(', ')} ms${heatWords(heat5)}`, { known: heavy(heat5) });
     await js(win, `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
 
     // PAGE-06: the server catching up after a backlog sends 500 lines at once.
     await js(win, 'window.__long = []');
+    const burstFrom = Date.now();
+    await readHeat();
     await feed(fakeLines(N + 355, 500), Infinity);
     const burst = Math.max(0, ...(await js(win, 'window.__long')));
     const t0 = Date.now();
     await js(win, `document.getElementById('openSettings').click(); document.getElementById('settingsClose').click(); 1`);
     const answer = Date.now() - t0;
-    t.check('STRESS-PAGE-06', 'a burst of 500 lines: no task over 500 ms, a click answered within 200 ms after it', burst <= 500 && answer <= 200, `longest task ${p(burst, 0)} ms; click answered in ${answer} ms`);
+    const heat6 = await heatSince(burstFrom);
+    t.check('STRESS-PAGE-06', 'a burst of 500 lines: no task over 500 ms, a click answered within 200 ms after it', burst <= 500 && answer <= 200,
+      `longest task ${p(burst, 0)} ms; click answered in ${answer} ms${heatWords(heat6)}`, { known: heavy(heat6) });
 
     // PAGE-07: Clear with the whole meeting on the page; its memory must come back.
     await dt.gc();
@@ -266,6 +283,7 @@ async function pageGroup() {
     t.check('STRESS-PAGE-08', 'no errors in the page console during the whole run', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
     captions.destroy();
   } finally {
+    clearInterval(heatTimer);
     win.destroy();
     await fake.close();
   }
@@ -326,7 +344,15 @@ async function soak() {
     const lines = conn.finals.map((f) => ({ mic: f.mic, start: f.start, end: f.end, text: f.text, ms: f.ms, arrival: f.arrival }));
     const length = conn.sent.length * 0.1;
     const offsets = [0, 1].map((mic) => loopOffset(m, lines, mic, period));
-    const truthItems = loopTruth(m, offsets.map((o) => o ?? 0), length, period);
+    // The alignment is taken every 10 minutes (§14.5 #24): the page can lose audio under load (~1 s in the first hour
+    // on 2026-11-11), and one alignment for the whole soak then puts the short replies of the passes before it on the
+    // other mic. Lost audio is STRESS-SOAK-01's to judge; the detail of SOAK-02 says how far the alignment moved.
+    const perWindow = windowOffsets(m, lines, offsets, length, period);
+    const truthItems = loopTruthByWindow(m, offsets.map((o) => o ?? 0), perWindow, length, period);
+    const alignMoved = (mic: number) => {
+      const xs = perWindow.map((w) => w.offsets[mic]).filter((x): x is number => x !== null);
+      return xs.length ? Math.max(...xs) - Math.min(...xs) : NaN;
+    };
     // The delay people see: from when the audio at a line's end was sent, to when the line arrived.
     const seen = lines.map((l) => ({ ...l, sentSec: undefined, delay: (l.arrival - conn.sent[Math.min(conn.sent.length - 1, Math.max(0, Math.ceil(l.end * 10) - 1))]) / 1000 }));
     const j = judge(truthItems, seen, { groups: windows(length) });
@@ -342,7 +368,7 @@ async function soak() {
     const windowsOk = full.every((g) => (g.solo.n + g.overlapped.n ? (g.solo.caught + g.overlapped.caught) / (g.solo.n + g.overlapped.n) : 1) >= 0.95 && g.wrong === 0);
     const p95 = full.map((g) => quantile(g.delays, 0.95));
     const overlapP95 = full.map((g) => quantile(g.overlapDelays, 0.95)).filter(Number.isFinite);
-    fs.writeFileSync(path.join(OUT, 'soak.md'), [`# Soak: ${minutes} min in real time through the page (${model})`, '', `Mic offsets in the loop: ${offsets.map((o) => p(o, 2)).join(', ')} s.`, '',
+    fs.writeFileSync(path.join(OUT, 'soak.md'), [`# Soak: ${minutes} min in real time through the page (${model})`, '', `Mic offsets in the loop: ${offsets.map((o) => p(o, 2)).join(', ')} s; every 10 minutes (mic 1): ${perWindow.map((w) => p(w.offsets[0], 2)).join(', ')} s.`, '',
       table(j.groups, (g) => ({ 'Seen delay p95, solo (s)': p(quantile(g.delays, 0.95)), 'Overlapping (s)': p(quantile(g.overlapDelays, 0.95)), 'Page MB': samples.filter((s) => s.sec <= g.end).at(-1)?.page ?? '—', 'Server MB': samples.filter((s) => s.sec <= g.end).at(-1)?.server ?? '—' })), '',
       // As in meeting.md and mic3.md (test/stress.ts): what SOAK-02 counts as wrong, to trace it (issue #46).
       '## Lines that are wrong', '',
@@ -354,7 +380,7 @@ async function soak() {
     t.check('STRESS-SOAK-01', `${minutes} min through the page: no audio lost between page and server`, wavs.length === 2 && wavs.every((w) => Math.abs(w.sec - recorded) <= 2),
       `recorded ${p(recorded, 1)} s; ${wavs.map((w) => `${w.n.slice(-8)} ${p(w.sec, 1)} s`).join(', ')}`);
     t.check('STRESS-SOAK-02', 'lines keep coming: every 10 minutes ≥ 95 % of utterances caught, none on the wrong mic', windowsOk && offsets.every((o) => o !== null),
-      full.map((g) => `${g.name}: ${g.solo.caught + g.overlapped.caught}/${g.solo.n + g.overlapped.n}, wrong ${g.wrong}`).join('; '));
+      `${full.map((g) => `${g.name}: ${g.solo.caught + g.overlapped.caught}/${g.solo.n + g.overlapped.n}, wrong ${g.wrong}`).join('; ')}; aligned every 10 minutes, moved ${p(alignMoved(0), 2)} s (mic 1), ${p(alignMoved(1), 2)} s (mic 2)`);
     t.check('STRESS-SOAK-03', 'the delay people see: solo lines p95 ≤ 2 s in every 10 minutes, the last no more than 0.5 s above the first; lines over other speech p95 ≤ 10 s',
       p95.every((x) => x <= 2) && p95.at(-1) <= p95[0] + 0.5 && overlapP95.every((x) => x <= 10),
       `solo p95 per 10 min: ${p95.map((x) => p(x, 1)).join(', ')} s; overlapping: ${overlapP95.map((x) => p(x, 1)).join(', ') || '—'} s`);

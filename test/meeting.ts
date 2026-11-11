@@ -9,7 +9,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { decodeWav } from '../lib/wav.ts';
 import { sharedWords, wordErrorRate, words } from '../lib/wer.ts';
-import { ROOT, SR, FIXTURE, loadWav, room } from './helpers.ts';
+import { HEAVY, ROOT, SR, FIXTURE, THERMAL_LEVELS, loadWav, room } from './helpers.ts';
 
 export const CHUNK = 1600; // 100 ms, as the page sends it
 const STEP = CHUNK / SR;
@@ -469,6 +469,26 @@ export const keepsUp = (r: { soloDelayP95: number, modelMs: number }, r2: { solo
   r2.soloDelayP95 <= 1.25 * r.soloDelayP95 + 0.3 && r2.modelMs <= 1.25 * r.modelMs;
 
 /**
+ * The worst thermal pressure macOS reported (THERMAL_LEVELS in helpers.ts) in [from, to), from samples
+ * { at, level } taken as a group ran (`at` in the group's own unit: session seconds, or ms of the clock); null when
+ * none was read (not macOS).
+ */
+export function heatIn(samples: { at: number, level: number | null }[], from: number, to: number): number | null {
+  const xs = samples.filter((x) => x.at >= from && x.at < to && x.level !== null).map((x) => x.level as number);
+  return xs.length ? Math.max(...xs) : null;
+}
+
+/**
+ * Whether macOS slowed the chips (§14.5 #24): heavy thermal pressure or worse. A speed check that fails then is a
+ * known limit (◌), since the model took 5–10× longer on the same audio in the heat of 2026-11-11; a check that fails
+ * on a Mac that was not heavy still fails, and one that passes passes.
+ */
+export const heavy = (level: number | null) => level !== null && level >= HEAVY;
+
+/** heatIn()'s level for a check's detail: "; macOS reported heavy thermal pressure …" when heavy(), or nothing. */
+export const heatWords = (level: number | null) => (heavy(level) ? `; macOS reported ${THERMAL_LEVELS[level as number] ?? `level ${level}`} thermal pressure (it slows the chips)` : '');
+
+/**
  * Compare a server's final lines ({ mic (0-based), start, end, text, ms?, sentSec? }) with the truth (truth()):
  * each line is ok, phantom (nobody spoke) or wrong (another person's speech); pairs of lines are "both" when two mics
  * kept the same words; each utterance is caught or not (§14.3). An ok line is solo when nobody else spoke during it. groups: [{ name, start, end }] in session seconds
@@ -666,4 +686,37 @@ export function loopTruth(m, offsets, length, period) {
     }
   }
   return out;
+}
+
+/**
+ * For the soak (§14.5 #24): each mic's loopOffset() in each window (10 minutes), unwrapped next to the soak's own
+ * (`global`) and kept within `maxShift` s of it, or the soak's where a window has too few lines to tell. The clock of
+ * a looped meeting can move during a run: in the heat of 2026-11-11 the page lost ~1 s of audio in the first hour,
+ * its alignment moving from over +0.5 s to −0.3 s, and with one alignment for the whole soak the short replies of its
+ * first two passes fell outside their own utterances and were judged on the other mic.
+ */
+export function windowOffsets(m, lines: { mic: number, start: number, text: string }[], global: (number | null)[], length: number, period: number, { sec = 600, maxShift = 3 } = {}) {
+  return windows(length, sec).map((w) => ({
+    ...w,
+    offsets: global.map((g, mic) => {
+      if (g === null) return null;
+      const o = loopOffset(m, lines.filter((l) => l.start >= w.start && l.start < w.end), mic, period);
+      if (o === null) return g;
+      const near = o + Math.round((g - o) / period) * period;
+      return Math.abs(near - g) <= maxShift ? near : g;
+    }),
+  }));
+}
+
+/**
+ * loopTruth() aligned window by window (windowOffsets()): each utterance is placed in a window by the soak's own
+ * alignment (`global`), then timed by that window's offsets, so none is counted twice or lost at a window's edge.
+ */
+export function loopTruthByWindow(m, global: number[], perWindow: { start: number, end: number, offsets: (number | null)[] }[], length: number, period: number) {
+  return loopTruth(m, global, length, period).map((u) => {
+    const s = u.at[u.home][0];
+    const w = perWindow.find((x) => s >= x.start && s < x.end) ?? (s < 0 ? perWindow[0] : perWindow.at(-1));
+    const offs = global.map((g, mic) => w?.offsets[mic] ?? g);
+    return { ...u, at: offs.map((off, mic) => [u.start + MICS[mic].lag + u.loop * period - off, u.end + MICS[mic].lag + u.loop * period - off]) };
+  });
 }

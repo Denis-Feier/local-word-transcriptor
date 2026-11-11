@@ -218,11 +218,13 @@ async function stressTier() {
   const env = { STRESS_OUT: path.join(OUT, 'stress'), NODE_BIN: node };
   const server = (group: string, minutes: number) => () => run(`stress-${group.replace(/,/g, '-')}`, node, ['test/stress.ts', '--group', group, ...pass], { minutes, env, tag: true });
   const page = (group: string, minutes: number) => () => run(`stress-${group}`, electron, ['test/ui/stress.ts', '--group', group, ...pass], { minutes, env, tag: true });
+  // The groups whose speed is judged first wait, up to 15 minutes, for the Mac to cool down (coolDown(), §14.5 #24).
+  const COOL = 15;
   const groups: Record<string, () => Promise<void>> = {
     soak: page('soak', 150),
-    meet: server('meet', short ? 20 : (hours * 60) / 8 + 30),
-    mic3: server('mic3', 40),
-    page: page('page', 20),
+    meet: server('meet', (short ? 20 : (hours * 60) / 8 + 30) + COOL),
+    mic3: server('mic3', 40 + COOL),
+    page: page('page', 20 + COOL),
     'conn,conc,tune,disk': server('conn,conc,tune,disk', short ? 30 : 90),
     net: page('net', short ? 20 : 100),
     cap: server('cap', 240),
