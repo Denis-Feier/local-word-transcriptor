@@ -35,7 +35,7 @@ import { parseArgs } from '../scripts/benchmark-suite.ts';
 import { VC_RUNTIME_DLLS, bundledModelFiles, fileVersion, pickRuntime } from '../scripts/bundle.ts';
 import { createBacklog, lostNote } from '../web/backlog.ts';
 import { spokenOrder } from '../web/order.ts';
-import { SR, FIXTURE, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs, loadWav, saveWav, parseTopMem, capYoungGeneration, parseThermal, thermalPressure, coolDown, cooledWords } from './helpers.ts';
+import { SR, FIXTURE, scratch, speakers, silence, concat, twoMics, sleep, suite, fakeElevenLabs, loadWav, saveWav, parseTopMem, capYoungGeneration, parseThermal, thermalPressure, coolDown, cooledWords, typedValue } from './helpers.ts';
 import { MICS, finishedAfterDrop, heatIn, heatWords, heavy, judge, keepsUp, loopOffset, loopTruth, loopTruthByWindow, memoryCheck, serverMemoryOk, windowOffsets, windows } from './meeting.ts';
 import type { Model } from '../types/model.ts';
 import type { OnCrash, TimedResult } from '../types/engine.ts';
@@ -2100,6 +2100,51 @@ if (!silero) {
   t.check('UNIT-MEM-04', 'the stress tier\'s 8× meetings cap the server\'s young generation: Node takes the cap from NODE_OPTIONS (the heap limit drops), the young generation stays ≤ 32 MB, other options are kept',
     !capped.error && !plain.error && capped.newSpace <= 32 && capped.limit < plain.limit && joined === '--trace-warnings --max-semi-space-size=16' && capYoungGeneration('') === '--max-semi-space-size=16',
     `capped: ${JSON.stringify(capped)}; uncapped: ${JSON.stringify(plain)}; ${joined}`);
+}
+
+{
+  // The server's footprint in the two 8× meetings of 2026-11-15 on c04f23f, every sample (one per 80 s of meeting).
+  // The meeting: the presentation's 20 s pieces make a native burst 232 MB above the first 30 minutes (peak 451 MB),
+  // gone ten minutes later, and its floor rose 16 MB in 3.4 h; a fixed 200 MB failed it (§14.5 #25). The 3 mics: a
+  // burst at a dropout of the flaky mic, 100 minutes in, after which memory stays ~65 MB up to the end; its windows'
+  // middles are 1 h apart, where the old rate read its 15 MB as 15 MB per hour.
+  const sample = (value: number, i: number) => ({ at: 83.8 + i * 80, value });
+  const meet = [
+    220, 233, 241, 253, 256, 256, 256, 238, 210, 190, 206, 205, 206, 220, 219, 225, 226, 227, 224, 230, 233, 243, 219, 262, 264, 268, 253, 255, 257, 255,
+    228, 205, 238, 240, 217, 199, 191, 194, 188, 218, 209, 194, 191, 214, 227, 226, 214, 215, 226, 226, 226, 226, 226, 227, 230, 232, 214, 395, 352, 288,
+    288, 451, 451, 391, 330, 225, 199, 215, 433, 436, 385, 385, 342, 279, 197, 196, 197, 198, 203, 190, 197, 196, 196, 236, 232, 236, 191, 173, 148, 148,
+    148, 148, 148, 147, 147, 147, 147, 189, 189, 214, 211, 212, 212, 212, 206, 204, 195, 197, 218, 198, 198, 200, 199, 202, 199, 202, 199, 201, 199, 204,
+    202, 202, 204, 202, 203, 202, 204, 206, 203, 202, 202, 205, 202, 203, 209, 207, 211, 259, 260, 259, 257, 224, 227, 224, 224, 214, 216, 217, 216, 214,
+    222, 218, 219, 220, 219, 224, 225, 227, 235, 236, 239, 236, 236, 236, 239, 240, 244, 243, 243, 246, 223, 226, 226, 213, 216, 214,
+  ].map(sample);
+  const mic3 = [
+    239, 240, 240, 240, 286, 262, 233, 245, 242, 192, 192, 184, 364, 396, 321, 227, 208, 209, 199, 195, 210, 208, 193, 198, 199, 221, 209, 196, 211, 200,
+    206, 192, 200, 197, 193, 185, 194, 217, 219, 197, 199, 196, 216, 206, 189, 200, 200, 187, 189, 191, 194, 192, 341, 364, 366, 320, 264, 192, 196, 193,
+    194, 194, 217, 218, 192, 200, 194, 219, 219, 195, 195, 225, 207, 310, 406, 360, 268, 277, 283, 283, 284, 286, 256, 262, 262, 266, 266, 267, 266, 264,
+  ].map(sample);
+  const m = memoryCheck(meet, 1800);
+  const c = memoryCheck(mic3, 1800);
+  // The meeting with the presentation's burst twice as high: a peak > 400 MB above fails, though memory comes back.
+  const tall = memoryCheck(meet.map(({ at, value }) => ({ at, value: value > 300 ? 2 * value : value })), 1800);
+  // The 3 mics with their last 15 minutes back at the level before the burst: they pass, so the step is all that fails.
+  const settled = memoryCheck(mic3.map(({ at, value }, i) => ({ at, value: at > 6300 ? 200 + (i % 3) * 10 : value })), 1800);
+  const words = (x: ReturnType<typeof memoryCheck>) => `risen ${x.rise} MB, ${x.perHour.toFixed(1)} MB/h, peak ${x.peakOver} MB above, last 10 min ${x.back >= 0 ? '+' : ''}${x.back} MB, ok ${serverMemoryOk(x)}`;
+  t.check('UNIT-MEM-05', 'the stress tier\'s memory check on the meetings of 2026-11-15: a peak that comes back down passes up to 400 MB above, memory left > 50 MB up after it fails; a short run\'s rise is spread over 2 h',
+    serverMemoryOk(m) && m.rise === 16 && m.peakOver === 232 && m.back === 4
+      && !serverMemoryOk(c) && c.rise === 15 && c.perHour === 7.5 && c.peakOver === 207 && c.back === 65
+      && !serverMemoryOk(tall) && tall.peakOver > 400 && tall.back === 4
+      && serverMemoryOk(settled) && settled.back <= 50,
+    `meeting: ${words(m)}; 3 mics: ${words(c)}; burst doubled: ${words(tall)}; 3 mics settled: ${words(settled)}`);
+}
+
+{
+  // What `--only` arrives as from a pasted command (§14.5 #26): on 2026-11-15 the soak group's name with a U+2028 after
+  // it, which named no group, and the run passed with no test. (The name is spelled apart: STATIC-03 reads it as an id.)
+  const group = ['STRESS', 'SOAK'].join('-');
+  const pasted = [`${group}\u2028`, ` ${group} `, `${group}\u00a0`, `\u200b${group}\ufeff`, `${group}\r`, `${group}\u2029`];
+  t.check('UNIT-ONLY-01', 'the runner\'s --only without the spaces and invisible characters a pasted command carries (a line separator after the soak group ran no test); no value stays none',
+    pasted.every((x) => typedValue(x) === group) && typedValue('ui') === 'ui' && typedValue(null) === null && typedValue(undefined) === null,
+    pasted.map((x) => JSON.stringify(typedValue(x))).join(', '));
 }
 
 {

@@ -54,6 +54,14 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 export const SR = 16000;
 export const FIXTURE = path.join(ROOT, 'test', 'fixtures', 'ro.wav');
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * A command-line value without the spaces and invisible characters a pasted command can carry: line and paragraph
+ * separators (U+2028, U+2029), no-break spaces, zero-width spaces and joiners, the byte-order mark. On 2026-11-15
+ * an `--only` naming the soak group arrived with a U+2028 after it, named no group, and the run passed with no test
+ * (TESTING.md §14.5 #26). `null` and `undefined` stay `null`.
+ */
+export const typedValue = (value: string | null | undefined): string | null => value?.replace(/[\s\u200b-\u200d\u2060\ufeff]/g, '') ?? null;
 // Inside Electron (the UI tests) process.execPath is Electron itself; servers and tools need Node.
 const NODE = process.versions.electron ? process.env.NODE_BIN ?? 'node' : process.execPath;
 

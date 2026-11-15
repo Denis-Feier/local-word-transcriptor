@@ -393,7 +393,7 @@ async function longMeeting(three) {
     t.check('STRESS-MEET-05', 'no clock drift: every block within 0.1 s of R', drift.every((x) => Math.abs(x.d) <= 0.1), drift.map((x) => `${x.name} ${p(x.d)}`).join(', '));
     t.check('STRESS-MEET-06', 'keeps up: solo lines\' delay and model time in R′ as in R', keptUp, keepsDetail, { known: heavy(heat) });
     t.check('STRESS-MEET-07', 'live text to the end: live guesses in R′ ≥ 80 % of R', B.R2.partials >= 0.8 * B.R.partials, `${B.R.partials} → ${B.R2.partials}${heatWords(heat)}`, { known: heavy(heat) });
-    t.check('STRESS-MEET-08', 'server memory after warm-up: its low point and median rise ≤ 50 MB and ≤ 10 MB per hour, its peak ≤ 200 MB above the first 30 min', memOk, memDetail);
+    t.check('STRESS-MEET-08', 'server memory after warm-up: its low point and median rise ≤ 50 MB and ≤ 10 MB per hour; its peak ≤ 400 MB above the first 30 min, and back down after it (last 10 min ≤ 50 MB above)', memOk, memDetail);
     const files = checkFiles(server.transcripts, r, m.events.filter((e) => e.type === 'clear').length, length);
     t.check('STRESS-MEET-09', 'files: every line in the .txt with hour times, WAVs as long as the audio sent', files.ok, files.detail);
     t.check('STRESS-MEET-10', 'the server answers within 500 ms throughout', probeMax(r) <= 500, `slowest of ${r.probes.length} probes: ${probeMax(r)} ms`);

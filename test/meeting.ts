@@ -427,12 +427,15 @@ export const quantile = (xs, p) => (xs.length ? [...xs].sort((a, b) => a - b)[Ma
  * otherwise stayed at 210 MB made a low point 82 MB under the last one (2026-11-08), so memory has risen only when
  * the low point and the median both did. Shorter runs use a third of the time after warm-up for each window.
  *   growth: last low point − first; midGrowth: last median − first; rise: the smaller of the two, what is judged;
- *   perHour: rise per hour between the windows' middles (at least 1 h); peakOver: the highest sample above the
- *   first window's median; span: hours after warm-up.
+ *   perHour: rise per hour between the windows' middles, spread over at least 2 h: in the 3-mic meeting the windows'
+ *   middles are 1 h apart, and on the same product code its rise was −5 MB (2026-11-11) and +15 MB (2026-11-15), so
+ *   one step there is no rate (TESTING.md §14.5 #25); peakOver: the highest sample above the first window's median;
+ *   end: the median of the last 10 minutes; back: end above the first window's median, how far memory came back
+ *   down after its peak; span: hours after warm-up.
  */
 export function memoryCheck(samples, warmSec) {
   const s = samples.filter((x) => x.at >= warmSec && Number.isFinite(x.value));
-  if (s.length < 6) return { from: NaN, to: NaN, fromMid: NaN, toMid: NaN, growth: NaN, midGrowth: NaN, rise: NaN, perHour: NaN, peak: NaN, peakOver: NaN, span: 0 };
+  if (s.length < 6) return { from: NaN, to: NaN, fromMid: NaN, toMid: NaN, growth: NaN, midGrowth: NaN, rise: NaN, perHour: NaN, peak: NaN, peakOver: NaN, end: NaN, back: NaN, span: 0 };
   const [t0, t1] = [s[0].at, s.at(-1).at];
   const w = Math.min(1800, (t1 - t0) / 3);
   const first = s.filter((x) => x.at <= t0 + w).map((x) => x.value);
@@ -441,21 +444,26 @@ export function memoryCheck(samples, warmSec) {
   const [fromMid, toMid] = [median(first), median(last)];
   const rise = Math.min(to - from, toMid - fromMid);
   const peak = Math.max(...s.map((x) => x.value));
-  return { from, to, fromMid, toMid, growth: to - from, midGrowth: toMid - fromMid, rise, perHour: rise / Math.max(1, (t1 - t0 - w) / 3600), peak, peakOver: peak - fromMid, span: (t1 - t0) / 3600 };
+  const end = median(s.filter((x) => x.at >= t1 - 600).map((x) => x.value));
+  return { from, to, fromMid, toMid, growth: to - from, midGrowth: toMid - fromMid, rise, perHour: rise / Math.max(2, (t1 - t0 - w) / 3600), peak, peakOver: peak - fromMid, end, back: end - fromMid, span: (t1 - t0) / 3600 };
 }
 
 /**
  * The limits for the server's memory over a long meeting (STRESS-MEET-08, -MIC3-02, -SOAK-06; #48): after warm-up it
- * may rise ≤ 50 MB, and ≤ 10 MB per hour once an hour or more is judged; its peak may be ≤ 200 MB above the first
- * 30 minutes. `mem` is memoryCheck() of its samples.
+ * may rise ≤ 50 MB, and ≤ 10 MB per hour once an hour or more is judged; its peak may be ≤ 400 MB above the first
+ * 30 minutes' median, and memory must come back down after it: the median of the last 10 minutes ≤ 50 MB above
+ * that of the first 30 (TESTING.md §14.5 #25: a fixed 200 MB failed the meeting in every run since 2026-11-09, on
+ * the native burst while the presentation's 20 s pieces are transcribed, which is gone minutes later). `mem` is
+ * memoryCheck() of its samples.
  */
-export const serverMemoryOk = (mem: ReturnType<typeof memoryCheck>) => mem.rise <= 50 && (mem.span < 1 || mem.perHour <= 10) && mem.peakOver <= 200;
+export const serverMemoryOk = (mem: ReturnType<typeof memoryCheck>) => mem.rise <= 50 && (mem.span < 1 || mem.perHour <= 10) && mem.peakOver <= 400 && mem.back <= 50;
 
 /** memoryCheck() in words, for a check's detail. */
 export const memoryWords = (mem: ReturnType<typeof memoryCheck>) => {
   const n = (x: number, d = 0) => (Number.isFinite(x) ? x.toFixed(d) : '—');
   return `low point ${n(mem.from)} → ${n(mem.to)} MB, median ${n(mem.fromMid)} → ${n(mem.toMid)} MB after warm-up (risen ${mem.rise >= 0 ? '+' : ''}${n(mem.rise)} MB, `
-    + `${n(mem.perHour, 1)} MB/h over ${n(mem.span, 1)} h); peak ${n(mem.peak)} MB, ${n(mem.peakOver)} MB above the first 30 min`;
+    + `${n(mem.perHour, 1)} MB/h over ${n(mem.span, 1)} h); last 10 min ${n(mem.end)} MB (${mem.back >= 0 ? '+' : ''}${n(mem.back)} MB); `
+    + `peak ${n(mem.peak)} MB, ${n(mem.peakOver)} MB above the first 30 min`; // last: the callers add what the peak was made of
 };
 
 /**

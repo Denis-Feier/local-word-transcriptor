@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { ROOT } from './helpers.ts';
+import { ROOT, typedValue } from './helpers.ts';
 import { staleWebFiles } from '../scripts/build-web.ts';
 import type { SuiteResult, TestCase } from '../types/test.ts';
 
@@ -28,7 +28,7 @@ const require = createRequire(import.meta.url);
 const args = process.argv.slice(2);
 const tier = ['quick', 'standard', 'full', 'stress'].find((x) => args.includes(x)) ?? 'standard';
 const option = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : null);
-const only = option('--only');
+const only = typedValue(option('--only')); // as typed, whatever a paste added (§14.5 #26)
 const recordings = option('--recordings');
 const git = (cmd: string) => {
   try {
@@ -234,7 +234,14 @@ async function stressTier() {
   const area = only?.startsWith('STRESS-') ? only.split('-')[1].toLowerCase() : null;
   if (area) {
     const key = Object.keys(groups).find((g) => g.split(',').includes(area));
-    if (!key) return console.log(`  no stress group for ${only}`);
+    if (!key) {
+      // A group that does not exist runs nothing, and that is a failure, not a pass with 0 tests (§14.5 #26).
+      const known = Object.keys(groups).flatMap((g) => g.split(',')).map((g) => `STRESS-${g.toUpperCase()}`).join(', ');
+      const detail = `--only ${JSON.stringify(only)} names no stress group; the groups: ${known}`;
+      console.log(`  ✖ ${detail}`);
+      results.push({ suite: 'stress', cases: [{ id: 'STRESS-RUN', title: 'stress ran to the end', status: 'fail', detail }], seconds: 0, code: 1 });
+      return;
+    }
     return key.includes(',') ? server(area, 60)() : groups[key]();
   }
   // Only steady loads share the computer: bursts (several clients, overload, crashes) would slow the model in the
@@ -280,6 +287,12 @@ for (const [name, level, step] of plan) {
   if (!wanted(name, level)) continue;
   console.log(`\n▸ ${name}`);
   await step();
+}
+// A run in which no test ran is no pass: `--only` named no suite (§14.5 #26).
+if (!results.some((r) => r.cases.length)) {
+  const detail = only ? `--only ${JSON.stringify(only)} names no suite (${plan.map(([name]) => name).join(', ')}) and no STRESS-<GROUP>` : 'no suite ran';
+  console.log(`\n✖ ${detail}`);
+  results.push({ suite: 'run', cases: [{ id: 'RUN', title: 'at least one test ran', status: 'fail', detail }], seconds: 0, code: 1 });
 }
 
 // ---------- report ----------

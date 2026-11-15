@@ -403,7 +403,7 @@ async function soak() {
     const srv = memoryCheck(series((s) => s.server), warm);
     const parts = (s) => (Number.isFinite(s?.serverParts?.heap) ? ` (heap ${s.serverParts.heap} with ${s.serverParts.used} in use, outside the heap ${s.serverParts.external}, native ${s.serverParts.native} MB)` : '');
     const end = samples.at(-1);
-    t.check('STRESS-SOAK-06', 'server memory in real time, as STRESS-MEET-08: after warm-up its low point and median rise ≤ 50 MB and ≤ 10 MB per hour, its peak ≤ 200 MB above the first 30 min',
+    t.check('STRESS-SOAK-06', 'server memory in real time, as STRESS-MEET-08: after warm-up its low point and median rise ≤ 50 MB and ≤ 10 MB per hour; its peak ≤ 400 MB above the first 30 min, and back down after it (last 10 min ≤ 50 MB above)',
       serverMemoryOk(srv),
       `${end?.serverParts?.footprint ? 'footprint' : 'resident'}: ${memoryWords(srv)}${parts(samples.find((s) => s.sec >= warm && s.server === srv.peak))}; end ${end?.server ?? '—'} MB${parts(end)}, resident ${end?.serverParts?.rss ?? '—'} MB`);
     const txt = fs.readdirSync(server.transcripts).filter((n) => n.endsWith('.txt')).flatMap((n) => fs.readFileSync(path.join(server.transcripts, n), 'utf8').split('\n').filter(Boolean));
